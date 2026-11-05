@@ -465,6 +465,8 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         prev = pw[k]; prevI = pi[k];
       }
     }
+    // track clean-up: remove one-frame spikes, and bridge short stretches where a hand/foot was hidden (low visibility)
+    if (opt.cleanTracks !== false) { const c = cleanTracks(pw, pi, fps); pw = c.pw; pi = c.pi; }
     const valid = pw.filter(Boolean).length;
     if (!valid) throw new Error('No person was detected in this video.');
     let roots = pw.map((w, k) => (w && pi[k] ? solveRoot(w, pi[k], opt.W, opt.H, opt.fov) : null));
@@ -629,6 +631,30 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       }
     }
     return out;
+  }
+
+  function cleanTracks(pw, pi, fps) {
+    const n = pw.length; pw = pw.map(a => a && a.map(p => p.slice())); pi = pi.map(a => a && a.map(p => p.slice()));
+    const EXT = [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 25, 26, 27, 28, 29, 30, 31, 32], maxGap = Math.round(fps * 0.4);
+    for (let i = 0; i < 33; i++) {
+      // 1) spikes: a point that jumps away from both neighbours and comes straight back
+      for (let k = 1; k < n - 1; k++) {
+        const a = pw[k - 1], b = pw[k], c = pw[k + 1]; if (!a || !b || !c) continue;
+        const mid_ = lerp(a[i], c[i], 0.5), dev = len(sub(b[i], mid_)), span = len(sub(c[i], a[i]));
+        if (dev > 0.07 && dev > 1.5 * span) { b[i] = mid_; if (pi[k] && pi[k - 1] && pi[k + 1]) pi[k][i] = [(pi[k - 1][i][0] + pi[k + 1][i][0]) / 2, (pi[k - 1][i][1] + pi[k + 1][i][1]) / 2, Math.min(pi[k - 1][i][2], pi[k + 1][i][2])]; }
+      }
+      // 2) hidden hands/feet: frames with very low visibility are bridged from the confident frames either side
+      if (!EXT.includes(i)) continue;
+      const ok = k => pw[k] && pi[k] && pi[k][i][2] >= 0.35;
+      for (let k = 0; k < n; k++) {
+        if (!pw[k] || ok(k)) continue;
+        let e = k; while (e < n && pw[e] && !ok(e)) e++;
+        const a = k - 1, b = e;
+        if (e - k <= maxGap && a >= 0 && b < n && ok(a) && ok(b)) for (let q = k; q < e; q++) { const u = (q - a) / (b - a); pw[q][i] = lerp(pw[a][i], pw[b][i], u); }
+        k = e;
+      }
+    }
+    return { pw, pi };
   }
 
   // ---- natural joint limits (swing/twist clamp) ----
@@ -1619,7 +1645,8 @@ async function processVideo() {
       if (boxes.length === 1 && Math.hypot((boxes[0].hx - target.hx) * W, (boxes[0].hy - target.hy) * H) / Math.max(W, H) < 0.5) return 0;
       let best = -1, bc = 1e9;
       boxes.forEach((x, i) => { const c = Math.hypot((x.hx - target.hx) * W, (x.hy - target.hy) * H) / Math.max(W, H) + 0.25 * Math.abs(Math.log(Math.max(1e-3, x.h) / Math.max(1e-3, target.h))); if (c < bc) { bc = c; best = i; } });
-      return bc < Math.min(0.6, 0.3 + 0.05 * missed) ? best : -1;
+      if (bc < Math.min(0.6, 0.3 + 0.05 * missed)) return best;
+      return boxes.length === 1 || missed >= 1 ? (bc < 1.2 ? best : -1) : -1; // fall back to the nearest person rather than losing frames
     };
     const detect = (cv, t) => {
       tsClock += Math.max(1, Math.round(1000 / pfps));
@@ -1635,9 +1662,13 @@ async function processVideo() {
       return fr;
     };
     const out = []; const t0 = performance.now();
-    const sigC = document.createElement('canvas'); sigC.width = 24; sigC.height = 24; const sigX = sigC.getContext('2d', { willReadFrequently: true });
+    // frozen-frame check: a frame only counts as frozen if EVERY part of the picture is unchanged (a small moving person still counts as motion)
+    const SG = 48, CELL = 6, sigC = document.createElement('canvas'); sigC.width = SG; sigC.height = SG; const sigX = sigC.getContext('2d', { willReadFrequently: true });
     let prevSig = null;
-    const isDuplicate = cv => { try { sigX.drawImage(cv, 0, 0, 24, 24); const d = sigX.getImageData(0, 0, 24, 24).data; let diff = 0; if (prevSig) for (let i = 0; i < d.length; i += 4) diff += Math.abs(d[i] - prevSig[i]) + Math.abs(d[i + 1] - prevSig[i + 1]); const dup = prevSig && diff / (d.length / 2) < 0.35; prevSig = d.slice(); return !!dup; } catch (e) { return false; } };
+    const isDuplicate = cv => { try {
+      sigX.drawImage(cv, 0, 0, SG, SG); const d = sigX.getImageData(0, 0, SG, SG).data; let dup = false;
+      if (prevSig) { let maxCell = 0; for (let cy = 0; cy < SG; cy += CELL) for (let cx = 0; cx < SG; cx += CELL) { let s = 0; for (let y = cy; y < cy + CELL; y++) for (let x = cx; x < cx + CELL; x++) { const i = (y * SG + x) * 4; s += Math.abs(d[i] - prevSig[i]) + Math.abs(d[i + 1] - prevSig[i + 1]) + Math.abs(d[i + 2] - prevSig[i + 2]); } maxCell = Math.max(maxCell, s / (CELL * CELL * 3)); } dup = maxCell < 1.2; }
+      prevSig = d.slice(); return dup; } catch (e) { return false; } };
     const report = (k, N) => { const p = Math.min(1, (k + 1) / N), el = (performance.now() - t0) / 1000, eta = el / p - el; bar.style.width = (p * 100).toFixed(1) + '%'; status(`Tracking frame ${k + 1}/${N} · ${(k / Math.max(el, 0.01)).toFixed(1)} fps · ~${Math.max(0, Math.ceil(eta))}s left`); };
     let cv, dur, nativeFrame = null; const [tS, tE] = trimRange();
     if (codecSrc) {
@@ -1704,6 +1735,8 @@ async function processVideo() {
     status(`Tracked ${found}/${N} frames with a person${wantHands ? ` · hands in ${hf}` : ''}. Solving…`);
     bar.style.width = '100%';
     solve(true); updateRefineLabel();
+    const bridged = out.filter(f => !f.pw).length;
+    if (bridged > N * 0.15) toast(`The person was lost in ${bridged} of ${N} frames, so those were bridged. Try Refine again, or film with the full body in frame.`, true, 9000);
     status(`Done · ${found}/${N} frames tracked${wantHands ? ` · fingers in ${Math.round(100 * hf / N)}%` : ''}. Tweak step 3 or export.`);
     toast('Motion generated and saved to your Library. Press ▶ to preview.');
     saveTake(cv).catch(e => toast('Library save failed: ' + e.message, true));
@@ -2144,8 +2177,9 @@ let last = performance.now();
 function loop(now) {
   const dt = (now - last) / 1000; last = now;
   if (playing) {
-    if (vid.src && !vid.paused && !vid.seeking) curTime = vid.currentTime;
-    else if (!vid.src || vid.paused) curTime += Math.min(dt, 0.1) * (+$('speed').value);
+    curTime += Math.min(dt, 0.1) * (+$('speed').value); // steady clock: a stuttering video player can no longer stall the animation
+    if (vid.src && !vid.seeking && Math.abs(vid.currentTime - curTime) > 0.2) vid.currentTime = curTime;
+    if (vid.src && vid.paused && !vid.ended) vid.play().catch(() => {});
     { const [s, e] = trimRange(); if (curTime >= e - 0.01 || vid.ended || curTime < s - 0.05) { curTime = s; if (vid.src) { vid.currentTime = s; vid.play().catch(() => {}); } } }
     applyAt(curTime); drawOverlay(); updateTimeLabel(); needRender = true;
   }
