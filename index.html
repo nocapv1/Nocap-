@@ -1,0 +1,1353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b0d12">
+<title>MoCap Studio — AI video to 3D motion capture</title>
+<meta name="robots" content="noindex,nofollow,noarchive">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-title" content="NoCap">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+:root{
+  --bg:#0b0d12; --panel:#12151c; --panel2:#171b24; --line:#232836; --text:#e7eaf0; --dim:#8b93a7; --faint:#5b6377;
+  --accent:#4fd1c5; --accent2:#2a9d93; --warn:#f6ad55; --bad:#fc8181; --radius:12px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.45 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+button,select,input{font:inherit;color:inherit}
+header{display:flex;align-items:center;gap:14px;padding:12px 20px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#10131a,#0b0d12)}
+.logo{width:30px;height:30px;border-radius:9px;background:conic-gradient(from 200deg,var(--accent),#6b8cff,var(--accent));display:grid;place-items:center;color:#0b0d12;font-weight:800}
+header h1{font-size:16px;margin:0;font-weight:700;letter-spacing:.2px}
+header .tag{color:var(--dim);font-size:12.5px}
+header .pill{margin-left:auto;font-size:12px;color:var(--accent);border:1px solid #2a4f4c;background:#0f2422;padding:4px 10px;border-radius:99px}
+.app{display:grid;grid-template-columns:330px 1fr;height:calc(100% - 55px)}
+aside{border-right:1px solid var(--line);background:var(--panel);overflow:auto;padding:14px}
+section.card{background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:12px}
+section.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);margin:0 0 10px;font-weight:600;display:flex;align-items:center;gap:8px}
+section.card h2 .n{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:#20303a;color:var(--accent);font-size:11px}
+.drop{border:1.5px dashed #34405a;border-radius:10px;padding:18px 12px;text-align:center;color:var(--dim);cursor:pointer;transition:.15s}
+.drop:hover,.drop.over{border-color:var(--accent);color:var(--text);background:#0f1d1d}
+.drop b{color:var(--text)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:9px 0}
+.row label{color:var(--dim)}
+.row .val{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent);min-width:34px;text-align:right}
+select{background:#0e1118;border:1px solid var(--line);border-radius:8px;padding:6px 8px;min-width:120px}
+input[type=range]{accent-color:var(--accent);width:130px}
+input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
+.btn{background:#1d2330;border:1px solid #2c3446;border-radius:9px;padding:8px 12px;cursor:pointer;transition:.12s;display:inline-flex;align-items:center;gap:7px;justify-content:center}
+.btn:hover{border-color:#44506a;background:#222a3a}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#06201d;font-weight:700;width:100%;padding:11px}
+.btn.primary:hover{background:#6ee0d5}
+.btn.small{padding:5px 9px;font-size:12.5px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px}
+.progress{height:6px;background:#0e1118;border-radius:9px;overflow:hidden;margin-top:10px;display:none}
+.progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));transition:width .15s}
+.status{font-size:12.5px;color:var(--dim);margin-top:8px;min-height:18px}
+.hint{font-size:12px;color:var(--faint);margin-top:8px}
+.hint code{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--dim)}
+main{display:grid;grid-template-rows:1fr auto;min-width:0;min-height:0}
+.stage{display:grid;grid-template-columns:minmax(0,0.85fr) minmax(0,1.15fr);gap:10px;padding:10px;min-height:0}
+.view{position:relative;background:#07090d;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;min-height:0}
+.bigplay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:68px;height:68px;border-radius:50%;border:0;background:#4fd1c5e6;color:#06201d;font-size:26px;z-index:4;display:none;cursor:pointer;box-shadow:0 8px 24px #0008;padding-left:6px}
+.view .label{position:absolute;top:10px;left:12px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);background:#0b0d12cc;padding:3px 8px;border-radius:6px;z-index:3}
+.view video,.view canvas.ov{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.view canvas.ov{pointer-events:none;z-index:2}
+#three{position:absolute;inset:0}
+.empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--faint);text-align:center;padding:20px;z-index:1}
+.vtools{position:absolute;right:10px;top:8px;display:flex;gap:6px;z-index:3}
+.vtools .btn{background:#0b0d12cc}
+.vtools .btn.on{border-color:var(--accent);color:var(--accent)}
+.timeline{border-top:1px solid var(--line);background:var(--panel);padding:10px 16px;display:flex;align-items:center;gap:12px}
+.timeline input[type=range]{flex:1;width:auto}
+.time{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--dim);min-width:120px;text-align:right}
+#contacts{height:14px;flex:1;position:relative}
+.tlwrap{flex:1;display:flex;flex-direction:column;gap:4px}
+canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
+.toast{position:fixed;right:18px;bottom:76px;background:#1a202c;border:1px solid var(--line);border-left:3px solid var(--accent);padding:10px 14px;border-radius:9px;max-width:380px;box-shadow:0 10px 30px #0008;z-index:50;display:none}
+.toast.err{border-left-color:var(--bad)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;font-size:12px}
+.stats div{background:#0e1118;border-radius:8px;padding:6px 8px;color:var(--dim)}
+.stats b{display:block;color:var(--text);font-weight:600}
+.modal{position:fixed;inset:0;background:#000a;display:none;place-items:center;z-index:60}
+.modal .box{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:16px;width:min(560px,92vw)}
+.modal video{width:100%;border-radius:10px;background:#000;transform:scaleX(-1)}
+.progress.conv{display:block}
+@media (max-width:900px){
+  html,body{height:auto;min-height:100%}
+  body{padding-bottom:env(safe-area-inset-bottom);-webkit-text-size-adjust:100%}
+  header{padding:calc(10px + env(safe-area-inset-top)) 14px 10px}
+  header .tag{display:none} header .pill{font-size:11px;padding:3px 8px}
+  .app{display:flex;flex-direction:column;height:auto;padding:10px}
+  aside,main{display:contents}
+  aside > section.card{order:3}
+  aside > section.card:first-child{order:1}
+  .stage{order:2;grid-template-columns:1fr;padding:0;gap:8px;margin-bottom:12px}
+  #vview{height:34vh;height:34svh}
+  .view.v3d{height:46vh;height:46svh}
+  .timeline{order:2;border:1px solid var(--line);border-radius:12px;margin:0 0 12px;padding:10px;gap:8px}
+  .time{min-width:0;font-size:11px}
+  #play{width:46px;height:46px;font-size:16px;flex:none}
+  #speed{min-width:0;width:64px}
+  .btn{min-height:42px} .vtools .btn{min-height:30px;padding:4px 8px}
+  select{min-height:38px;font-size:16px}
+  input[type=range]{height:30px}
+  input[type=checkbox]{width:22px;height:22px}
+  .row{margin:12px 0}
+  .toast{left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom));max-width:none}
+}
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/build/three.module.js",
+  "three/addons/": "./vendor/three/examples/jsm/"
+} }
+</script>
+<script>
+// ===== Motion solver: landmarks -> skeleton animation (no dependencies) =====
+(function (g) {
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+  const sc = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const len = a => Math.hypot(a[0], a[1], a[2]);
+  const norm = a => { const l = len(a); return l > 1e-9 ? sc(a, 1 / l) : [0, 0, 0]; };
+  const mid = (a, b) => sc(add(a, b), 0.5);
+  const lerp = (a, b, t) => add(a, sc(sub(b, a), t));
+  const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+  const perp = (v, ax) => sub(v, sc(ax, dot(v, ax)));
+  const median = arr => { const s = arr.filter(Number.isFinite).sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
+  const percentile = (arr, p) => { const s = arr.filter(Number.isFinite).sort((a, b) => a - b); return s.length ? s[Math.floor(clamp(p, 0, 1) * (s.length - 1))] : 0; };
+
+  // ---- quaternions [x,y,z,w] ----
+  const qmul = (a, b) => [
+    a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+    a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+    a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+    a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]];
+  const qconj = q => [-q[0], -q[1], -q[2], q[3]];
+  const qnorm = q => { const l = Math.hypot(q[0], q[1], q[2], q[3]) || 1; return [q[0] / l, q[1] / l, q[2] / l, q[3] / l]; };
+  const qrot = (q, v) => { const p = qmul(qmul(q, [v[0], v[1], v[2], 0]), qconj(q)); return [p[0], p[1], p[2]]; };
+  function qslerp(a, b, t) {
+    let d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+    let bb = b; if (d < 0) { d = -d; bb = [-b[0], -b[1], -b[2], -b[3]]; }
+    if (d > 0.9995) return qnorm([a[0] + (bb[0] - a[0]) * t, a[1] + (bb[1] - a[1]) * t, a[2] + (bb[2] - a[2]) * t, a[3] + (bb[3] - a[3]) * t]);
+    const th = Math.acos(d), s = Math.sin(th), wa = Math.sin((1 - t) * th) / s, wb = Math.sin(t * th) / s;
+    return [a[0] * wa + bb[0] * wb, a[1] * wa + bb[1] * wb, a[2] * wa + bb[2] * wb, a[3] * wa + bb[3] * wb];
+  }
+  function quatToMat(q) {
+    const [x, y, z, w] = q;
+    return [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]];
+  }
+  function quatFromMat(m) {
+    const tr = m[0][0] + m[1][1] + m[2][2]; let x, y, z, w, s;
+    if (tr > 0) { s = Math.sqrt(tr + 1) * 2; w = 0.25 * s; x = (m[2][1] - m[1][2]) / s; y = (m[0][2] - m[2][0]) / s; z = (m[1][0] - m[0][1]) / s; }
+    else if (m[0][0] > m[1][1] && m[0][0] > m[2][2]) { s = Math.sqrt(1 + m[0][0] - m[1][1] - m[2][2]) * 2; w = (m[2][1] - m[1][2]) / s; x = 0.25 * s; y = (m[0][1] + m[1][0]) / s; z = (m[0][2] + m[2][0]) / s; }
+    else if (m[1][1] > m[2][2]) { s = Math.sqrt(1 + m[1][1] - m[0][0] - m[2][2]) * 2; w = (m[0][2] - m[2][0]) / s; x = (m[0][1] + m[1][0]) / s; y = 0.25 * s; z = (m[1][2] + m[2][1]) / s; }
+    else { s = Math.sqrt(1 + m[2][2] - m[0][0] - m[1][1]) * 2; w = (m[1][0] - m[0][1]) / s; x = (m[0][2] + m[2][0]) / s; y = (m[1][2] + m[2][1]) / s; z = 0.25 * s; }
+    return qnorm([x, y, z, w]);
+  }
+  function qFromTo(a, b) {
+    a = norm(a); b = norm(b); const d = dot(a, b);
+    if (d < -0.999999) { let ax = cross([1, 0, 0], a); if (len(ax) < 1e-6) ax = cross([0, 1, 0], a); ax = norm(ax); return [ax[0], ax[1], ax[2], 0]; }
+    const c = cross(a, b); return qnorm([c[0], c[1], c[2], 1 + d]);
+  }
+  // Euler for BVH channel order "Zrotation Xrotation Yrotation" (R = Rz*Rx*Ry), degrees [z,x,y]
+  function eulerZXY(q) {
+    const m = quatToMat(q); const D = 180 / Math.PI;
+    const x = Math.asin(clamp(m[2][1], -1, 1)); let y, z;
+    if (Math.abs(m[2][1]) < 0.9999999) { y = Math.atan2(-m[2][0], m[2][2]); z = Math.atan2(-m[0][1], m[1][1]); }
+    else { y = 0; z = Math.atan2(m[1][0], m[0][0]); }
+    return [z * D, x * D, y * D];
+  }
+
+  // Orthonormal frame from primary + secondary direction. Returns 3 column vectors.
+  function basis(p, s) {
+    p = norm(p); if (len(p) < 0.5) p = [0, 1, 0];
+    let s2 = perp(s, p);
+    if (len(s2) < 1e-6) s2 = perp(Math.abs(p[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0], p);
+    s2 = norm(s2);
+    return [p, s2, cross(p, s2)];
+  }
+  // rotation taking rest frame onto target frame
+  function rotBetween(rb, tb) {
+    const m = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    for (let k = 0; k < 3; k++) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) m[i][j] += tb[k][i] * rb[k][j];
+    return quatFromMat(m);
+  }
+
+  // ---- filtering ----
+  function oneEuro(x, dt, minCut, beta, dCut = 1.0) {
+    const n = x.length, out = new Array(n); if (!n) return out;
+    const alpha = c => { const tau = 1 / (2 * Math.PI * c); return 1 / (1 + tau / dt); };
+    let xp = x[0], dxp = 0; out[0] = xp;
+    for (let i = 1; i < n; i++) {
+      const dx = (x[i] - xp) / dt, ad = alpha(dCut), dxh = ad * dx + (1 - ad) * dxp;
+      const a = alpha(minCut + beta * Math.abs(dxh)); const xh = a * x[i] + (1 - a) * xp;
+      out[i] = xh; xp = xh; dxp = dxh;
+    }
+    return out;
+  }
+  // zero-lag: forward + backward pass averaged
+  function smoothSeries(x, dt, minCut, beta) {
+    if (minCut >= 999) return x.slice();
+    const f = oneEuro(x, dt, minCut, beta);
+    const b = oneEuro(x.slice().reverse(), dt, minCut, beta).reverse();
+    return f.map((v, i) => 0.5 * (v + b[i]));
+  }
+  // smooth an array (frames) of arrays of points
+  function smoothPoints(frames, dt, minCut, beta) {
+    if (!frames.length || !frames[0]) return frames;
+    const nP = frames[0].length, out = frames.map(() => new Array(nP));
+    for (let p = 0; p < nP; p++) for (let c = 0; c < 3; c++) {
+      const s = smoothSeries(frames.map(f => f[p][c]), dt, minCut, beta);
+      for (let i = 0; i < frames.length; i++) { if (!out[i][p]) out[i][p] = [0, 0, 0]; out[i][p][c] = s[i]; }
+    }
+    return out;
+  }
+  // linear interpolation over missing (null) frames
+  function fillGaps(arr) {
+    const valid = []; arr.forEach((v, i) => { if (v) valid.push(i); });
+    if (!valid.length) return null;
+    const out = arr.slice(); const L = (a, b, t) => Array.isArray(a[0]) ? a.map((p, k) => lerp(p, b[k], t)) : lerp(a, b, t);
+    for (let i = 0; i < arr.length; i++) {
+      if (out[i]) continue;
+      let a = -1, b = -1;
+      for (const v of valid) { if (v < i) a = v; else { b = v; break; } }
+      if (a < 0) out[i] = arr[b]; else if (b < 0) out[i] = arr[a]; else out[i] = L(arr[a], arr[b], (i - a) / (b - a));
+    }
+    return out;
+  }
+
+  // ---- root translation: least-squares fit of metric 3D landmarks to 2D image landmarks ----
+  // world: 33x[x,y,z] (MediaPipe metric, hip-centred, y down, z away); img: 33x[u,v,vis] normalized
+  function solveRoot(world, img, W, H, fovDeg) {
+    const f = (Math.max(W, H) / 2) / Math.tan(fovDeg * Math.PI / 360), cx = W / 2, cy = H / 2;
+    const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], bv = [0, 0, 0];
+    const addRow = (r, b, w) => { for (let i = 0; i < 3; i++) { bv[i] += w * r[i] * b; for (let j = 0; j < 3; j++) A[i][j] += w * r[i] * r[j]; } };
+    for (let i = 0; i < 33; i++) {
+      const w = clamp(img[i][2] ?? 1, 0, 1); if (w < 0.3) continue;
+      const u = img[i][0] * W - cx, v = img[i][1] * H - cy, [X, Y, Z] = world[i];
+      addRow([f, 0, -u], u * Z - f * X, w);
+      addRow([0, f, -v], v * Z - f * Y, w);
+    }
+    const det = m => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    const D = det(A); if (Math.abs(D) < 1e-9) return null;
+    const t = [0, 1, 2].map(c => det(A.map((row, r) => row.map((v, k) => (k === c ? bv[r] : v)))) / D);
+    if (!(t[2] > 0.2) || !t.every(Number.isFinite)) return null;
+    return t;
+  }
+
+  // ---- skeleton definition ----
+  const FINGERS = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
+  const HAND_TEMPLATE = { // left hand, palm down, fingers +X, thumb toward +Z (front). metres for a 0.095 m palm
+    Thumb: { root: [0.025, -0.012, 0.022], dir: norm([0.65, -0.15, 0.75]), lens: [0.040, 0.032, 0.026], chain: [1, 2, 3, 4] },
+    Index: { root: [0.092, 0, 0.026], dir: [1, 0, 0], lens: [0.042, 0.025, 0.022], chain: [5, 6, 7, 8] },
+    Middle: { root: [0.095, 0, 0.004], dir: [1, 0, 0], lens: [0.046, 0.028, 0.023], chain: [9, 10, 11, 12] },
+    Ring: { root: [0.090, 0, -0.016], dir: [1, 0, 0], lens: [0.042, 0.027, 0.022], chain: [13, 14, 15, 16] },
+    Pinky: { root: [0.083, 0, -0.034], dir: [1, 0, 0], lens: [0.034, 0.020, 0.019], chain: [17, 18, 19, 20] },
+  };
+  const FOOTDIR = norm([0, -0.4, 1]);
+  const HEADFWD = norm([0, -0.3, 1]);
+  const SIDES = [
+    ['Left', 1, { sh: 11, el: 13, wr: 15, pk: 17, ix: 19, hip: 23, kn: 25, an: 27, he: 29, to: 31 }],
+    ['Right', -1, { sh: 12, el: 14, wr: 16, pk: 18, ix: 20, hip: 24, kn: 26, an: 28, he: 30, to: 32 }]];
+
+  function measure(P, HL, HR) {
+    const m = (fn) => median(P.map(fn));
+    const d = (a, b) => p => len(sub(p[a], p[b]));
+    const avg2 = (f1, f2) => p => 0.5 * (f1(p) + f2(p));
+    const handLenPose = p => 0.5 * (len(sub(mid(p[19], p[17]), p[15])) + len(sub(mid(p[20], p[18]), p[16])));
+    const hands = [HL, HR].filter(Boolean).flatMap(h => h.map(f => len(sub(f[9], f[0]))));
+    const M = {
+      hipW: m(d(23, 24)), shoulderW: m(d(11, 12)),
+      torso: m(p => len(sub(mid(p[11], p[12]), mid(p[23], p[24])))),
+      neckLen: m(p => len(sub(mid(p[7], p[8]), mid(p[11], p[12])))),
+      upper: m(avg2(d(11, 13), d(12, 14))), fore: m(avg2(d(13, 15), d(14, 16))),
+      thigh: m(avg2(d(23, 25), d(24, 26))), shin: m(avg2(d(25, 27), d(26, 28))),
+      foot: m(avg2(d(27, 31), d(28, 32))), ankleH: m(avg2(d(27, 29), d(28, 30))),
+      hand: hands.length ? median(hands) : m(handLenPose) * 1.1,
+    };
+    const def = { hipW: 0.2, shoulderW: 0.34, torso: 0.5, neckLen: 0.2, upper: 0.28, fore: 0.25, thigh: 0.42, shin: 0.4, foot: 0.15, ankleH: 0.07, hand: 0.095 };
+    for (const k in def) if (!(M[k] > 0.01)) M[k] = def[k];
+    M.hand = clamp(M.hand, 0.06, 0.13);
+    return M;
+  }
+
+  function buildRest(M) {
+    const J = [];
+    const addJ = (name, parent, offset, end = null) => J.push({ name, parent: parent ? J.findIndex(j => j.name === parent) : -1, offset, end });
+    const T = M.torso;
+    addJ('Hips', null, [0, 0, 0]);
+    addJ('Spine', 'Hips', [0, 0.1 * T, 0]);
+    addJ('Spine1', 'Spine', [0, 0.3 * T, 0]);
+    addJ('Spine2', 'Spine1', [0, 0.3 * T, 0]);
+    addJ('Neck', 'Spine2', [0, 0.3 * T, 0]);
+    addJ('Head', 'Neck', [0, 0.75 * M.neckLen, 0], [0, 0.2, 0]);
+    const hs = M.hand / 0.095;
+    for (const [S, sx] of SIDES) {
+      addJ(S + 'Shoulder', 'Spine2', [sx * 0.03, 0.27 * T, 0]);
+      addJ(S + 'Arm', S + 'Shoulder', [sx * Math.max(0.02, M.shoulderW / 2 - 0.03), 0.03 * T, 0]);
+      addJ(S + 'ForeArm', S + 'Arm', [sx * M.upper, 0, 0]);
+      addJ(S + 'Hand', S + 'ForeArm', [sx * M.fore, 0, 0]);
+      for (const F of FINGERS) {
+        const t = HAND_TEMPLATE[F], dir = [sx * t.dir[0], t.dir[1], t.dir[2]];
+        addJ(`${S}Hand${F}1`, S + 'Hand', [sx * t.root[0] * hs, t.root[1] * hs, t.root[2] * hs]);
+        addJ(`${S}Hand${F}2`, `${S}Hand${F}1`, sc(dir, t.lens[0] * hs));
+        addJ(`${S}Hand${F}3`, `${S}Hand${F}2`, sc(dir, t.lens[1] * hs), sc(dir, t.lens[2] * hs));
+      }
+    }
+    for (const [S, sx] of SIDES) {
+      addJ(S + 'UpLeg', 'Hips', [sx * M.hipW / 2, 0, 0]);
+      addJ(S + 'Leg', S + 'UpLeg', [0, -M.thigh, 0]);
+      addJ(S + 'Foot', S + 'Leg', [0, -M.shin, 0]);
+      addJ(S + 'ToeBase', S + 'Foot', sc(FOOTDIR, M.foot), [0, 0, 0.05]);
+    }
+    const index = {}; J.forEach((j, i) => (index[j.name] = i));
+    return { joints: J, index, M };
+  }
+
+  // ---- per-frame retarget: Y-up local landmarks -> global joint rotations -> local rotations ----
+  const BX = [1, 0, 0], BY = [0, 1, 0], BZ = [0, 0, 1], NY = [0, -1, 0];
+  function solveFrame(P, HL, HR, rest) {
+    const G = {};
+    const midSh = mid(P[11], P[12]), midHip = mid(P[23], P[24]), up = sub(midSh, midHip);
+    G.Hips = rotBetween(basis(BX, BY), basis(sub(P[23], P[24]), up));
+    const chest = rotBetween(basis(BX, BY), basis(sub(P[11], P[12]), up));
+    G.Spine = qslerp(G.Hips, chest, 1 / 3); G.Spine1 = qslerp(G.Hips, chest, 2 / 3); G.Spine2 = chest;
+    const midEar = mid(P[7], P[8]);
+    const head = rotBetween(basis(BX, HEADFWD), basis(sub(P[7], P[8]), sub(P[0], midEar)));
+    G.Neck = qslerp(chest, head, 0.5); G.Head = head;
+
+    for (const [S, sx, i] of SIDES) {
+      const H = S === 'Left' ? HL : HR;
+      let handDir, palmN;
+      if (H) { const w = H[0]; handDir = sub(H[9], w); const cr = cross(sub(H[5], w), sub(H[17], w)); palmN = sx > 0 ? sc(cr, -1) : cr; }
+      else { const w = P[i.wr]; handDir = sub(mid(P[i.ix], P[i.pk]), w); const cr = cross(sub(P[i.ix], w), sub(P[i.pk], w)); palmN = sx > 0 ? sc(cr, -1) : cr; }
+      if (len(palmN) < 1e-6) palmN = NY;
+      const a = norm(sub(P[i.el], P[i.sh])), f = norm(sub(P[i.wr], P[i.el]));
+      const bend = perp(f, a), bl = len(bend);
+      const fb = sx > 0 ? sc(cross(a, palmN), -1) : cross(a, palmN);
+      const w = clamp((bl - 0.05) * 4, 0, 1);
+      const armSec = add(sc(norm(bend), w), sc(norm(perp(fb, a)), 1 - w));
+      G[S + 'Arm'] = rotBetween(basis([sx, 0, 0], BZ), basis(a, armSec));
+      G[S + 'ForeArm'] = rotBetween(basis([sx, 0, 0], NY), basis(f, palmN));
+      G[S + 'Hand'] = rotBetween(basis([sx, 0, 0], NY), basis(handDir, palmN));
+      if (H) for (const F of FINGERS) {
+        const t = HAND_TEMPLATE[F], rd = [sx * t.dir[0], t.dir[1], t.dir[2]], rb = basis(rd, NY);
+        for (let k = 0; k < 3; k++) G[`${S}Hand${F}${k + 1}`] = rotBetween(rb, basis(sub(H[t.chain[k + 1]], H[t.chain[k]]), palmN));
+      }
+      // legs
+      const th = norm(sub(P[i.kn], P[i.hip])), sh = norm(sub(P[i.an], P[i.kn])), fv = sub(P[i.to], P[i.he]);
+      const kb = perp(sh, th), kl = len(kb), kw = clamp((kl - 0.05) * 4, 0, 1);
+      const thSec = add(sc(norm(sc(kb, -1)), kw), sc(norm(perp(fv, th)), 1 - kw));
+      G[S + 'UpLeg'] = rotBetween(basis(NY, BZ), basis(th, thSec));
+      G[S + 'Leg'] = rotBetween(basis(NY, BZ), basis(sh, fv));
+      G[S + 'Foot'] = rotBetween(basis(FOOTDIR, BY), basis(sub(P[i.to], P[i.an]), sc(sh, -1)));
+    }
+    const J = rest.joints, glob = new Array(J.length), loc = new Array(J.length);
+    for (let j = 0; j < J.length; j++) {
+      const p = J[j].parent; glob[j] = G[J[j].name] || (p >= 0 ? glob[p] : [0, 0, 0, 1]);
+      loc[j] = p >= 0 ? qnorm(qmul(qconj(glob[p]), glob[j])) : glob[j];
+    }
+    return loc;
+  }
+
+  // forward kinematics: returns world positions & rotations of each joint (+ end sites)
+  function fk(rest, loc, rootPos = [0, 0, 0]) {
+    const J = rest.joints, pos = new Array(J.length), rot = new Array(J.length);
+    for (let j = 0; j < J.length; j++) {
+      const p = J[j].parent;
+      if (p < 0) { pos[j] = rootPos; rot[j] = loc[j]; }
+      else { pos[j] = add(pos[p], qrot(rot[p], J[j].offset)); rot[j] = qmul(rot[p], loc[j]); }
+    }
+    return { pos, rot };
+  }
+
+  // ---- full pipeline ----
+  // frames: [{pw:33x3 raw MP world | null, pi:33x3 [u,v,vis] | null, hl:21x3 | null, hr:21x3 | null}]
+  function solveAll(frames, opt) {
+    const n = frames.length, fps = opt.fps, dt = 1 / fps;
+    const toY = p => [p[0], -p[1], -p[2]];
+    let pw = frames.map(f => f.pw), pi = frames.map(f => f.pi), hl = frames.map(f => f.hl), hr = frames.map(f => f.hr);
+    if (opt.mirrored) {
+      const swap = a => a && a.map((_, k) => a[MIRROR[k]]);
+      pw = pw.map(a => a && swap(a.map(p => [-p[0], p[1], p[2]])));
+      pi = pi.map(a => a && swap(a.map(p => [1 - p[0], p[1], p[2]])));
+      const L = hl; hl = hr.map(a => a && a.map(p => [-p[0], p[1], p[2]])); hr = L.map(a => a && a.map(p => [-p[0], p[1], p[2]]));
+    }
+    const valid = pw.filter(Boolean).length;
+    if (!valid) throw new Error('No person was detected in this video.');
+    let roots = pw.map((w, k) => (w && pi[k] ? solveRoot(w, pi[k], opt.W, opt.H, opt.fov) : null));
+    pw = fillGaps(pw); roots = fillGaps(roots) || pw.map(() => [0, 0, 3]);
+    const hlF = fillGaps(hl), hrF = fillGaps(hr);
+
+    // convert to Y-up and smooth (zero-lag one-euro)
+    const s = clamp(opt.smooth, 0, 1);
+    const mc = s <= 0 ? 999 : 6 * Math.pow(0.06, s); // 6Hz .. 0.36Hz
+    let P = smoothPoints(pw.map(a => a.map(toY)), dt, mc, 0.4);
+    let R = smoothPoints(roots.map(r => [toY(r)]), dt, mc * 0.5, 0.2).map(a => a[0]);
+    const HL = hlF ? smoothPoints(hlF.map(a => a.map(toY)), dt, mc * 1.5, 0.6) : null;
+    const HR = hrF ? smoothPoints(hrF.map(a => a.map(toY)), dt, mc * 1.5, 0.6) : null;
+
+    const M = measure(P, HL, HR), rest = buildRest(M);
+    let locals = P.map((p, k) => solveFrame(p, HL && HL[k], HR && HR[k], rest));
+    // keep quaternion hemispheres continuous
+    for (let k = 1; k < n; k++) for (let j = 0; j < locals[k].length; j++) {
+      const a = locals[k - 1][j], b = locals[k][j];
+      if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0) locals[k][j] = b.map(v => -v);
+    }
+    let rootPos = R.map((r, k) => add(r, mid(P[k][23], P[k][24])));
+    const ix = rest.index;
+    const feetLocal = () => locals.map(l => {
+      const { pos, rot } = fk(rest, l);
+      const out = {};
+      for (const S of ['Left', 'Right']) {
+        const an = pos[ix[S + 'Foot']], toe = pos[ix[S + 'ToeBase']];
+        const tip = add(toe, qrot(rot[ix[S + 'ToeBase']], [0, 0, 0.05]));
+        const heel = [an[0], an[1] - M.ankleH, an[2]];
+        out[S] = { heel, toe, tip, low: Math.min(heel[1], toe[1], tip[1]), c: mid(heel, toe) };
+      }
+      return out;
+    });
+    const contactsFrom = (FL, RP) => {
+      const lows = FL.map((f, k) => Math.min(f.Left.low, f.Right.low) + RP[k][1]);
+      const floor = percentile(lows, 0.12);
+      const C = FL.map(() => ({ Left: false, Right: false }));
+      for (const S of ['Left', 'Right']) {
+        const gp = FL.map((f, k) => add(f[S].c, RP[k]));
+        for (let k = 0; k < n; k++) {
+          const a = gp[Math.max(0, k - 1)], b = gp[Math.min(n - 1, k + 1)];
+          const sp = len(sub(b, a)) / (dt * Math.max(1, Math.min(n - 1, k + 1) - Math.max(0, k - 1)));
+          C[k][S] = FL[k][S].low + RP[k][1] - floor < opt.contactHeight && sp < opt.contactSpeed;
+        }
+        // debounce
+        const minRun = Math.max(2, Math.round(0.08 * fps));
+        for (const val of [false, true]) {
+          let k = 0;
+          while (k < n) { let e = k; while (e < n && C[e][S] === C[k][S]) e++; if (C[k][S] === val && e - k < minRun && k > 0 && e < n) for (let q = k; q < e; q++) C[q][S] = !val; k = e; }
+        }
+      }
+      return { C, floor };
+    };
+
+    let FL = feetLocal();
+    // auto-level the ground plane (removes camera tilt)
+    let levelQ = [0, 0, 0, 1];
+    if (opt.autoLevel) {
+      const { C } = contactsFrom(FL, rootPos);
+      const pts = [];
+      for (let k = 0; k < n; k++) for (const S of ['Left', 'Right']) if (C[k][S]) { const g = add(FL[k][S].c, rootPos[k]); pts.push([g[0], FL[k][S].low + rootPos[k][1], g[2]]); }
+      if (pts.length > 12) {
+        const xs = pts.map(p => p[0]), zs = pts.map(p => p[2]);
+        const spread = Math.max(percentile(xs, 0.9) - percentile(xs, 0.1), percentile(zs, 0.9) - percentile(zs, 0.1));
+        if (spread > 0.5) {
+          // least squares y = a x + b z + c
+          let Sxx = 0, Sxz = 0, Szz = 0, Sx = 0, Sz = 0, Sy = 0, Sxy = 0, Szy = 0; const N = pts.length;
+          for (const [x, y, z] of pts) { Sxx += x * x; Sxz += x * z; Szz += z * z; Sx += x; Sz += z; Sy += y; Sxy += x * y; Szy += z * y; }
+          const A = [[Sxx, Sxz, Sx], [Sxz, Szz, Sz], [Sx, Sz, N]], B = [Sxy, Szy, Sy];
+          const det = m => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+          const D = det(A);
+          if (Math.abs(D) > 1e-9) {
+            const sol = [0, 1].map(c => det(A.map((row, r) => row.map((v, q) => (q === c ? B[r] : v)))) / D);
+            const nrm = norm([-sol[0], 1, -sol[1]]);
+            if (nrm[1] > Math.cos(35 * Math.PI / 180)) levelQ = qFromTo(nrm, [0, 1, 0]);
+          }
+        }
+      }
+      if (levelQ[3] < 0.99999) {
+        rootPos = rootPos.map(r => qrot(levelQ, r));
+        locals = locals.map(l => { const c = l.slice(); c[0] = qnorm(qmul(levelQ, l[0])); return c; });
+        FL = feetLocal();
+      }
+    }
+
+    const { C, floor } = contactsFrom(FL, rootPos);
+    if (opt.footLock) {
+      let c = [0, 0, 0]; const anchor = { Left: null, Right: null };
+      const alpha = clamp(dt * 20, 0.05, 1);
+      const out = new Array(n);
+      for (let k = 0; k < n; k++) {
+        const r = rootPos[k]; const des = [];
+        for (const S of ['Left', 'Right']) {
+          if (C[k][S]) {
+            const gx = FL[k][S].c[0] + r[0], gz = FL[k][S].c[2] + r[2], low = FL[k][S].low + r[1];
+            if (!anchor[S]) anchor[S] = [gx + c[0], gz + c[2]];
+            des.push([anchor[S][0] - gx, floor - low, anchor[S][1] - gz]);
+          } else anchor[S] = null;
+        }
+        if (des.length) {
+          const t = des.reduce((a, b) => add(a, b), [0, 0, 0]).map(v => v / des.length);
+          c = lerp(c, t, alpha);
+        }
+        out[k] = add(r, c);
+      }
+      rootPos = out;
+    }
+    // floor to y=0, start at origin
+    rootPos = rootPos.map(r => [r[0], r[1] - floor, r[2]]);
+    const r0 = rootPos[0];
+    rootPos = rootPos.map(r => (opt.inPlace ? [0, r[1], 0] : [r[0] - r0[0], r[1], r[2] - r0[2]]));
+    if (opt.lowerToFloor !== false) { // never let the feet sink below the floor
+      const FL2 = FL;
+      rootPos = rootPos.map((r, k) => { const low = Math.min(FL2[k].Left.low, FL2[k].Right.low) + r[1]; return low < -0.005 ? [r[0], r[1] - low, r[2]] : r; });
+    }
+    return { rest, fps, n, rootPos, locals, contacts: C, hasHands: { Left: !!HL, Right: !!HR }, M };
+  }
+
+  // pose landmark left/right mirror map
+  const MIRROR = (() => { const m = [...Array(33).keys()]; const pairs = [[1, 4], [2, 5], [3, 6], [7, 8], [9, 10]]; for (let i = 11; i < 33; i += 2) pairs.push([i, i + 1]); for (const [a, b] of pairs) { m[a] = b; m[b] = a; } return m; })();
+
+  // sample animation at time t (seconds)
+  function sample(anim, t) {
+    const u = clamp(t * anim.fps, 0, anim.n - 1), i0 = Math.floor(u), i1 = Math.min(anim.n - 1, i0 + 1), a = u - i0;
+    return { root: lerp(anim.rootPos[i0], anim.rootPos[i1], a), locals: anim.locals[i0].map((q, j) => qslerp(q, anim.locals[i1][j], a)) };
+  }
+
+  // ---- exporters ----
+  const NAME_MAPS = {
+    standard: n => n,
+    mixamo: n => 'mixamorig:' + n,
+    unreal: n => {
+      const fixed = { Hips: 'pelvis', Spine: 'spine_01', Spine1: 'spine_02', Spine2: 'spine_03', Neck: 'neck_01', Head: 'head' };
+      if (fixed[n]) return fixed[n];
+      const m = n.match(/^(Left|Right)(.*)$/); if (!m) return n; const s = m[1] === 'Left' ? 'l' : 'r', b = m[2];
+      const parts = { Shoulder: 'clavicle', Arm: 'upperarm', ForeArm: 'lowerarm', Hand: 'hand', UpLeg: 'thigh', Leg: 'calf', Foot: 'foot', ToeBase: 'ball' };
+      if (parts[b]) return `${parts[b]}_${s}`;
+      const f = b.match(/^Hand(Thumb|Index|Middle|Ring|Pinky)(\d)$/); if (f) return `${f[1].toLowerCase()}_0${f[2]}_${s}`;
+      return n;
+    },
+  };
+  function toBVH(anim, outFps, naming = 'standard', unit = 100) {
+    const J = anim.rest.joints, nm = NAME_MAPS[naming] || NAME_MAPS.standard, f = v => (v * unit).toFixed(4);
+    const kids = J.map((_, i) => J.map((j, k) => (j.parent === i ? k : -1)).filter(k => k >= 0));
+    let s = 'HIERARCHY\n';
+    const order = [];
+    const emit = (j, d) => {
+      const ind = '  '.repeat(d), o = J[j].offset; order.push(j);
+      s += `${ind}${d === 0 ? 'ROOT' : 'JOINT'} ${nm(J[j].name)}\n${ind}{\n`;
+      s += `${ind}  OFFSET ${f(o[0])} ${f(o[1])} ${f(o[2])}\n`;
+      s += `${ind}  CHANNELS ${d === 0 ? '6 Xposition Yposition Zposition ' : '3 '}Zrotation Xrotation Yrotation\n`;
+      for (const k of kids[j]) emit(k, d + 1);
+      if (!kids[j].length) { const e = J[j].end || sc(norm(o), 0.03); s += `${ind}  End Site\n${ind}  {\n${ind}    OFFSET ${f(e[0])} ${f(e[1])} ${f(e[2])}\n${ind}  }\n`; }
+      s += `${ind}}\n`;
+    };
+    emit(0, 0);
+    const dur = (anim.n - 1) / anim.fps, N = Math.max(1, Math.round(dur * outFps) + 1);
+    s += `MOTION\nFrames: ${N}\nFrame Time: ${(1 / outFps).toFixed(6)}\n`;
+    let prev = null;
+    for (let k = 0; k < N; k++) {
+      const smp = sample(anim, k / outFps), row = [];
+      const cur = order.map(j => eulerZXY(smp.locals[j]));
+      if (prev) cur.forEach((e, q) => e.forEach((v, c) => { let d = v - prev[q][c]; while (d > 180) { v -= 360; d -= 360; } while (d < -180) { v += 360; d += 360; } e[c] = v; }));
+      prev = cur;
+      row.push(f(smp.root[0]), f(smp.root[1]), f(smp.root[2]));
+      for (const e of cur) row.push(e[0].toFixed(4), e[1].toFixed(4), e[2].toFixed(4));
+      s += row.join(' ') + '\n';
+    }
+    return s;
+  }
+  function toJSON(anim, outFps, naming = 'standard') {
+    const J = anim.rest.joints, nm = NAME_MAPS[naming] || NAME_MAPS.standard;
+    const dur = (anim.n - 1) / anim.fps, N = Math.max(1, Math.round(dur * outFps) + 1), frames = [];
+    for (let k = 0; k < N; k++) {
+      const smp = sample(anim, k / outFps), { pos, rot } = fk(anim.rest, smp.locals, smp.root);
+      frames.push({ t: +(k / outFps).toFixed(5), root: smp.root.map(v => +v.toFixed(5)), joints: J.map((_, j) => ({ p: pos[j].map(v => +v.toFixed(5)), q: rot[j].map(v => +v.toFixed(6)), lq: smp.locals[j].map(v => +v.toFixed(6)) })) });
+    }
+    return { format: 'mocap-studio/1', units: 'meters', up: 'Y', forward: '+Z (faces camera)', fps: outFps, joints: J.map(j => ({ name: nm(j.name), parent: j.parent, offset: j.offset })), frames };
+  }
+
+  g.Solver = { solveAll, solveFrame, buildRest, measure, fk, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+</head>
+<body>
+<header>
+  <div class="logo">M</div>
+  <div><h1>NoCap MoCap</h1><div class="tag">AI video → 3D motion capture · body + fingers · BVH / GLB</div></div>
+  <div class="pill" id="netPill">Works offline · Unlimited generations</div>
+</header>
+<div class="app">
+<aside>
+  <section class="card">
+    <h2><span class="n">1</span>Source video</h2>
+    <div class="drop" id="drop"><b>Drop a video here</b><br>or tap to choose — any format (iPhone MOV/HEVC, MP4, MKV, AVI…)</div>
+    <input type="file" id="file" accept="video/*,.mov,.qt,.mp4,.m4v,.hevc,.heic,.webm,.mkv,.avi,.wmv,.flv,.3gp,.3g2,.mts,.m2ts,.ts,.mpg,.mpeg,.ogv,.ogg,.mxf,.dv,.vob,.gif" hidden>
+    <div style="display:flex;gap:7px;margin-top:8px"><button class="btn small" id="camBtn" style="flex:1">● Record with webcam</button></div>
+    <div class="progress" id="cprog"><i></i></div>
+    <div class="status" id="vinfo">One clearly visible person, full body in frame, steady camera works best.</div>
+  </section>
+
+  <section class="card">
+    <h2><span class="n">2</span>Capture</h2>
+    <div class="row"><label>AI model</label><select id="quality"><option value="heavy" selected>Heavy (best)</option><option value="full">Full</option><option value="lite">Lite (fast)</option></select></div>
+    <div class="row"><label>Analysis rate</label><select id="procFps"><option>15</option><option>24</option><option selected>30</option><option>60</option></select></div>
+    <div class="row"><label>Finger capture</label><input type="checkbox" id="hands" checked></div>
+    <div class="row"><label>Mirrored (selfie) video</label><input type="checkbox" id="mirrored"></div>
+    <div class="row"><label>Camera field of view</label><span><input type="range" id="fov" min="25" max="100" value="55"> </span><span class="val" id="fovV">55°</span></div>
+    <button class="btn primary" id="go" disabled>Generate motion</button>
+    <div class="progress" id="prog"><i></i></div>
+    <div class="status" id="pstat"></div>
+  </section>
+
+  <section class="card">
+    <h2><span class="n">3</span>Refine <span style="margin-left:auto;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400">applies instantly</span></h2>
+    <div class="row"><label>Smoothing</label><span><input type="range" id="smooth" min="0" max="1" step="0.01" value="0.45"></span><span class="val" id="smoothV">0.45</span></div>
+    <div class="row"><label>Foot locking (anti-slide)</label><input type="checkbox" id="footLock" checked></div>
+    <div class="row"><label>Contact sensitivity</label><span><input type="range" id="contact" min="0.02" max="0.15" step="0.005" value="0.07"></span><span class="val" id="contactV">7cm</span></div>
+    <div class="row"><label>Auto-level ground</label><input type="checkbox" id="autoLevel" checked></div>
+    <div class="row"><label>In-place (no root travel)</label><input type="checkbox" id="inPlace"></div>
+    <div class="stats" id="stats" style="display:none"></div>
+  </section>
+
+  <section class="card">
+    <h2><span class="n">4</span>Export</h2>
+    <div class="row"><label>Target rig naming</label><select id="naming"><option value="standard">Standard / Blender</option><option value="mixamo">Mixamo</option><option value="unreal">Unreal (UE mannequin)</option></select></div>
+    <div class="row"><label>Frame rate</label><select id="outFps"><option>24</option><option selected>30</option><option>60</option><option>120</option></select></div>
+    <div class="grid3"><button class="btn" id="exBVH" disabled>BVH</button><button class="btn" id="exGLB" disabled>GLB</button><button class="btn" id="exJSON" disabled>JSON</button></div>
+    <div class="hint">
+      <b style="color:var(--dim)">BVH</b> → Blender (File › Import › BVH), MotionBuilder, Cascadeur, MMD (via Blender + mmd_tools), Mixamo-rig retarget.<br>
+      <b style="color:var(--dim)">GLB</b> → skinned rig + animation for Unity, Unreal, Godot, Roblox (via Blender → FBX).<br>
+      <b style="color:var(--dim)">JSON</b> → per-frame 3D joint positions + rotations for robots / custom retargeting.
+    </div>
+  </section>
+</aside>
+
+<main>
+  <div class="stage">
+    <div class="view" id="vview">
+      <div class="label">Source + AI tracking</div>
+      <div class="vtools"><button class="btn small on" id="tOverlay">Overlay</button></div>
+      <canvas class="ov" id="pcv" style="display:none;z-index:1"></canvas>
+      <video id="vid" muted playsinline webkit-playsinline preload="auto" disablepictureinpicture disableremoteplayback></video>
+      <canvas class="ov" id="ov"></canvas>
+      <div class="empty" id="vEmpty">No video loaded</div>
+      <button class="bigplay" id="bigPlay" aria-label="Play">▶</button>
+    </div>
+    <div class="view v3d">
+      <div class="label">3D motion</div>
+      <div class="vtools">
+        <button class="btn small on" id="tBody">Body</button>
+        <button class="btn small" id="tBones">Bones</button>
+        <button class="btn small on" id="tFollow">Follow</button>
+        <button class="btn small" id="tReset">Reset view</button>
+      </div>
+      <div id="three"></div>
+    </div>
+  </div>
+  <div class="timeline">
+    <button class="btn" id="play" disabled>▶</button>
+    <div class="tlwrap"><input type="range" id="scrub" min="0" max="1" step="0.0001" value="0" disabled><canvas id="ctl" height="10"></canvas></div>
+    <select id="speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
+    <div class="time" id="tlabel">0.00s / 0.00s</div>
+  </div>
+</main>
+</div>
+<div class="toast" id="toast"></div>
+<div class="modal" id="camModal"><div class="box">
+  <video id="camVid" muted playsinline autoplay></video>
+  <div style="display:flex;gap:8px;margin-top:10px"><button class="btn" id="recBtn" style="flex:1">Start recording</button><button class="btn" id="camClose">Close</button></div>
+  <div class="status" id="camStat">Step back so your whole body is visible.</div>
+</div></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+const S = window.Solver;
+const $ = id => document.getElementById(id);
+const MP_VER = '0.10.14';
+const MP_BASE = new URL('vendor/tasks-vision', location.href).href;
+const POSE_URL = q => new URL(`models/pose_landmarker_${q}.task`, location.href).href;
+const HAND_URL = new URL('models/hand_landmarker.task', location.href).href;
+
+// ---------- UI helpers ----------
+let toastT;
+function toast(msg, err = false, ms = 4500) { const t = $('toast'); t.textContent = msg; t.className = 'toast' + (err ? ' err' : ''); t.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => (t.style.display = 'none'), ms); }
+const fmt = s => `${s.toFixed(2)}s`;
+async function saveFile(data, name, type) {
+  const blob = data instanceof Blob ? data : new Blob([data], { type: type || 'application/octet-stream' });
+  if (matchMedia('(pointer:coarse)').matches && navigator.canShare) {
+    try { const f = new File([blob], name, { type: blob.type || 'application/octet-stream' }); if (navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: name }); return; } }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  download(blob, name);
+}
+function download(data, name, type) { const b = data instanceof Blob ? data : new Blob([data], { type }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500); }
+for (const [id, out, f] of [['fov', 'fovV', v => v + '°'], ['smooth', 'smoothV', v => (+v).toFixed(2)], ['contact', 'contactV', v => Math.round(v * 100) + 'cm']]) $(id).addEventListener('input', () => ($(out).textContent = f($(id).value)));
+
+// ---------- state ----------
+let videoURL = null, videoName = 'motion', frames = null, anim = null, meta = null;
+let playing = false, curTime = 0, cancelFlag = false, busy = false, needRender = true;
+const vid = $('vid');
+let codecSrc = null, previews = [], firstPreview = null, previewFps = 30;
+
+// ---------- source loading ----------
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function waitEvent(el, ev, ms) { return new Promise(res => { let done = false; const fin = ok => { if (done) return; done = true; el.removeEventListener(ev, on); el.removeEventListener('error', onErr); res(ok); }; const on = () => fin(true), onErr = () => fin(false); el.addEventListener(ev, on); el.addEventListener('error', onErr); setTimeout(() => fin(false), ms); }); }
+// MediaRecorder/WebM files often report duration=Infinity until you seek to the end
+async function fixDuration(v) {
+  if (isFinite(v.duration) && v.duration > 0) return;
+  v.currentTime = 1e9; await waitEvent(v, 'durationchange', 4000); await waitEvent(v, 'seeked', 2000);
+  v.currentTime = 0; await waitEvent(v, 'seeked', 2000);
+}
+// hidden <video> that iOS will actually decode (must be in the DOM, muted, inline, and nudged with play())
+function hiddenVideoEl(url) {
+  const v = document.createElement('video');
+  v.muted = true; v.defaultMuted = true; v.playsInline = true; v.setAttribute('muted', ''); v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', ''); v.preload = 'auto';
+  v.style.cssText = 'position:fixed;left:0;top:0;width:4px;height:4px;opacity:0.01;pointer-events:none;z-index:-1';
+  document.body.appendChild(v); v.src = url;
+  return v;
+}
+async function makeHiddenVideo(url, existing) {
+  const v = existing || hiddenVideoEl(url);
+  if (!existing) v.load();
+  const meta = v.readyState >= 1 || await waitEvent(v, 'loadedmetadata', existing ? 15000 : 7000);
+  if (!meta || !v.videoWidth) { v.remove(); return null; }
+  if (v.readyState < 2) { const p = v.play(); if (p) p.catch(() => {}); await Promise.race([waitEvent(v, 'loadeddata', 4000), sleep(4000)]); v.pause(); }
+  await fixDuration(v); if (!(isFinite(v.duration) && v.duration > 0)) { v.remove(); return null; }
+  return v;
+}
+// can this browser decode the file natively? (metadata + real picture size is enough; no pixel reads)
+async function probeVideo(url) {
+  const v = await makeHiddenVideo(url); if (!v) return false;
+  v.removeAttribute('src'); v.load(); v.remove(); return true;
+}
+
+// ---- universal converter (ffmpeg compiled to WebAssembly, loaded only when needed) ----
+const FF_CORE = new URL('vendor/ffmpeg/', location.href).href;
+let ffWorker = null;
+function getFF() {
+  if (ffWorker) return ffWorker;
+  const src = `
+    const CORE = ${JSON.stringify(FF_CORE)};
+    let core = null, onProg = null;
+    self.onmessage = async (e) => {
+      try {
+        if (!core) {
+          importScripts(CORE + 'ffmpeg-core.js');
+          core = await self.createFFmpegCore({
+            mainScriptUrlOrBlob: CORE + 'ffmpeg-core.js#' + btoa(JSON.stringify({ wasmURL: CORE + 'ffmpeg-core.wasm' })),
+            locateFile: (p) => p.endsWith('.wasm') ? CORE + 'ffmpeg-core.wasm' : CORE + p,
+          });
+          core.setLogger && core.setLogger(({ message }) => self.postMessage({ type: 'log', message }));
+          core.setProgress && core.setProgress(({ progress, time }) => self.postMessage({ type: 'progress', progress, time }));
+        }
+        const { input, data, args, output } = e.data;
+        core.FS.writeFile(input, new Uint8Array(data));
+        const ret = core.exec(...args);
+        let out = null; try { out = core.FS.readFile(output); } catch (err) {}
+        try { core.FS.unlink(input); } catch (err) {} try { core.FS.unlink(output); } catch (err) {}
+        core.reset && core.reset();
+        if (!out || !out.length) throw new Error('conversion produced no video (ffmpeg code ' + ret + ')');
+        self.postMessage({ type: 'done', data: out.buffer }, [out.buffer]);
+      } catch (err) { self.postMessage({ type: 'error', message: String((err && err.message) || err) }); }
+    };`;
+  ffWorker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+  return ffWorker;
+}
+const FF_ARGS = (i, o) => ['-i', i, '-an', '-sn', '-vf', 'scale=w=960:h=960:force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', '-g', '15', '-movflags', '+faststart', o];
+let ffMain = null;
+async function transcodeMainThread(file, onProgress) {
+  if (!window.createFFmpegCore) await new Promise((res, rej) => { const s = document.createElement('script'); s.src = FF_CORE + 'ffmpeg-core.js'; s.onload = res; s.onerror = () => rej(new Error('converter failed to download')); document.head.appendChild(s); });
+  if (!ffMain) ffMain = await window.createFFmpegCore({ mainScriptUrlOrBlob: FF_CORE + 'ffmpeg-core.js#' + btoa(JSON.stringify({ wasmURL: FF_CORE + 'ffmpeg-core.wasm' })), locateFile: p => (p.endsWith('.wasm') ? FF_CORE + 'ffmpeg-core.wasm' : FF_CORE + p) });
+  const ext = ((file.name || '').match(/\.[a-z0-9]+$/i) || ['.mov'])[0].toLowerCase(), i = 'in' + ext;
+  ffMain.FS.writeFile(i, new Uint8Array(await file.arrayBuffer()));
+  onProgress(-1); await sleep(60); // let the "converting" message paint; the page is busy until done
+  ffMain.exec(...FF_ARGS(i, 'out.mp4'));
+  let out = null; try { out = ffMain.FS.readFile('out.mp4'); } catch (e) {}
+  try { ffMain.FS.unlink(i); ffMain.FS.unlink('out.mp4'); } catch (e) {}
+  ffMain.reset && ffMain.reset();
+  if (!out || !out.length) throw new Error('conversion failed');
+  return new Blob([out], { type: 'video/mp4' });
+}
+async function transcode(file, onProgress) {
+  let w; try { w = getFF(); } catch (e) { console.warn('worker blocked, converting on main thread', e); ffWorker = null; return transcodeMainThread(file, onProgress); }
+  try { return await transcodeWorker(w, file, onProgress); }
+  catch (e) { if (/insecure|security|worker|importScripts|NetworkError/i.test(e.message)) { ffWorker?.terminate(); ffWorker = null; return transcodeMainThread(file, onProgress); } throw e; }
+}
+async function transcodeWorker(w, file, onProgress) {
+  const ext = ((file.name || '').match(/\.[a-z0-9]+$/i) || ['.mov'])[0].toLowerCase();
+  const data = await file.arrayBuffer();
+  const logs = [];
+  return new Promise((res, rej) => {
+    w.onmessage = e => {
+      const m = e.data;
+      if (m.type === 'progress') onProgress(Math.max(0, Math.min(1, m.progress || 0)));
+      else if (m.type === 'log') { logs.push(m.message); if (logs.length > 30) logs.shift(); }
+      else if (m.type === 'done') res(new Blob([m.data], { type: 'video/mp4' }));
+      else if (m.type === 'error') { console.warn(logs.join('\n')); rej(new Error(m.message)); }
+    };
+    w.onerror = e => rej(new Error(e.message || 'converter failed to load'));
+    // video only, ≤960px, H.264 baseline-friendly MP4 that every browser can play and seek; rotation applied
+    w.postMessage({ input: 'in' + ext, output: 'out.mp4', data, args: FF_ARGS('in' + ext, 'out.mp4') }, [data]);
+  });
+}
+
+// ---- direct decoding with WebCodecs + mp4box (works where <video> from files is blocked) ----
+const MP4BOX_URL = new URL('vendor/mp4box.all.min.js', location.href).href;
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    if (document.querySelector(`script[data-src="${src}"]`)) return res();
+    const s = document.createElement('script'); s.src = src; s.dataset.src = src; s.onload = res; s.onerror = () => rej(new Error('failed to download ' + src.split('/').pop())); document.head.appendChild(s);
+  });
+}
+// mp4box logs iPhone QuickTime metadata boxes it skips as "errors"; they are harmless, so hide them
+{ const ce = console.error.bind(console), cw = console.warn.bind(console), noisy = a => typeof a[0] === 'string' && /\[(BoxParser|ISOFile|MP4Box|DataStream)\]|BoxParser/.test(a[0]);
+  console.error = (...a) => { if (!noisy(a)) ce(...a); }; console.warn = (...a) => { if (!noisy(a)) cw(...a); }; }
+async function openCodecSource(file, name) {
+  if (!('VideoDecoder' in window) || !('EncodedVideoChunk' in window)) return null;
+  await loadScript(MP4BOX_URL);
+  try { window.Log && Log.setLogLevel && Log.setLogLevel(Log.error); } catch (e) {}
+  const buf = await file.arrayBuffer();
+  const mp4 = MP4Box.createFile();
+  let info;
+  try {
+    info = await new Promise((res, rej) => { mp4.onReady = res; mp4.onError = e => rej(new Error(String(e))); buf.fileStart = 0; mp4.appendBuffer(buf); mp4.flush(); setTimeout(() => rej(new Error('not MP4/MOV')), 6000); });
+  } catch (e) { console.warn('demux failed', e); return null; }
+  const track = info.videoTracks && info.videoTracks[0]; if (!track) return null;
+  const trak = mp4.getTrackById(track.id);
+  let description;
+  for (const en of trak.mdia.minf.stbl.stsd.entries) {
+    const box = en.avcC || en.hvcC || en.vpcC || en.av1C;
+    if (box) { const st = new DataStream(undefined, 0, DataStream.BIG_ENDIAN); box.write(st); description = new Uint8Array(st.buffer, 8); break; }
+  }
+  const config = { codec: track.codec.startsWith('vp08') ? 'vp8' : track.codec, codedWidth: track.video.width, codedHeight: track.video.height };
+  if (description) config.description = description;
+  let sup = { supported: false }; try { sup = await VideoDecoder.isConfigSupported(config); } catch (e) {}
+  if (!sup.supported) { console.warn('codec not supported by WebCodecs', config.codec); return null; }
+  const samples = await new Promise(res => {
+    const out = []; let done = false; const fin = () => { if (!done) { done = true; res(out); } };
+    mp4.onSamples = (id, u, s) => { for (const x of s) out.push({ order: out.length, key: x.is_sync, ts: 1e6 * x.cts / x.timescale, dur: 1e6 * x.duration / x.timescale, data: x.data }); if (out.length >= track.nb_samples) fin(); };
+    mp4.setExtractionOptions(track.id, null, { nbSamples: Infinity }); mp4.start(); mp4.flush(); setTimeout(fin, 4000);
+  });
+  if (!samples.length) return null;
+  const decodeOrder = samples.slice().sort((a, b) => a.order - b.order); // decoders need file (decode) order
+  const firstKey = decodeOrder.findIndex(s => s.key); if (firstKey > 0) decodeOrder.splice(0, firstKey);
+  const tsMin = Math.min(...samples.map(s => s.ts)), tsMax = Math.max(...samples.map(s => s.ts + s.dur));
+  const m = track.matrix || [65536, 0, 0, 0, 65536, 0, 0, 0, 1 << 30];
+  let rot = Math.round(Math.atan2(m[1], m[0]) * 180 / Math.PI / 90) * 90; rot = ((rot % 360) + 360) % 360;
+    const duration = (track.duration / track.timescale) || (tsMax - tsMin) / 1e6;
+  const width = rot % 180 ? track.video.height : track.video.width, height = rot % 180 ? track.video.width : track.video.height;
+  return { mode: 'codec', name, config, samples: decodeOrder, duration, width, height, rot, srcFps: samples.length / Math.max(0.01, duration) };
+}
+function drawCodecFrame(ctx, f, src, W, H) {
+  ctx.save(); ctx.translate(W / 2, H / 2); ctx.rotate(src.rot * Math.PI / 180);
+  const dw = src.rot % 180 ? H : W, dh = src.rot % 180 ? W : H; ctx.drawImage(f, -dw / 2, -dh / 2, dw, dh); ctx.restore();
+}
+// decode every sample in order; call onFrame(frame, tSeconds) for frames on the sampling grid
+async function codecIterate(src, step, onFrame, cancelled, maxFrames = Infinity) {
+  let nextT = 0, t0 = null, err = null, count = 0;
+  const dec = new VideoDecoder({
+    output: f => {
+      try {
+        if (t0 === null) t0 = f.timestamp;
+        const t = (f.timestamp - t0) / 1e6;
+        if (count < maxFrames && !cancelled() && t + step * 0.5 >= nextT) { onFrame(f, t); count++; nextT += step; while (nextT + step * 0.5 <= t) nextT += step; }
+      } catch (e) { err = err || e; } finally { f.close(); }
+    },
+    error: e => { err = err || e; },
+  });
+  dec.configure(src.config);
+  for (const s of src.samples) {
+    if (err) break; if (cancelled() || count >= maxFrames) break;
+    dec.decode(new EncodedVideoChunk({ type: s.key ? 'key' : 'delta', timestamp: s.ts, duration: s.dur, data: s.data }));
+    while (dec.decodeQueueSize > 6 && !err) await sleep(4);
+  }
+  try { await dec.flush(); } catch (e) { if (!err && !cancelled() && count < maxFrames) err = e; }
+  try { dec.close(); } catch (e) {}
+  if (err) throw err;
+  return count;
+}
+function previewSize(w, h, max = 540) { const s = Math.min(1, max / Math.max(w, h)); return [Math.round(w * s), Math.round(h * s)]; }
+async function codecFirstFrame(src) {
+  const [w, h] = previewSize(src.width, src.height, 960), c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d');
+  await codecIterate(src, 1, f => drawCodecFrame(x, f, src, w, h), () => false, 1);
+  return new Promise(r => c.toBlob(r, 'image/jpeg', 0.8));
+}
+let pvToken = 0, pvShown = -2;
+async function showPreviewBlob(blob, idx) {
+  if (!blob || idx === pvShown) return; const my = ++pvToken;
+  try { const bmp = await createImageBitmap(blob); if (my !== pvToken) { bmp.close?.(); return; } const c = $('pcv'); if (c.width !== bmp.width) { c.width = bmp.width; c.height = bmp.height; } c.getContext('2d').drawImage(bmp, 0, 0); bmp.close?.(); pvShown = idx; } catch (e) {}
+}
+function useCodecMode(on) { $('pcv').style.display = on ? 'block' : 'none'; vid.style.display = on ? 'none' : ''; if (on) { vid.removeAttribute('src'); vid.load(); } }
+
+let loadToken = 0;
+async function loadVideo(file, name) {
+  const my = ++loadToken; pause(); curTime = 0;
+  name = name || file.name || 'video';
+  const info = $('vinfo'), cp = $('cprog'), bar = cp.querySelector('i');
+  $('go').disabled = true; info.textContent = 'Opening video…';
+  frames = null; anim = null; clearCharacter(); setReady(false); previews = []; firstPreview = null; pvShown = -2;
+  let blob = file, url = null, mode = null, csrc = null, converted = false;
+  const tryNative = async b => { const u = URL.createObjectURL(b); if (await probeVideo(u)) return u; URL.revokeObjectURL(u); return null; };
+  const tryCodec = async b => { info.textContent = 'Decoding video directly…'; try { return await openCodecSource(b, name); } catch (e) { console.warn(e); return null; } };
+  try {
+    let u = null; try { u = await tryNative(file); } catch (e) { console.warn('native video blocked', e); }
+    if (my !== loadToken) return;
+    if (u) { url = u; mode = 'native'; }
+    else if ((csrc = await tryCodec(file))) mode = 'codec';
+    else {
+      if (file.size > 1.5e9) throw new Error('this file is too large to convert in the browser (over 1.5 GB). Trim it or export a shorter clip.');
+      cp.classList.add('conv'); bar.style.width = '0%';
+      info.textContent = 'This format needs converting. Downloading converter (~30 MB, first time only)…';
+      const t0 = performance.now();
+      blob = await transcode(file, p => { if (p < 0) { info.textContent = 'Converting… the screen may freeze for a bit, please wait.'; return; } bar.style.width = (p * 100).toFixed(1) + '%'; const el = (performance.now() - t0) / 1000; info.textContent = `Converting… ${Math.round(p * 100)}%` + (p > 0.03 ? ` · ~${Math.ceil(el / p - el)}s left` : ''); });
+      converted = true; cp.classList.remove('conv');
+      if (my !== loadToken) return;
+      let u2 = null; try { u2 = await tryNative(blob); } catch (e) {}
+      if (u2) { url = u2; mode = 'native'; } else if ((csrc = await tryCodec(blob))) mode = 'codec';
+      else throw new Error('converted video still could not be played');
+    }
+  } catch (e) {
+    console.error(e); cp.classList.remove('conv');
+    if (/insecure|security/i.test(e.message)) e.message = 'this viewer blocks video access. Save the file and open it in Safari or Chrome.';
+    info.textContent = 'Could not open this video: ' + e.message;
+    toast('Could not open this video: ' + e.message, true, 8000); return;
+  }
+  if (my !== loadToken) return;
+  if (videoURL) URL.revokeObjectURL(videoURL);
+  videoURL = url; codecSrc = csrc; videoName = name.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_') || 'motion';
+  let W, H, D;
+  if (mode === 'native') {
+    useCodecMode(false);
+    vid.src = url; vid.load();
+    if (vid.readyState < 1) await waitEvent(vid, 'loadedmetadata', 15000);
+    if (vid.readyState < 2) { try { await vid.play(); } catch (e) {} vid.pause(); }
+    await fixDuration(vid);
+    try { vid.currentTime = 0.001; } catch (e) {}
+    W = vid.videoWidth; H = vid.videoHeight; D = vid.duration;
+  } else {
+    useCodecMode(true);
+    W = csrc.width; H = csrc.height; D = csrc.duration;
+    try { firstPreview = await codecFirstFrame(csrc); showPreviewBlob(firstPreview, -1); } catch (e) { console.warn('preview failed', e); }
+    // decode the whole clip once into small frames for smooth playback
+    try {
+      previewFps = Math.min(30, Math.max(5, Math.round(csrc.srcFps)));
+      const [pw, ph] = previewSize(W, H), pc = document.createElement('canvas'); pc.width = pw; pc.height = ph; const pctx = pc.getContext('2d');
+      const list = []; const N = Math.max(1, Math.floor(D * previewFps));
+      info.textContent = 'Preparing playback…';
+      await codecIterate(csrc, 1 / previewFps, f => { drawCodecFrame(pctx, f, csrc, pw, ph); const i = list.length; list.push(null); pc.toBlob(b => (list[i] = b), 'image/jpeg', 0.72); if (i % 10 === 0) info.textContent = `Preparing playback… ${Math.min(100, Math.round(100 * i / N))}%`; }, () => my !== loadToken);
+      await sleep(80); if (my !== loadToken) return;
+      previews = list;
+    } catch (e) { console.warn('playback frames failed', e); }
+  }
+  $('vEmpty').style.display = 'none';
+  info.innerHTML = `<span style="color:var(--accent);font-weight:600">✓ Video loaded</span> — ${name} · ${W}×${H} · ${D.toFixed(1)}s` + (converted ? ' · converted' : '') + '<br>Now tap <b>Generate motion</b> below.';
+  $('drop').innerHTML = '<b>✓ ' + name.replace(/[<>&]/g, '') + '</b><br>Tap to choose a different video';
+  toast('Video loaded. Tap Generate motion.');
+  $('go').disabled = false; drawOverlay(); $('bigPlay').style.display = 'block';
+  $('scrub').max = D; $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel(); requestRender();
+}
+$('drop').onclick = () => $('file').click();
+$('file').onchange = e => { const f = e.target.files[0]; if (f) loadVideo(f, f.name); e.target.value = ''; };
+$('drop').addEventListener('dragover', e => { e.preventDefault(); $('drop').classList.add('over'); });
+$('drop').addEventListener('dragleave', () => $('drop').classList.remove('over'));
+$('drop').addEventListener('drop', e => { e.preventDefault(); $('drop').classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) loadVideo(f, f.name); });
+
+// webcam recording
+let camStream = null, recorder = null, chunks = [];
+$('camBtn').onclick = async () => {
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    $('camVid').srcObject = camStream; $('camModal').style.display = 'grid';
+  } catch (e) { toast('Camera not available: ' + e.message, true); }
+};
+$('camClose').onclick = () => { if (recorder && recorder.state === 'recording') recorder.stop(); camStream?.getTracks().forEach(t => t.stop()); $('camModal').style.display = 'none'; };
+$('recBtn').onclick = () => {
+  if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
+  chunks = []; const type = ['video/webm;codecs=vp9', 'video/webm', 'video/mp4'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+  recorder = new MediaRecorder(camStream, type ? { mimeType: type } : undefined);
+  recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+  recorder.onstop = () => {
+    const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
+    $('recBtn').textContent = 'Start recording'; $('camClose').click();
+    $('mirrored').checked = false; loadVideo(blob, 'webcam_take.webm');
+  };
+  let n = 3; $('recBtn').disabled = true;
+  const tick = () => { if (n > 0) { $('camStat').textContent = `Recording in ${n}…`; n--; setTimeout(tick, 1000); } else { recorder.start(); $('recBtn').disabled = false; $('recBtn').textContent = '■ Stop recording'; $('camStat').textContent = 'Recording…'; } };
+  tick();
+};
+
+// ---------- MediaPipe ----------
+let vision = null, poseLm = null, handLm = null, poseQ = null;
+async function getVision() {
+  if (vision) return vision;
+  const urls = [`${MP_BASE}/vision_bundle.mjs`, `${MP_BASE}/+esm`];
+  let lastErr;
+  for (const u of urls) { try { vision = await import(u); if (vision.PoseLandmarker) return vision; vision = vision.default || vision; if (vision.PoseLandmarker) return vision; } catch (e) { lastErr = e; } }
+  throw lastErr || new Error('Could not load MediaPipe');
+}
+async function makeTask(Cls, fileset, opts) {
+  try { return await Cls.createFromOptions(fileset, { ...opts, baseOptions: { ...opts.baseOptions, delegate: 'GPU' } }); }
+  catch (e) { console.warn('GPU delegate failed, using CPU', e); return await Cls.createFromOptions(fileset, { ...opts, baseOptions: { ...opts.baseOptions, delegate: 'CPU' } }); }
+}
+async function loadModels(q, wantHands, status) {
+  const V = await getVision();
+  const fileset = await V.FilesetResolver.forVisionTasks(`${MP_BASE}/wasm`);
+  if (!poseLm || poseQ !== q) {
+    status(`Loading ${q} pose model…`); poseLm?.close?.();
+    poseLm = await makeTask(V.PoseLandmarker, fileset, { baseOptions: { modelAssetPath: POSE_URL(q) }, runningMode: 'VIDEO', numPoses: 1, minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5 });
+    poseQ = q;
+  }
+  if (wantHands && !handLm) {
+    status('Loading hand model…');
+    handLm = await makeTask(V.HandLandmarker, fileset, { baseOptions: { modelAssetPath: HAND_URL }, runningMode: 'VIDEO', numHands: 2, minHandDetectionConfidence: 0.35, minHandPresenceConfidence: 0.35, minTrackingConfidence: 0.35 });
+  }
+}
+
+let tsClock = 0, procVideo = null;
+async function processVideo() {
+  if (busy) { cancelFlag = true; return; }
+  busy = true; cancelFlag = false; pause();
+  const preVid = codecSrc ? null : hiddenVideoEl(videoURL); if (preVid) { const p = preVid.play(); if (p) p.catch(() => {}); } // must happen synchronously in the tap
+  const go = $('go'), prog = $('prog'), bar = prog.querySelector('i'), st = $('pstat');
+  const status = m => (st.textContent = m);
+  go.textContent = 'Cancel'; prog.style.display = 'block'; bar.style.width = '0%';
+  try {
+    let q = $('quality').value, pfps = +$('procFps').value; const wantHands = $('hands').checked;
+    try { await loadModels(q, wantHands, status); }
+    catch (e) { if (q !== 'heavy') throw e; console.warn(e); q = 'full'; $('quality').value = 'full'; toast('Heavy model is too big for this device, using Full.'); poseLm = null; await loadModels(q, wantHands, status); }
+    status('Preparing video…');
+    const detect = (cv, t) => {
+      tsClock += Math.max(1, Math.round(1000 / pfps));
+      const pr = poseLm.detectForVideo(cv, tsClock);
+      const fr = { t, pw: null, pi: null, hl: null, hr: null, hil: null, hir: null };
+      if (pr.landmarks && pr.landmarks.length && pr.worldLandmarks && pr.worldLandmarks.length) {
+        fr.pi = pr.landmarks[0].map(p => [p.x, p.y, p.visibility ?? 1]);
+        fr.pw = pr.worldLandmarks[0].map(p => [p.x, p.y, p.z]);
+      }
+      if (wantHands && handLm) { const hr = handLm.detectForVideo(cv, tsClock); if (hr.landmarks && hr.landmarks.length && fr.pi) assignHands(fr, hr, cv.width, cv.height); }
+      return fr;
+    };
+    const out = []; const t0 = performance.now();
+    const report = (k, N) => { const p = Math.min(1, (k + 1) / N), el = (performance.now() - t0) / 1000, eta = el / p - el; bar.style.width = (p * 100).toFixed(1) + '%'; status(`Tracking frame ${k + 1}/${N} · ${(k / Math.max(el, 0.01)).toFixed(1)} fps · ~${Math.max(0, Math.ceil(eta))}s left`); };
+    let cv, dur;
+    if (codecSrc) {
+      pfps = Math.min(pfps, Math.max(5, Math.round(codecSrc.srcFps)));
+      dur = codecSrc.duration;
+      const sc = Math.min(1, 1280 / Math.max(codecSrc.width, codecSrc.height));
+      cv = document.createElement('canvas'); cv.width = Math.round(codecSrc.width * sc); cv.height = Math.round(codecSrc.height * sc);
+      const ctx = cv.getContext('2d');
+      const [pw, ph] = previewSize(cv.width, cv.height), pc = document.createElement('canvas'); pc.width = pw; pc.height = ph; const pctx = pc.getContext('2d');
+      const N = Math.max(2, Math.floor(dur * pfps));
+      await codecIterate(codecSrc, 1 / pfps, (f, t) => {
+        drawCodecFrame(ctx, f, codecSrc, cv.width, cv.height);
+        const fr = detect(cv, t); const idx = out.length; out.push(fr);
+        if (idx % 2 === 0) report(idx, N);
+      }, () => cancelFlag);
+      if (cancelFlag) throw new Error('cancelled');
+      await sleep(50);
+    } else {
+      preVid.pause();
+      const pv = await makeHiddenVideo(videoURL, preVid);
+      if (!pv) throw new Error('Video could not be decoded');
+      procVideo = pv;
+      dur = pv.duration; const W0 = pv.videoWidth, H0 = pv.videoHeight, sc = Math.min(1, 1280 / Math.max(W0, H0));
+      cv = document.createElement('canvas'); cv.width = Math.round(W0 * sc); cv.height = Math.round(H0 * sc);
+      const ctx = cv.getContext('2d');
+      const hasRVFC = 'requestVideoFrameCallback' in pv;
+      const seek = async t => { pv.currentTime = t; await waitEvent(pv, 'seeked', 5000); if (hasRVFC) await Promise.race([new Promise(r => pv.requestVideoFrameCallback(() => r())), sleep(60)]); };
+      const N = Math.max(2, Math.floor(dur * pfps));
+      for (let k = 0; k < N; k++) {
+        if (cancelFlag) throw new Error('cancelled');
+        const t = Math.min(dur - 0.001, k / pfps);
+        await seek(t); ctx.drawImage(pv, 0, 0, cv.width, cv.height);
+        out.push(detect(cv, t));
+        if (k % 2 === 0) { report(k, N); await sleep(0); }
+      }
+    }
+    const N = out.length;
+    frames = out; meta = { W: cv.width, H: cv.height, fps: pfps, dur };
+    const found = out.filter(f => f.pw).length, hf = out.filter(f => f.hl || f.hr).length;
+    status(`Tracked ${found}/${N} frames with a person${wantHands ? ` · hands in ${hf}` : ''}. Solving…`);
+    bar.style.width = '100%';
+    solve(true);
+    status(`Done · ${found}/${N} frames tracked${wantHands ? ` · fingers in ${Math.round(100 * hf / N)}%` : ''}. Tweak step 3 or export.`);
+    toast('Motion generated. Press ▶ to preview, then export.');
+  } catch (e) {
+    if (e.message === 'cancelled') status('Cancelled.');
+    else {
+      console.error(e);
+      const blocked = /load failed|failed to fetch|networkerror|insecure|cors/i.test(e.message);
+      const msg = blocked ? 'The AI model download was blocked. This happens inside in-app file viewers (like the Claude app). Open MoCap Studio from a web link in Safari or Chrome and it will work, and the models are then cached.' : 'Generation failed: ' + e.message;
+      status(blocked ? 'AI models blocked by this viewer. Open the app in Safari or Chrome.' : 'Error: ' + e.message); toast(msg, true, 12000);
+    }
+  } finally {
+    if (preVid && !procVideo && preVid.isConnected) preVid.remove();
+    if (procVideo) { procVideo.removeAttribute('src'); procVideo.load(); procVideo.remove(); procVideo = null; }
+    busy = false; go.textContent = 'Generate motion'; setTimeout(() => (prog.style.display = 'none'), 800);
+  }
+}
+$('go').onclick = processVideo;
+
+function assignHands(fr, hr, W, H) {
+  const wr = { hl: fr.pi[15], hr: fr.pi[16] };
+  const pairs = [];
+  hr.landmarks.forEach((lm, k) => {
+    for (const side of ['hl', 'hr']) {
+      const d = Math.hypot((lm[0].x - wr[side][0]) * W, (lm[0].y - wr[side][1]) * H) / Math.max(W, H);
+      pairs.push({ k, side, d });
+    }
+  });
+  pairs.sort((a, b) => a.d - b.d);
+  const usedK = new Set(), usedS = new Set();
+  for (const p of pairs) {
+    if (p.d > 0.12 || usedK.has(p.k) || usedS.has(p.side)) continue;
+    usedK.add(p.k); usedS.add(p.side);
+    fr[p.side] = hr.worldLandmarks[p.k].map(q => [q.x, q.y, q.z]);
+    fr[p.side === 'hl' ? 'hil' : 'hir'] = hr.landmarks[p.k].map(q => [q.x, q.y]);
+  }
+}
+
+// ---------- solve (re-runs instantly on refine changes) ----------
+function opts() {
+  return { fps: meta.fps, W: meta.W, H: meta.H, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
+}
+let solveT;
+function solve(rebuild = false) {
+  if (!frames) return;
+  try {
+    const newAnim = S.solveAll(frames, opts());
+    const restChanged = !anim || rebuild || JSON.stringify(anim.M) !== JSON.stringify(newAnim.M);
+    anim = newAnim;
+    if (restChanged) buildCharacter(anim.rest);
+    setReady(true); drawContacts(); showStats(); applyAt(curTime); requestRender();
+  } catch (e) { console.error(e); toast(e.message, true); setReady(false); }
+}
+for (const id of ['smooth', 'contact', 'fov']) $(id).addEventListener('input', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 120); });
+for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored']) $(id).addEventListener('change', () => solve(true));
+
+function setReady(on) { for (const id of ['exBVH', 'exGLB', 'exJSON']) $(id).disabled = !on; }
+function showStats() {
+  const M = anim.M, el = $('stats'); el.style.display = 'grid';
+  const c = anim.contacts, n = anim.n; const pct = s => Math.round(100 * c.filter(x => x[s]).length / n);
+  const travel = anim.rootPos.reduce((s, r, k) => k ? s + Math.hypot(r[0] - anim.rootPos[k - 1][0], r[2] - anim.rootPos[k - 1][2]) : 0, 0);
+  const height = M.shin + M.thigh + M.torso + M.neckLen + 0.12 + M.ankleH;
+  el.innerHTML = `<div>Est. actor height<b>${(height * 100).toFixed(0)} cm</b></div><div>Root travel<b>${travel.toFixed(2)} m</b></div><div>Left foot planted<b>${pct('Left')}%</b></div><div>Right foot planted<b>${pct('Right')}%</b></div><div>Fingers<b>${anim.hasHands.Left || anim.hasHands.Right ? 'captured' : 'default pose'}</b></div><div>Frames<b>${n} @ ${anim.fps}fps</b></div>`;
+}
+function drawContacts() {
+  const cv = $('ctl'), r = cv.getBoundingClientRect(); cv.width = Math.max(100, r.width * devicePixelRatio | 0); const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
+  if (!anim) return; const n = anim.n, w = cv.width / n;
+  anim.contacts.forEach((c, k) => { if (c.Left) { ctx.fillStyle = '#4fd1c5'; ctx.fillRect(k * w, 0, Math.ceil(w), 5); } if (c.Right) { ctx.fillStyle = '#7f9cf5'; ctx.fillRect(k * w, 5, Math.ceil(w), 5); } });
+}
+
+// ---------- 3D viewer ----------
+const host = $('three');
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: false });
+renderer.setPixelRatio(Math.min(matchMedia('(pointer:coarse)').matches ? 1.75 : 2, devicePixelRatio)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping;
+host.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0a0c11); scene.fog = new THREE.Fog(0x0a0c11, 8, 22);
+const camera = new THREE.PerspectiveCamera(40, 1, 0.02, 100); camera.position.set(2.2, 1.6, 3.6);
+function requestRender() { needRender = true; }
+const controls = new OrbitControls(camera, renderer.domElement); controls.target.set(0, 0.95, 0); controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xcfe7ff, 0x1a1f2a, 0.9));
+const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(3, 6, 4); key.castShadow = true; const isPhone = matchMedia('(pointer:coarse)').matches; key.shadow.mapSize.set(isPhone ? 1024 : 2048, isPhone ? 1024 : 2048);
+Object.assign(key.shadow.camera, { left: -4, right: 4, top: 4, bottom: -4, near: 0.5, far: 20 }); scene.add(key); scene.add(key.target);
+const rim = new THREE.DirectionalLight(0x4fd1c5, 1.0); rim.position.set(-4, 3, -4); scene.add(rim);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0x10141c, roughness: 0.95 })); floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+const grid = new THREE.GridHelper(60, 120, 0x2a3346, 0x1a2030); grid.position.y = 0.001; scene.add(grid);
+const footMarks = ['Left', 'Right'].map((s, i) => { const m = new THREE.Mesh(new THREE.RingGeometry(0.06, 0.085, 32), new THREE.MeshBasicMaterial({ color: i ? 0x7f9cf5 : 0x4fd1c5, transparent: true, opacity: 0 })); m.rotation.x = -Math.PI / 2; m.position.y = 0.004; scene.add(m); return m; });
+
+let character = null; // {group, bones, mesh, helper}
+function clearCharacter() { if (!character) return; scene.remove(character.group); if (character.helper) scene.remove(character.helper); character.mesh.geometry.dispose(); character = null; }
+
+function makeRig(rest, nameMap = n => n) {
+  const J = rest.joints, M = rest.M;
+  const bones = J.map(j => { const b = new THREE.Bone(); b.name = nameMap(j.name); b.position.set(...j.offset); return b; });
+  J.forEach((j, i) => { if (j.parent >= 0) bones[j.parent].add(bones[i]); });
+  const rw = []; J.forEach((j, i) => { rw[i] = j.parent < 0 ? new THREE.Vector3() : rw[j.parent].clone().add(new THREE.Vector3(...j.offset)); });
+  const geos = [], body = new THREE.Color(0xc9d1de), joint = new THREE.Color(0x4fd1c5), dark = new THREE.Color(0x3a4356);
+  const finish = (g, bi, col) => {
+    const n = g.attributes.position.count, si = new Uint16Array(n * 4), sw = new Float32Array(n * 4), c = new Float32Array(n * 3);
+    for (let v = 0; v < n; v++) { si[v * 4] = bi; sw[v * 4] = 1; c[v * 3] = col.r; c[v * 3 + 1] = col.g; c[v * 3 + 2] = col.b; }
+    g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4)); g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4)); g.setAttribute('color', new THREE.Float32BufferAttribute(c, 3));
+    if (!g.index) { const idx = []; for (let v = 0; v < n; v++) idx.push(v); g.setIndex(idx); }
+    geos.push(g);
+  };
+  const Y = new THREE.Vector3(0, 1, 0);
+  const seg = (a, b, r, bi, col = body) => {
+    const d = b.clone().sub(a), L = d.length(); if (L < 1e-4) return;
+    const g = new THREE.CapsuleGeometry(r, Math.max(0.001, L - r * 0.4), 6, 14);
+    g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(Y, d.normalize())); const m = a.clone().add(b).multiplyScalar(0.5); g.translate(m.x, m.y, m.z); finish(g, bi, col);
+  };
+  const blob = (c, s, bi, col = body) => { const g = new THREE.SphereGeometry(1, 28, 18); g.scale(s[0], s[1], s[2]); g.translate(c.x, c.y, c.z); finish(g, bi, col); };
+  const R = n => {
+    if (/Hand(Thumb|Index|Middle|Ring|Pinky)/.test(n)) return 0.0085 * (M.hand / 0.095);
+    const t = { Hips: 0.06, Spine: 0.075, Spine1: 0.08, Spine2: 0.05, Neck: 0.045, Shoulder: 0.04, Arm: 0.043, ForeArm: 0.035, Hand: 0.016, UpLeg: 0.068, Leg: 0.05, Foot: 0.038, ToeBase: 0.03, Head: 0.04 };
+    const k = n.replace(/^(Left|Right)/, ''); return t[k] ?? 0.03;
+  };
+  J.forEach((j, i) => {
+    if (j.parent >= 0) {
+      const pn = J[j.parent].name;
+      if (pn === 'Spine2' && /Shoulder/.test(j.name)) seg(rw[j.parent].clone().add(new THREE.Vector3(0, 0.2 * M.torso, 0)), rw[i], 0.04, j.parent);
+      else seg(rw[j.parent], rw[i], R(pn), j.parent);
+      if (!/Hand.+\d/.test(j.name) && j.name !== 'Spine' && j.name !== 'Spine1') blob(rw[i], [R(j.name) * 1.12, R(j.name) * 1.12, R(j.name) * 1.12], i, /Spine|Neck|Head/.test(j.name) ? body : joint);
+    }
+    if (j.end && !/Head/.test(j.name)) seg(rw[i], rw[i].clone().add(new THREE.Vector3(...j.end)), R(j.name), i);
+  });
+  const ix = rest.index, T = M.torso;
+  blob(rw[ix.Hips].clone().add(new THREE.Vector3(0, 0.02, 0)), [M.hipW * 0.78, 0.11, 0.1], ix.Hips);
+  blob(rw[ix.Spine1].clone().add(new THREE.Vector3(0, 0.05, 0)), [M.hipW * 0.62, 0.13, 0.09], ix.Spine1);
+  blob(rw[ix.Spine2].clone().add(new THREE.Vector3(0, 0.13 * T / 0.5, 0.005)), [M.shoulderW * 0.46, 0.16 * T / 0.5, 0.105], ix.Spine2);
+  blob(rw[ix.Head].clone().add(new THREE.Vector3(0, 0.085, 0.012)), [0.085, 0.108, 0.098], ix.Head);
+  blob(rw[ix.Head].clone().add(new THREE.Vector3(0, 0.1, 0.09)), [0.05, 0.016, 0.01], ix.Head, dark); // visor shows facing
+  for (const S2 of ['Left', 'Right']) {
+    const h = ix[S2 + 'Hand'], sx = S2 === 'Left' ? 1 : -1;
+    blob(rw[h].clone().add(new THREE.Vector3(sx * 0.05 * M.hand / 0.095, 0, 0)), [0.05 * M.hand / 0.095, 0.017, 0.042 * M.hand / 0.095], h);
+  }
+  const geo = mergeGeometries(geos, false);
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.05 });
+  const mesh = new THREE.SkinnedMesh(geo, mat); mesh.castShadow = true; mesh.frustumCulled = false; mesh.name = 'Body';
+  mesh.add(bones[0]); mesh.updateMatrixWorld(true);
+  const skel = new THREE.Skeleton(bones); mesh.bind(skel);
+  const group = new THREE.Group(); group.name = 'Character'; group.add(mesh);
+  return { group, bones, mesh };
+}
+function buildCharacter(rest) {
+  clearCharacter();
+  character = makeRig(rest); scene.add(character.group);
+  character.helper = new THREE.SkeletonHelper(character.mesh); character.helper.material.linewidth = 2; character.helper.visible = $('tBones').classList.contains('on'); scene.add(character.helper);
+  character.mesh.visible = $('tBody').classList.contains('on');
+}
+const _v = new THREE.Vector3();
+function applyAt(t) {
+  if (!anim || !character) return;
+  const smp = S.sample(anim, t), b = character.bones;
+  b[0].position.set(...smp.root);
+  smp.locals.forEach((q, j) => b[j].quaternion.set(q[0], q[1], q[2], q[3]));
+  character.group.updateMatrixWorld(true);
+  const k = Math.round(Math.min(anim.n - 1, Math.max(0, t * anim.fps)));
+  ['Left', 'Right'].forEach((s, i) => { b[anim.rest.index[s + 'Foot']].getWorldPosition(_v); footMarks[i].position.x = _v.x; footMarks[i].position.z = _v.z; footMarks[i].material.opacity = anim.contacts[k][s] ? 0.9 : 0; });
+  if ($('tFollow').classList.contains('on')) {
+    b[0].getWorldPosition(_v); const tgt = new THREE.Vector3(_v.x, 0.95, _v.z), d = tgt.clone().sub(controls.target);
+    controls.target.add(d.multiplyScalar(0.15)); camera.position.add(d); key.position.set(controls.target.x + 3, 6, controls.target.z + 4); key.target.position.copy(controls.target);
+  }
+}
+function resize() {
+  const r = host.getBoundingClientRect(); renderer.setSize(r.width, r.height, false); renderer.domElement.style.width = '100%'; renderer.domElement.style.height = '100%';
+  camera.aspect = r.width / Math.max(1, r.height); camera.updateProjectionMatrix(); drawContacts(); requestRender();
+}
+new ResizeObserver(resize).observe(host); resize();
+const toggle = (id, fn) => $(id).onclick = () => { $(id).classList.toggle('on'); fn($(id).classList.contains('on')); requestRender(); };
+toggle('tBody', on => character && (character.mesh.visible = on));
+toggle('tBones', on => character && character.helper && (character.helper.visible = on));
+toggle('tFollow', () => {});
+toggle('tOverlay', () => drawOverlay());
+controls.addEventListener('change', requestRender);
+$('tReset').onclick = () => { requestRender(); controls.target.set(0, 0.95, 0); camera.position.set(2.2, 1.6, 3.6); };
+
+// ---------- 2D overlay ----------
+const POSE_EDGES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28], [27, 29], [29, 31], [27, 31], [28, 30], [30, 32], [28, 32], [15, 17], [15, 19], [17, 19], [16, 18], [16, 20], [18, 20], [0, 7], [0, 8]];
+const HAND_EDGES = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [0, 17], [17, 18], [18, 19], [19, 20]];
+const ov = $('ov');
+function drawOverlay() {
+  const ctx = ov.getContext('2d');
+  const sw = codecSrc ? codecSrc.width : vid.videoWidth, sh = codecSrc ? codecSrc.height : vid.videoHeight;
+  if (!sw) return;
+  if (codecSrc) { if (previews.length) { const k = Math.round(Math.min(previews.length - 1, Math.max(0, curTime * previewFps))); showPreviewBlob(previews[k], k); } else if (firstPreview) showPreviewBlob(firstPreview, -1); }
+  if (ov.width !== sw) { ov.width = sw; ov.height = sh; }
+  ctx.clearRect(0, 0, ov.width, ov.height);
+  if (!frames || !$('tOverlay').classList.contains('on')) return;
+  const k = Math.round(Math.min(frames.length - 1, Math.max(0, curTime * meta.fps))), f = frames[k]; if (!f || !f.pi) return;
+  const W = ov.width, H = ov.height, lw = Math.max(2, W / 400);
+  ctx.lineCap = 'round';
+  const line = (a, b, col) => { ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(a[0] * W, a[1] * H); ctx.lineTo(b[0] * W, b[1] * H); ctx.stroke(); };
+  ctx.lineWidth = lw * 1.6;
+  for (const [a, b] of POSE_EDGES) { const pa = f.pi[a], pb = f.pi[b]; if (pa[2] < 0.3 || pb[2] < 0.3) continue; const L = a % 2 === 1 && b % 2 === 1 && a > 10; const R = a % 2 === 0 && b % 2 === 0 && a > 10; line(pa, pb, L ? '#4fd1c5' : R ? '#7f9cf5' : '#e7eaf0'); }
+  ctx.lineWidth = lw * 0.8;
+  for (const h of [f.hil, f.hir]) if (h) for (const [a, b] of HAND_EDGES) line(h[a], h[b], '#f6ad55');
+  ctx.fillStyle = '#ffffff';
+  for (let i = 0; i < 33; i++) { const p = f.pi[i]; if (p[2] < 0.3 || (i > 0 && i < 11 && i !== 7 && i !== 8)) continue; ctx.beginPath(); ctx.arc(p[0] * W, p[1] * H, lw * 1.4, 0, 7); ctx.fill(); }
+}
+
+// ---------- playback ----------
+const dur = () => (codecSrc ? codecSrc.duration : vid.duration && isFinite(vid.duration) ? vid.duration : anim ? (anim.n - 1) / anim.fps : 0);
+function updateTimeLabel() { $('tlabel').textContent = `${fmt(curTime)} / ${fmt(dur())}`; $('scrub').value = curTime; }
+function play() { if (!dur()) return; playing = true; $('play').textContent = '❚❚'; $('bigPlay').style.display = 'none'; vid.playbackRate = +$('speed').value; if (curTime >= dur() - 0.05) { curTime = 0; vid.currentTime = 0; } vid.play().catch(() => {}); }
+function pause() { playing = false; $('play').textContent = '▶'; vid.pause(); if (dur()) $('bigPlay').style.display = 'block'; }
+$('play').onclick = () => (playing ? pause() : play());
+$('bigPlay').onclick = () => play();
+$('vview').addEventListener('click', e => { if (playing && e.target.closest('.vtools') == null) pause(); });
+$('speed').onchange = () => (vid.playbackRate = +$('speed').value);
+let pendingSeek = null;
+function seekDisplay(t) { if (!vid.src) return; if (vid.seeking) { pendingSeek = t; return; } vid.currentTime = t; }
+$('scrub').addEventListener('input', () => { pause(); curTime = +$('scrub').value; seekDisplay(curTime); applyAt(curTime); drawOverlay(); updateTimeLabel(); requestRender(); });
+document.addEventListener('keydown', e => { if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return; if (e.code === 'Space') { e.preventDefault(); playing ? pause() : play(); } });
+let last = performance.now();
+function loop(now) {
+  const dt = (now - last) / 1000; last = now;
+  if (playing) {
+    if (vid.src && !vid.paused && !vid.seeking) curTime = vid.currentTime;
+    else if (!vid.src || vid.paused) curTime += Math.min(dt, 0.1) * (+$('speed').value);
+    if (curTime >= dur() - 0.01 || vid.ended) { curTime = 0; vid.currentTime = 0; if (vid.src) vid.play().catch(() => {}); }
+    applyAt(curTime); drawOverlay(); updateTimeLabel(); needRender = true;
+  }
+  if (controls.update()) needRender = true;
+  if (needRender && !document.hidden) { renderer.render(scene, camera); needRender = false; }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+vid.addEventListener('seeked', () => { if (pendingSeek != null) { const t = pendingSeek; pendingSeek = null; vid.currentTime = t; } else if (!playing) drawOverlay(); });
+vid.addEventListener('waiting', () => ($('tlabel').style.opacity = 0.5));
+vid.addEventListener('playing', () => ($('tlabel').style.opacity = 1));
+document.addEventListener('visibilitychange', () => { if (document.hidden && playing) pause(); });
+
+// ---------- exports ----------
+const outName = ext => `${videoName}_${$('naming').value}_${$('outFps').value}fps.${ext}`;
+$('exBVH').onclick = () => { if (!anim) return; saveFile(S.toBVH(anim, +$('outFps').value, $('naming').value), outName('bvh'), 'text/plain'); toast('BVH exported.'); };
+$('exJSON').onclick = () => { if (!anim) return; saveFile(JSON.stringify(S.toJSON(anim, +$('outFps').value, $('naming').value)), outName('json'), 'application/json'); toast('JSON exported.'); };
+$('exGLB').onclick = () => {
+  if (!anim) return;
+  const naming = $('naming').value, fps = +$('outFps').value, rig = makeRig(anim.rest, S.NAME_MAPS[naming]);
+  const N = Math.max(2, Math.round(((anim.n - 1) / anim.fps) * fps) + 1), times = new Float32Array(N);
+  const qv = rig.bones.map(() => new Float32Array(N * 4)), pv = new Float32Array(N * 3);
+  for (let k = 0; k < N; k++) {
+    times[k] = k / fps; const smp = S.sample(anim, k / fps);
+    pv.set(smp.root, k * 3); smp.locals.forEach((q, j) => qv[j].set(q, k * 4));
+  }
+  const tracks = [new THREE.VectorKeyframeTrack(rig.bones[0].uuid + '.position', times, pv)];
+  rig.bones.forEach((b, j) => tracks.push(new THREE.QuaternionKeyframeTrack(b.uuid + '.quaternion', times, qv[j])));
+  const clip = new THREE.AnimationClip(videoName || 'mocap', -1, tracks);
+  new GLTFExporter().parse(rig.group, glb => { saveFile(new Blob([glb], { type: 'model/gltf-binary' }), outName('glb')); toast('GLB exported (skinned rig + animation).'); }, err => toast('GLB export failed: ' + err.message, true), { binary: true, animations: [clip] });
+};
+</script>
+<div id="gate" style="position:fixed;inset:0;z-index:100;background:#0b0d12;display:grid;place-items:center;padding:24px">
+  <form id="gateForm" style="width:min(340px,100%);text-align:center">
+    <div class="logo" style="margin:0 auto 14px;width:52px;height:52px;font-size:22px;border-radius:14px">N</div>
+    <h1 style="font-size:20px;margin:0 0 6px">NoCap MoCap</h1>
+    <div style="color:var(--dim);margin-bottom:18px">Private studio. Enter the password.</div>
+    <input id="gatePw" type="password" autocomplete="current-password" placeholder="Password" style="width:100%;padding:13px;border-radius:10px;border:1px solid var(--line);background:#12151c;font-size:16px;margin-bottom:10px">
+    <button class="btn primary" type="submit">Unlock</button>
+    <div id="gateErr" style="color:var(--bad);margin-top:10px;min-height:20px"></div>
+  </form>
+</div>
+<script>
+(function(){
+  var H='1b477533b7992ae8b8736983412fd56a806c4f12975c4c3461e2c4cc31ee9646', gate=document.getElementById('gate');
+  try{ if(localStorage.getItem('nocap-unlock')===H){ gate.remove(); return; } }catch(e){}
+  async function sha(s){ var b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)); return Array.from(new Uint8Array(b)).map(function(x){return x.toString(16).padStart(2,'0')}).join(''); }
+  document.getElementById('gateForm').addEventListener('submit', async function(e){
+    e.preventDefault(); var h=await sha(document.getElementById('gatePw').value);
+    if(h===H){ try{localStorage.setItem('nocap-unlock',H)}catch(e){} gate.remove(); }
+    else { document.getElementById('gateErr').textContent='Wrong password'; }
+  });
+})();
+if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').then(function(r){ r.update(); }).catch(function(e){ console.warn('offline mode unavailable', e); }); }
+addEventListener('online',function(){var p=document.getElementById('netPill'); if(p) p.textContent='Works offline · Unlimited generations';});
+addEventListener('offline',function(){var p=document.getElementById('netPill'); if(p) p.textContent='Offline mode · Unlimited generations';});
+</script>
+</body>
+</html>

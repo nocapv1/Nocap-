@@ -1,0 +1,82 @@
+# Builds the site with every library and AI model included, then publishes it to GitHub Pages.
+name: Build and publish NoCap MoCap
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download libraries
+        run: |
+          mkdir -p /tmp/deps && cd /tmp/deps
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund three@0.160.0 @mediapipe/tasks-vision@0.10.14 mp4box@0.5.2 @ffmpeg/core@0.12.6
+
+      - name: Assemble site
+        run: |
+          set -e
+          D=/tmp/deps/node_modules
+          mkdir -p _site
+          cp index.html sw.js manifest.webmanifest icon.svg icon-180.png icon-512.png robots.txt .nojekyll _site/
+          mkdir -p _site/vendor/three/build _site/vendor/three/examples/jsm/controls _site/vendor/three/examples/jsm/exporters _site/vendor/three/examples/jsm/utils
+          cp $D/three/build/three.module.js _site/vendor/three/build/
+          cp $D/three/examples/jsm/controls/OrbitControls.js _site/vendor/three/examples/jsm/controls/
+          cp $D/three/examples/jsm/exporters/GLTFExporter.js _site/vendor/three/examples/jsm/exporters/
+          cp $D/three/examples/jsm/utils/BufferGeometryUtils.js _site/vendor/three/examples/jsm/utils/
+          mkdir -p _site/vendor/tasks-vision
+          cp $D/@mediapipe/tasks-vision/vision_bundle.mjs _site/vendor/tasks-vision/
+          cp -r $D/@mediapipe/tasks-vision/wasm _site/vendor/tasks-vision/
+          cp $D/mp4box/dist/mp4box.all.min.js _site/vendor/
+          mkdir -p _site/vendor/ffmpeg
+          cp $D/@ffmpeg/core/dist/umd/ffmpeg-core.js $D/@ffmpeg/core/dist/umd/ffmpeg-core.wasm _site/vendor/ffmpeg/
+
+      - name: Download AI models (Google MediaPipe)
+        run: |
+          set -e
+          mkdir -p _site/models
+          B=https://storage.googleapis.com/mediapipe-models
+          for q in heavy full lite; do
+            curl -fSL --retry 3 -o _site/models/pose_landmarker_$q.task $B/pose_landmarker/pose_landmarker_$q/float16/latest/pose_landmarker_$q.task
+          done
+          curl -fSL --retry 3 -o _site/models/hand_landmarker.task $B/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task
+          ls -la _site/models
+
+      - name: Check every file the app needs is present
+        run: |
+          for f in $(grep -oE "'(vendor|models)/[^']+'" _site/sw.js | tr -d "'"); do
+            test -s "_site/$f" || { echo "MISSING $f"; exit 1; }
+          done
+          du -sh _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
