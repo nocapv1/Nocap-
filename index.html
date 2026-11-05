@@ -54,6 +54,8 @@ input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
 main{display:grid;grid-template-rows:1fr auto;min-width:0;min-height:0}
 .stage{display:grid;grid-template-columns:minmax(0,0.85fr) minmax(0,1.15fr);gap:10px;padding:10px;min-height:0}
 .view{position:relative;background:#07090d;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;min-height:0}
+#pinBtn{display:none;flex:none;padding:6px 9px;font-size:13px}
+#pinBtn.on{border-color:var(--accent);color:var(--accent)}
 .bigplay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:68px;height:68px;border-radius:50%;border:0;background:#4fd1c5e6;color:#06201d;font-size:26px;z-index:4;display:none;cursor:pointer;box-shadow:0 8px 24px #0008;padding-left:6px}
 .view .label{position:absolute;top:10px;left:12px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);background:#0b0d12cc;padding:3px 8px;border-radius:6px;z-index:3}
 .view video,.view canvas.ov{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
@@ -88,14 +90,19 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   aside > section.card{order:3}
   aside > section.card:first-child{order:1}
   /* video + 3D side by side, pinned to the top while you scroll the settings */
-  .stage{order:2;grid-template-columns:1fr;gap:6px;padding:6px 10px;margin:0 -10px;position:sticky;top:0;z-index:30;background:var(--bg)}
+  .stage{order:2;grid-template-columns:1fr;gap:6px;padding:6px 10px;margin:0 -10px;background:var(--bg)}
+  body.pinned .stage{position:sticky;top:0;z-index:30}
+  body.pinned #vview{height:22vh;height:22svh}
+  body.pinned .view.v3d{height:30vh;height:30svh}
+  body.pinned .timeline{position:sticky;top:calc(52vh + 18px);top:calc(52svh + 18px);z-index:30;box-shadow:0 10px 20px #000c}
+  #pinBtn{display:inline-flex}
   #vview{height:26vh;height:26svh}
   .view.v3d{height:38vh;height:38svh}
   .view .label{display:none}
   .vtools{right:4px;top:4px;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:96%}
   .vtools .btn{min-height:26px !important;padding:2px 7px !important;font-size:11px}
   .bigplay{width:54px;height:54px;font-size:20px}
-  .timeline{order:2;border:1px solid var(--line);border-radius:12px;margin:0 0 12px;padding:8px 10px;gap:8px;position:sticky;top:calc(64vh + 18px);top:calc(64svh + 18px);z-index:30;box-shadow:0 10px 20px #000c}
+  .timeline{order:2;border:1px solid var(--line);border-radius:12px;margin:0 0 12px;padding:8px 10px;gap:8px}
   .time{min-width:0;font-size:11px}
   #play{width:42px;height:42px;font-size:15px;flex:none}
   #speed{min-width:0;width:64px}
@@ -732,6 +739,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="tlwrap"><input type="range" id="scrub" min="0" max="1" step="0.0001" value="0" disabled><canvas id="ctl" height="10"></canvas></div>
     <select id="speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
     <div class="time" id="tlabel">0.00s / 0.00s</div>
+    <button class="btn" id="pinBtn" title="Keep the video and 3D view on screen while scrolling">📌 Pin</button>
   </div>
 </main>
 </div>
@@ -1366,6 +1374,7 @@ function play() { if (!dur()) return; playing = true; $('play').textContent = '�
 function pause() { playing = false; $('play').textContent = '▶'; vid.pause(); if (dur()) $('bigPlay').style.display = 'block'; }
 $('play').onclick = () => (playing ? pause() : play());
 $('bigPlay').onclick = () => play();
+$('pinBtn').onclick = () => { const on = document.body.classList.toggle('pinned'); $('pinBtn').classList.toggle('on', on); $('pinBtn').textContent = on ? '📌 Unpin' : '📌 Pin'; if (on) $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); };
 $('vview').addEventListener('click', e => { if (playing && e.target.closest('.vtools') == null) pause(); });
 $('speed').onchange = () => (vid.playbackRate = +$('speed').value);
 let pendingSeek = null;
