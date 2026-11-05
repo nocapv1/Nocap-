@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -80,6 +80,15 @@ jobs:
             test -s "_site/$f" || { echo "MISSING $f"; exit 1; }
           done
           du -sh _site
+
+      - name: Also publish the built site to the gh-pages branch (backup route)
+        run: |
+          cd _site
+          git init -q -b gh-pages
+          git config user.name "github-actions"; git config user.email "github-actions@users.noreply.github.com"
+          git add -A && git commit -qm "Built site ${GITHUB_SHA::7}"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+          rm -rf .git
 
       - uses: actions/upload-pages-artifact@v3
         with:
