@@ -466,6 +466,8 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const HL = hlF ? smoothPoints(hlF.map(a => a.map(toY)), dt, mc * 1.5, 0.6) : null;
     const HR = hrF ? smoothPoints(hrF.map(a => a.map(toY)), dt, mc * 1.5, 0.6) : null;
 
+    // ---- depth recovery: limbs pointing at / away from the camera look too short; restore true length along the camera axis ----
+    if (opt.depthFix !== false) P = recoverDepth(P, dt);
     const M = measure(P, HL, HR), rest = buildRest(M);
     { // calibrate the face's neutral direction: on average the head faces where the chest faces
       const pitches = P.map(p => {
@@ -582,6 +584,29 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     return { rest, fps, n, rootPos, locals, contacts: C, hasHands: { Left: !!HL, Right: !!HR }, M };
   }
 
+  function recoverDepth(P, dt) {
+    const n = P.length; if (n < 3) return P;
+    const CH = [[11, 13, [15, 17, 19, 21]], [13, 15, [17, 19, 21]], [12, 14, [16, 18, 20, 22]], [14, 16, [18, 20, 22]],
+                [23, 25, [27, 29, 31]], [25, 27, [29, 31]], [24, 26, [28, 30, 32]], [26, 28, [30, 32]]];
+    const out = P.map(p => p.map(q => q.slice()));
+    for (const [a, b, kids] of CH) {
+      const lens = P.map(p => len(sub(p[b], p[a]))), L = percentile(lens, 0.85);
+      let lastSign = 1;
+      for (let k = 0; k < n; k++) {
+        const p = out[k], d = sub(p[b], p[a]), planar = d[0] * d[0] + d[1] * d[1], cur = len(d);
+        if (cur >= L * 0.98) { if (Math.abs(d[2]) > 0.02) lastSign = Math.sign(d[2]); continue; }
+        const need = Math.sqrt(Math.max(0, L * L - planar));
+        // sign: trust the AI when it is clear, otherwise keep the previous frame's direction
+        const sgn = Math.abs(d[2]) > 0.03 ? Math.sign(d[2]) : lastSign; lastSign = sgn;
+        const dz = sgn * need - d[2], blend = clamp((L - cur) / (0.25 * L), 0, 1) * 0.85; // partial correction, strongest when badly foreshortened
+        const shift = dz * blend;
+        p[b] = [p[b][0], p[b][1], p[b][2] + shift];
+        for (const c of kids) p[c] = [p[c][0], p[c][1], p[c][2] + shift];
+      }
+    }
+    return out;
+  }
+
   // ---- natural joint limits (swing/twist clamp) ----
   function clampQ(q, maxDeg) { const ang = 2 * Math.acos(clamp(Math.abs(q[3]), 0, 1)) * 180 / Math.PI; if (ang <= maxDeg || ang < 1e-6) return q; return qslerp([0, 0, 0, 1], q, maxDeg / ang); }
   function limitSwingTwist(q, axis, maxTwist, maxSwing) {
@@ -595,9 +620,21 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     fist: { Thumb: [20, 35, 45], Index: [85, 100, 65], Middle: [88, 100, 65], Ring: [88, 100, 62], Pinky: [85, 95, 60] },
     relaxed: { Thumb: [8, 12, 12], Index: [14, 22, 12], Middle: [18, 26, 14], Ring: [22, 30, 16], Pinky: [26, 32, 18] },
   };
+  // fist thumb: folds down and across the front of the index/middle fingers (directions in left-hand space)
+  const FIST_THUMB = [norm([0.75, -0.35, 0.35]), norm([0.55, -0.55, -0.35]), norm([0.2, -0.5, -0.85])];
   function fingerCurl(rest, locals, side, pose) {
     const ix = rest.index, sx = side === 'Left' ? 1 : -1, P = FINGER_POSES[pose];
+    if (pose === 'fist') {
+      const d0 = HAND_TEMPLATE.Thumb.dir, m = v => [sx * v[0], v[1], v[2]], rd = m(d0);
+      let parentG = [0, 0, 0, 1], prevDir = rd;
+      FIST_THUMB.forEach((g, k) => {
+        const tgt = m(g), G = qnorm(qmul(qFromTo(prevDir, tgt), parentG)); // global rotation in hand space
+        locals[ix[`${side}HandThumb${k + 1}`]] = qnorm(qmul(qconj(parentG), G));
+        parentG = G; prevDir = tgt;
+      });
+    }
     for (const F of FINGERS) {
+      if (F === 'Thumb' && pose === 'fist') continue;
       const tp = HAND_TEMPLATE[F], d = [sx * tp.dir[0], tp.dir[1], tp.dir[2]];
       const ax = norm(cross(d, [0, -1, 0])); // rotating about d x palmNormal curls the finger toward the palm
       for (let k = 0; k < 3; k++) { const a = P[F][k] * Math.PI / 360; locals[ix[`${side}Hand${F}${k + 1}`]] = [ax[0] * Math.sin(a), ax[1] * Math.sin(a), ax[2] * Math.sin(a), Math.cos(a)]; }
@@ -911,6 +948,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>AI model</label><select id="quality"><option value="heavy" selected>Heavy (best)</option><option value="full">Full</option><option value="lite">Lite (fast)</option></select></div>
     <div class="row"><label>Analysis rate</label><select id="procFps"><option>15</option><option>24</option><option selected>30</option><option>60</option></select></div>
     <div class="row"><label>Finger capture</label><input type="checkbox" id="hands" checked></div>
+    <div class="row"><label>Refine pass <span class="mini">zoomed second scan, more accurate</span></label><input type="checkbox" id="refinePass" checked></div>
     <div class="row"><label>Mirrored (selfie) video</label><input type="checkbox" id="mirrored"></div>
     <div class="row"><label>Camera field of view</label><span><input type="range" id="fov" min="25" max="100" value="55"> </span><span class="val" id="fovV">55°</span></div>
     <button class="btn primary" id="go" disabled>Generate motion</button>
@@ -933,6 +971,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="sub">Body</div>
     <div class="row"><label>Auto-upright <span class="mini">fix tilt</span></label><input type="checkbox" id="autoLevel" checked></div>
     <div class="row"><label>Head tilt</label><span><input type="range" id="headTilt" min="-25" max="25" step="1" value="0"></span><span class="val" id="headTiltV">0°</span></div>
+    <div class="row"><label>Depth recovery <span class="mini">full reach toward / away from camera</span></label><input type="checkbox" id="depthFix" checked></div>
     <div class="row"><label>In-place <span class="mini">no root travel</span></label><input type="checkbox" id="inPlace"></div>
     <div class="stats" id="stats" style="display:none"></div>
   </section>
@@ -1388,7 +1427,7 @@ async function processVideo() {
     let prevSig = null;
     const isDuplicate = cv => { try { sigX.drawImage(cv, 0, 0, 24, 24); const d = sigX.getImageData(0, 0, 24, 24).data; let diff = 0; if (prevSig) for (let i = 0; i < d.length; i += 4) diff += Math.abs(d[i] - prevSig[i]) + Math.abs(d[i + 1] - prevSig[i + 1]); const dup = prevSig && diff / (d.length / 2) < 0.35; prevSig = d.slice(); return !!dup; } catch (e) { return false; } };
     const report = (k, N) => { const p = Math.min(1, (k + 1) / N), el = (performance.now() - t0) / 1000, eta = el / p - el; bar.style.width = (p * 100).toFixed(1) + '%'; status(`Tracking frame ${k + 1}/${N} · ${(k / Math.max(el, 0.01)).toFixed(1)} fps · ~${Math.max(0, Math.ceil(eta))}s left`); };
-    let cv, dur;
+    let cv, dur, nativeFrame = null;
     if (codecSrc) {
       pfps = Math.min(pfps, Math.max(5, Math.round(codecSrc.srcFps)));
       dur = codecSrc.duration;
@@ -1417,6 +1456,7 @@ async function processVideo() {
       const hasRVFC = 'requestVideoFrameCallback' in pv;
       const seek = async t => { pv.currentTime = t; await waitEvent(pv, 'seeked', 5000); if (hasRVFC) await Promise.race([new Promise(r => pv.requestVideoFrameCallback(() => r())), sleep(60)]); };
       const N = Math.max(2, Math.floor(dur * pfps));
+      nativeFrame = async t => { await seek(t); ctx.drawImage(pv, 0, 0, cv.width, cv.height); };
       await seek(0); ctx.drawImage(pv, 0, 0, cv.width, cv.height);
       target = await choosePerson(cv, status);
       for (let k = 0; k < N; k++) {
@@ -1433,6 +1473,64 @@ async function processVideo() {
     for (const fr of out) { const s = Math.min(Nu - 1, Math.round(fr.t * pfps)); if (s < 0 || grid[s]._set) continue; grid[s]._set = true; if (fr.dup) { frozen++; grid[s].pi = fr.pi; continue; } Object.assign(grid[s], fr, { t: s / pfps }); }
     for (const g of grid) { delete g._set; delete g.dup; }
     if (!grid.some(g => g.pw)) throw new Error('No person was detected in this video.');
+
+    // ---- refine pass: re-scan every frame zoomed in on the person, then fuse with the first pass ----
+    if ($('refinePass').checked) {
+      const W = cv.width, H = cv.height, M = Math.max(W, H), CS = 640;
+      // crop boxes from pass 1 (smoothed over time, gaps filled)
+      let boxes = grid.map(g => {
+        if (!g.pi || !g.pw) return null; let x0 = 1, y0 = 1, x1 = 0, y1 = 0, n = 0;
+        for (const p of g.pi) if (p[2] > 0.3) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); n++; }
+        return n >= 5 ? [(x0 + x1) / 2 * W, (y0 + y1) / 2 * H, Math.max((x1 - x0) * W, (y1 - y0) * H)] : null;
+      });
+      boxes = S.fillGaps(boxes);
+      if (boxes) {
+        const sm = boxes.map((_, k) => { const a = [0, 0, 0]; let c = 0; for (let q = k - 4; q <= k + 4; q++) if (boxes[q]) { a[0] += boxes[q][0]; a[1] += boxes[q][1]; a[2] = Math.max(a[2], boxes[q][2]); c++; } return [a[0] / c, a[1] / c, a[2]]; });
+        const subjectFrac = Math.max(...sm.map(b => b[2])) / M;
+        if (subjectFrac < 0.9) { // worth zooming
+          const crop = document.createElement('canvas'); crop.width = crop.height = CS; const cx = crop.getContext('2d');
+          let fused = 0, k2 = 0; const t1 = performance.now();
+          const pass2 = (t) => {
+            const s = Math.min(grid.length - 1, Math.round(t * pfps)), g = grid[s]; if (!g || (!g.pw && g.pi)) return; // skip frozen frames
+            const [bx, by, bs] = sm[s], side = Math.min(M * 1.2, Math.max(M * 0.25, bs * 1.45)), sx = bx - side / 2, sy = by - side / 2;
+            cx.fillStyle = '#000'; cx.fillRect(0, 0, CS, CS); cx.drawImage(cv, sx, sy, side, side, 0, 0, CS, CS);
+            tsClock += Math.max(1, Math.round(1000 / pfps));
+            const pr = poseLm.detectForVideo(crop, tsClock);
+            const mapP = p => [(sx + p.x * side) / W, (sy + p.y * side) / H, p.visibility ?? 1];
+            if (pr.landmarks && pr.landmarks.length) {
+              let best = 0, bd = 9; pr.landmarks.forEach((lm, i) => { const d = Math.hypot((lm[23].x + lm[24].x) / 2 - 0.5, (lm[23].y + lm[24].y) / 2 - 0.5); if (d < bd) { bd = d; best = i; } });
+              if (bd < 0.35) {
+                const pi2 = pr.landmarks[best].map(mapP), pw2 = pr.worldLandmarks[best].map(p => [p.x, p.y, p.z]);
+                if (g.pw) { // visibility-weighted fusion, zoomed scan trusted a bit more
+                  g.pw = g.pw.map((p, i) => { const a = Math.max(0.05, g.pi[i][2]), b = Math.max(0.05, pi2[i][2]) * 1.4; return [0, 1, 2].map(c => (p[c] * a + pw2[i][c] * b) / (a + b)); });
+                  g.pi = g.pi.map((p, i) => { const a = Math.max(0.05, p[2]), b = Math.max(0.05, pi2[i][2]) * 1.4; return [(p[0] * a + pi2[i][0] * b) / (a + b), (p[1] * a + pi2[i][1] * b) / (a + b), Math.max(p[2], pi2[i][2])]; });
+                } else { g.pw = pw2; g.pi = pi2; }
+                fused++;
+                if (wantHands && handLm) {
+                  const hr = handLm.detectForVideo(crop, tsClock);
+                  if (hr.landmarks && hr.landmarks.length) {
+                    const tmp = { pi: g.pi, hl: null, hr: null, hil: null, hir: null };
+                    assignHands(tmp, { landmarks: hr.landmarks.map(lm => lm.map(p => ({ x: (sx + p.x * side) / W, y: (sy + p.y * side) / H }))), worldLandmarks: hr.worldLandmarks }, W, H);
+                    for (const key of ['hl', 'hr', 'hil', 'hir']) if (tmp[key]) g[key] = tmp[key];
+                  }
+                }
+              }
+            }
+            k2++;
+            if (k2 % 2 === 0) { const p = Math.min(1, k2 / grid.length), el = (performance.now() - t1) / 1000; bar.style.width = (p * 100).toFixed(1) + '%'; status(`Refining (zoomed re-scan) ${k2}/${grid.length} · ~${Math.max(0, Math.ceil(el / p - el))}s left`); }
+          };
+          status('Refining (zoomed re-scan)…'); bar.style.width = '0%';
+          if (codecSrc) {
+            const ctx2 = cv.getContext('2d');
+            await codecIterate(codecSrc, 1 / pfps, (f, t) => { drawCodecFrame(ctx2, f, codecSrc, W, H); pass2(t); }, () => cancelFlag);
+          } else {
+            for (let k = 0; k < grid.length; k++) { if (cancelFlag) break; const t = Math.min(dur - 0.001, k / pfps); await nativeFrame(t); pass2(t); if (k % 2 === 0) await sleep(0); }
+          }
+          if (cancelFlag) throw new Error('cancelled');
+          console.log('refine pass fused', fused, 'frames');
+        }
+      }
+    }
     const N = grid.length;
     out.length = 0; out.push(...grid);
     if (frozen) console.log('smoothed over', frozen, 'frozen frames');
@@ -1520,7 +1618,7 @@ function assignHands(fr, hr, W, H) {
 
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: $('rideDetect').checked, headTilt: +$('headTilt').value, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
+  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: $('rideDetect').checked, depthFix: $('depthFix').checked, headTilt: +$('headTilt').value, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
 }
 let solveT;
 function solve(rebuild = false) {
@@ -1535,7 +1633,7 @@ function solve(rebuild = false) {
 }
 $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#fingerSeg button').forEach(x => x.classList.toggle('on', x === b)); solve(); };
 for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('input', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 120); });
-for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'rideDetect']) $(id).addEventListener('change', () => solve(true));
+for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'rideDetect', 'depthFix']) $(id).addEventListener('change', () => solve(true));
 
 function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON']) $(id).disabled = !on; }
 function showStats() {
@@ -1750,7 +1848,7 @@ const LIB = {
   all() { return this.run('readonly', s => s.getAll()); }, del(id) { return this.run('readwrite', s => s.delete(id)); },
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
-const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'rideDetect', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored'];
+const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'rideDetect', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'depthFix'];
 const readSettings = () => { const s = {}; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; return s; };
 const writeSettings = s => { if (!s) return; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); };
 async function saveTake(cv) {
