@@ -121,7 +121,15 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
 .stats b{display:block;color:var(--text);font-weight:600}
 .modal{position:fixed;inset:0;background:#000a;display:none;place-items:center;z-index:60}
 .modal .box{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:16px;width:min(560px,92vw)}
-.modal video{width:100%;border-radius:10px;background:#000;transform:scaleX(-1)}
+.modal .box{max-height:calc(100dvh - 24px);overflow:auto}
+#camModal .box{display:flex;flex-direction:column;gap:10px}
+#camVid{width:100%;max-height:58vh;max-height:58dvh;object-fit:contain;border-radius:10px;background:#000}
+#camVid.front{transform:scaleX(-1)}
+.camctl{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px}
+.recbtn{width:72px;height:72px;border-radius:50%;border:4px solid #fff;background:#e53935;cursor:pointer;box-shadow:0 4px 16px #0008;justify-self:center;transition:.15s}
+.recbtn.on{border-radius:18px;transform:scale(.82)}
+.recbtn:disabled{opacity:.5}
+#camTimer{font-family:'JetBrains Mono',monospace;color:#ff6b6b;font-size:14px;text-align:center;min-height:18px}
 .progress.conv{display:block}
 @media (max-width:900px){
   html,body{height:auto;min-height:100%}
@@ -1491,8 +1499,13 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
 </div></div>
 <div class="modal" id="camModal"><div class="box">
   <video id="camVid" muted playsinline autoplay></video>
-  <div style="display:flex;gap:8px;margin-top:10px"><button class="btn" id="recBtn" style="flex:1">Start recording</button><button class="btn" id="camClose">Close</button></div>
-  <div class="status" id="camStat">Step back so your whole body is visible.</div>
+  <div id="camTimer"></div>
+  <div class="camctl">
+    <button class="btn" id="camFlip">🔄 Flip camera</button>
+    <button class="recbtn" id="recBtn" aria-label="Record"></button>
+    <button class="btn" id="camClose" style="justify-self:end">Close</button>
+  </div>
+  <div class="status" id="camStat" style="text-align:center">Step back so your whole body is visible, then tap the red button.</div>
 </div></div>
 
 <script type="module">
@@ -1783,9 +1796,10 @@ async function loadVideo(file, name) {
     } catch (e) { console.warn('playback frames failed', e); }
   }
   $('vEmpty').style.display = 'none';
-  info.innerHTML = `<span style="color:var(--accent);font-weight:600">✓ Video loaded</span> — ${name} · ${W}×${H} · ${D.toFixed(1)}s` + (converted ? ' · converted' : '') + '<br>Now tap <b>Generate motion</b> below.';
+  info.innerHTML = `<span style="color:var(--accent);font-weight:600">✓ Video loaded</span> — ${name} · ${W}×${H} · ${D.toFixed(1)}s` + (converted ? ' · converted' : '') + '<br>✂️ Trim it below if you only want part of it, then tap <b>Generate motion</b>.';
   $('drop').innerHTML = '<b>✓ ' + name.replace(/[<>&]/g, '') + '</b><br>Tap to choose a different video';
-  toast('Video loaded. Tap Generate motion.');
+  toast('Video loaded. Trim it if you want, then tap Generate motion.');
+  if (D > 0.5) { $('trimBar').style.display = 'block'; renderTrim(); }
   $('go').disabled = false; drawOverlay(); $('bigPlay').style.display = 'block';
   $('scrub').max = D; $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel(); requestRender();
 }
@@ -1796,26 +1810,47 @@ $('drop').addEventListener('dragleave', () => $('drop').classList.remove('over')
 $('drop').addEventListener('drop', e => { e.preventDefault(); $('drop').classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) loadVideo(f, f.name); });
 
 // webcam recording
-let camStream = null, recorder = null, chunks = [];
+let camStream = null, recorder = null, chunks = [], camFacing = 'environment', recT0 = 0, recTimer = null;
+async function startCam() {
+  camStream?.getTracks().forEach(t => t.stop());
+  const tries = [{ facingMode: { exact: camFacing } }, { facingMode: camFacing }, true];
+  let lastErr;
+  for (const v of tries) {
+    try { camStream = await navigator.mediaDevices.getUserMedia({ video: v === true ? true : { ...v, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }); break; }
+    catch (e) { lastErr = e; camStream = null; }
+  }
+  if (!camStream) throw lastErr || new Error('no camera');
+  const cv = $('camVid'); cv.srcObject = camStream; cv.classList.toggle('front', camFacing === 'user');
+  try { await cv.play(); } catch (e) {}
+}
 $('camBtn').onclick = async () => {
-  try {
-    camStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
-    $('camVid').srcObject = camStream; $('camModal').style.display = 'grid';
-  } catch (e) { toast('Camera not available: ' + e.message, true); }
+  try { $('camModal').style.display = 'grid'; await startCam(); }
+  catch (e) { $('camModal').style.display = 'none'; toast('Camera not available: ' + e.message, true); }
 };
-$('camClose').onclick = () => { if (recorder && recorder.state === 'recording') recorder.stop(); camStream?.getTracks().forEach(t => t.stop()); $('camModal').style.display = 'none'; };
+$('camFlip').onclick = async () => {
+  if (recorder && recorder.state === 'recording') return;
+  camFacing = camFacing === 'user' ? 'environment' : 'user';
+  try { await startCam(); $('camStat').textContent = camFacing === 'user' ? 'Front camera' : 'Back camera'; } catch (e) { toast('Could not switch camera: ' + e.message, true); }
+};
+$('camClose').onclick = () => { if (recorder && recorder.state === 'recording') { recorder.onstop = null; recorder.stop(); } clearInterval(recTimer); $('camTimer').textContent = ''; $('recBtn').classList.remove('on'); camStream?.getTracks().forEach(t => t.stop()); camStream = null; $('camModal').style.display = 'none'; };
 $('recBtn').onclick = () => {
+  if (!camStream) return;
   if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
-  chunks = []; const type = ['video/webm;codecs=vp9', 'video/webm', 'video/mp4'].find(t => MediaRecorder.isTypeSupported(t)) || '';
-  recorder = new MediaRecorder(camStream, type ? { mimeType: type } : undefined);
+  chunks = []; const type = ['video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+  try { recorder = new MediaRecorder(camStream, type ? { mimeType: type, videoBitsPerSecond: 8e6 } : undefined); } catch (e) { toast('Recording is not supported in this browser: ' + e.message, true); return; }
   recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
   recorder.onstop = () => {
-    const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
-    $('recBtn').textContent = 'Start recording'; $('camClose').click();
-    $('mirrored').checked = false; loadVideo(blob, 'webcam_take.webm');
+    clearInterval(recTimer); $('camTimer').textContent = ''; $('recBtn').classList.remove('on');
+    const mt = recorder.mimeType || type || 'video/webm', blob = new Blob(chunks, { type: mt });
+    $('camClose').click();
+    $('mirrored').checked = false; loadVideo(blob, 'webcam_take.' + (mt.includes('mp4') ? 'mp4' : 'webm'));
   };
   let n = 3; $('recBtn').disabled = true;
-  const tick = () => { if (n > 0) { $('camStat').textContent = `Recording in ${n}…`; n--; setTimeout(tick, 1000); } else { recorder.start(); $('recBtn').disabled = false; $('recBtn').textContent = '■ Stop recording'; $('camStat').textContent = 'Recording…'; } };
+  const tick = () => {
+    if (n > 0) { $('camTimer').textContent = `Starting in ${n}…`; n--; setTimeout(tick, 1000); return; }
+    recorder.start(250); recT0 = performance.now(); $('recBtn').disabled = false; $('recBtn').classList.add('on'); $('camStat').textContent = 'Recording… tap the button again to stop.';
+    recTimer = setInterval(() => { const s = (performance.now() - recT0) / 1000; $('camTimer').textContent = `● REC ${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`; }, 250);
+  };
   tick();
 };
 
