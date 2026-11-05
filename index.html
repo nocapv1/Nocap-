@@ -2167,7 +2167,8 @@ function drawOverlay() {
     return;
   }
   if (!frames || !$('tOverlay').classList.contains('on')) return;
-  const kk = Math.round((curTime - animT0()) * meta.fps); if (kk < 0 || kk >= frames.length) return; const f = frames[kk]; if (!f || !f.pi) return;
+  const shownT = vid.src && vid.readyState >= 2 ? vid.currentTime : curTime; // the frame actually on screen
+  const kk = Math.round((shownT - animT0()) * meta.fps); if (kk < 0 || kk >= frames.length) return; const f = frames[kk]; if (!f || !f.pi) return;
   const W = ov.width, H = ov.height, lw = Math.max(2, W / 400);
   ctx.lineCap = 'round';
   const line = (a, b, col) => { ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(a[0] * W, a[1] * H); ctx.lineTo(b[0] * W, b[1] * H); ctx.stroke(); };
@@ -2188,7 +2189,7 @@ const dur = () => (codecSrc ? codecSrc.duration : vid.duration && isFinite(vid.d
 uiReady = true;
 function updateTimeLabel() { $('tlabel').textContent = `${fmt(curTime)} / ${fmt(dur())}`; $('scrub').value = curTime; }
 function play() { if (!dur()) return; playing = true; $('play').textContent = '❚❚'; $('bigPlay').style.display = 'none'; vid.playbackRate = +$('speed').value; const [s, e] = playRange(); if (curTime >= e - 0.05 || curTime < s) { curTime = s; if (vid.src) vid.currentTime = s; } vid.play().catch(() => {}); }
-function pause() { playing = false; $('play').textContent = '▶'; vid.pause(); if (dur()) $('bigPlay').style.display = 'block'; }
+function pause() { playing = false; $('play').textContent = '▶'; vid.pause(); vid.playbackRate = +$('speed').value; if (vid.src) { try { vid.currentTime = curTime; } catch (e) {} } if (dur()) $('bigPlay').style.display = 'block'; }
 $('play').onclick = () => (playing ? pause() : play());
 // ---------- trim tool ----------
 function renderTrim() {
@@ -2225,11 +2226,14 @@ let last = performance.now(), lastVT = -1, stallT = 0;
 function loop(now) {
   const dt = (now - last) / 1000; last = now;
   if (playing) {
-    if (vid.src && !vid.paused && !vid.seeking) {
-      const vt = vid.currentTime;
-      if (vt !== lastVT) { curTime = vt; lastVT = vt; stallT = 0; }
-      else if ((stallT += dt) > 0.25) { curTime += Math.min(dt, 0.1) * (+$('speed').value); } // video player stalled: keep moving
-    } else if (!vid.src || vid.paused) curTime += Math.min(dt, 0.1) * (+$('speed').value);
+    // the 3D always moves on a steady clock; the video is gently sped up / slowed down to stay in step (no jumps, no waiting on video stutters)
+    const spd = +$('speed').value; curTime += Math.min(dt, 0.1) * spd;
+    if (vid.src && !vid.seeking) {
+      const diff = curTime - vid.currentTime;
+      if (Math.abs(diff) > 0.6) vid.currentTime = curTime;
+      else { const r = spd * Math.max(0.6, Math.min(1.8, 1 + diff * 1.5)); if (Math.abs(vid.playbackRate - r) > 0.02) vid.playbackRate = r; }
+      if (vid.paused && !vid.ended) vid.play().catch(() => {});
+    }
     { const [s, e] = playRange(); if (curTime >= e - 0.01 || vid.ended || curTime < s - 0.05) { curTime = s; if (vid.src) { vid.currentTime = s; vid.play().catch(() => {}); } } }
     applyAt(curTime); drawOverlay(); updateTimeLabel(); needRender = true;
   }
