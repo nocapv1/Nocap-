@@ -569,6 +569,14 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
+<script>
+// show a visible message if the app fails to start (instead of silently doing nothing)
+window.__appStarted=false;
+function __fail(msg){ if(window.__appStarted) return; var d=document.getElementById('bootErr'); if(!d){ d=document.createElement('div'); d.id='bootErr'; d.style.cssText='position:fixed;left:10px;right:10px;top:10px;z-index:200;background:#3b1d1d;color:#fff;border:1px solid #fc8181;border-radius:10px;padding:12px;font:14px system-ui'; document.body.appendChild(d);} d.textContent='The app could not start: '+msg+' — try pulling down to refresh. If it keeps happening, screenshot this.'; }
+window.addEventListener('error',function(e){ __fail((e.message||'load error')+(e.filename?' ('+e.filename.split('/').pop()+')':'')); },true);
+window.addEventListener('unhandledrejection',function(e){ __fail(String(e.reason&&e.reason.message||e.reason)); });
+setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not load'); },25000);
+</script>
 </head>
 <body>
 <header>
@@ -666,6 +674,7 @@ import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const S = window.Solver;
+window.__appStarted = true;
 const $ = id => document.getElementById(id);
 const MP_VER = '0.10.14';
 const MP_BASE = new URL('vendor/tasks-vision', location.href).href;

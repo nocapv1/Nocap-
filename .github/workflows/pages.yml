@@ -37,11 +37,10 @@ jobs:
           D=/tmp/deps/node_modules
           mkdir -p _site
           cp index.html sw.js manifest.webmanifest icon.svg icon-180.png icon-512.png robots.txt .nojekyll _site/
-          mkdir -p _site/vendor/three/build _site/vendor/three/examples/jsm/controls _site/vendor/three/examples/jsm/exporters _site/vendor/three/examples/jsm/utils
+          mkdir -p _site/vendor/three/build _site/vendor/three/examples/jsm
           cp $D/three/build/three.module.js _site/vendor/three/build/
-          cp $D/three/examples/jsm/controls/OrbitControls.js _site/vendor/three/examples/jsm/controls/
-          cp $D/three/examples/jsm/exporters/GLTFExporter.js _site/vendor/three/examples/jsm/exporters/
-          cp $D/three/examples/jsm/utils/BufferGeometryUtils.js _site/vendor/three/examples/jsm/utils/
+          # whole folders, so helper files these modules import (e.g. utils/TextureUtils.js) come too
+          cp -r $D/three/examples/jsm/controls $D/three/examples/jsm/exporters $D/three/examples/jsm/utils _site/vendor/three/examples/jsm/
           mkdir -p _site/vendor/tasks-vision
           cp $D/@mediapipe/tasks-vision/vision_bundle.mjs _site/vendor/tasks-vision/
           cp -r $D/@mediapipe/tasks-vision/wasm _site/vendor/tasks-vision/
@@ -59,6 +58,21 @@ jobs:
           done
           curl -fSL --retry 3 -o _site/models/hand_landmarker.task $B/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task
           ls -la _site/models
+
+      - name: Check every import of the app's modules resolves
+        run: |
+          node -e '
+          const fs=require("fs"),path=require("path");
+          const map={"three":"_site/vendor/three/build/three.module.js"};
+          const seen=new Set(); let bad=0;
+          function check(f){ if(seen.has(f))return; seen.add(f);
+            if(!fs.existsSync(f)){console.log("MISSING",f);bad++;return;}
+            const src=fs.readFileSync(f,"utf8");
+            for(const m of src.matchAll(/(?:^|\n)\s*(?:import|export)[^;]*?from\s*["\x27]([^"\x27]+)["\x27]/g)){
+              const s=m[1]; if(map[s]){check(map[s]);continue;} if(s.startsWith(".")) check(path.join(path.dirname(f),s)); }
+          }
+          for(const f of ["controls/OrbitControls.js","exporters/GLTFExporter.js","utils/BufferGeometryUtils.js"]) check("_site/vendor/three/examples/jsm/"+f);
+          console.log("checked",seen.size,"files"); process.exit(bad?1:0);'
 
       - name: Check every file the app needs is present
         run: |
