@@ -656,6 +656,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     }
     if (opt.kneeGuard !== false) locals = kneeGuard(rest, locals, fps);
     if (opt.elbowGuard !== false) locals = elbowGuard(rest, locals, fps);
+    if (opt.proLimits !== false) locals = proLimits(rest, locals);
     if (opt.antiJitter !== false) locals = antiJitter(locals, fps, Math.max(1, Math.round((1 + 3 * clamp(opt.smooth, 0, 1)) * fps / 30)));
     if (opt.footIK !== false || opt.inPlace) locals = footCleanup(rest, locals, rootPos, C, M, fps, !!opt.inPlace);
     if (opt.footIK !== false || opt.inPlace) { // final pass: smooth the legs so planting a foot never makes the knee pop
@@ -663,6 +664,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const sm = antiJitter(locals, fps, Math.max(1, Math.round(0.07 * fps)));
       locals = locals.map((l, k) => { const c = l.slice(); for (const j of legs) c[j] = sm[k][j]; return c; });
     }
+    if (opt.proLimits !== false) locals = proLimits(rest, locals, true); // final say: nothing leaves a human range of motion
     return { rest, fps, n, rootPos, locals, contacts: C, hasHands: { Left: !!HL, Right: !!HR }, M };
   }
 
@@ -758,6 +760,64 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       }
     }
     return out;
+  }
+  // ---------- pro joint limits: every joint kept inside a human range of motion ----------
+  const D2R = Math.PI / 180;
+  // rotate direction d toward rest dir r so the angle never exceeds maxDeg; returns the correcting quaternion
+  function coneFix(d, r, maxDeg) {
+    const ang = Math.acos(clamp(dot(norm(d), norm(r)), -1, 1)) / D2R; if (ang <= maxDeg) return null;
+    let ax = cross(r, d); if (len(ax) < 1e-6) ax = Math.abs(r[0]) < 0.9 ? cross(r, [1, 0, 0]) : cross(r, [0, 1, 0]);
+    const target = qrot(axqS(norm(ax), maxDeg), norm(r)); return qFromTo(d, target);
+  }
+  // swing limit that depends on direction: lim(dir) gives the max angle for the way the bone is pointing
+  function swingLimit(q, rest, lim) { const d = qrot(q, rest), m = lim(d), fix = coneFix(d, rest, m); return fix ? qnorm(qmul(fix, q)) : q; }
+  function twistLimit(q, axis, maxDeg) { if (q[3] < 0) q = q.map(v => -v); const p = sc(axis, dot([q[0], q[1], q[2]], axis)); let tw = [p[0], p[1], p[2], q[3]]; const tl = Math.hypot(...tw); tw = tl > 1e-9 ? tw.map(v => v / tl) : [0, 0, 0, 1]; const sw = qmul(q, qconj(tw)); return qnorm(qmul(sw, clampQ(tw, maxDeg))); }
+  const twistOf = (q, axis) => { if (q[3] < 0) q = q.map(v => -v); return 2 * Math.atan2(dot([q[0], q[1], q[2]], axis), q[3]) / D2R; };
+  function proLimits(rest, locals, final = false) {
+    const ix = rest.index, Y = [0, 1, 0], NY = [0, -1, 0];
+    return locals.map(l0 => {
+      const l = l0.slice();
+      // spine / neck / head: each segment bends and twists a little, together they reach a natural full range
+      for (const [nm, sw, tw] of [['Spine', 22, 18], ['Spine1', 22, 18], ['Spine2', 20, 18], ['Neck', 35, 40], ['Head', 40, 45]]) { const i = ix[nm]; l[i] = twistLimit(swingLimit(l[i], Y, () => sw), Y, tw); }
+      for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
+        const X = [sx, 0, 0];
+        l[ix[S + 'Shoulder']] = clampQ(l[ix[S + 'Shoulder']], 15);
+        // shoulder: wide range, but not behind the back / across the body too far; twist limited
+        l[ix[S + 'Arm']] = twistLimit(swingLimit(l[ix[S + 'Arm']], X, d => (d[2] < -0.3 ? 70 : d[0] * sx < -0.2 ? 135 : 165)), X, 95);
+        // elbow = hinge: line the hinge up by turning the upper arm, then keep the forearm in the hinge plane
+        { const iA = ix[S + 'Arm'], iF = ix[S + 'ForeArm']; let d = qrot(l[iF], X);
+          if (Math.hypot(d[1], d[2]) > 0.05) { // only when actually bent
+            const need = -sx * Math.atan2(d[1], d[2]) / D2R, curTw = twistOf(l[iA], X), room = clamp(curTw + need, -95, 95) - curTw;
+            if (Math.abs(room) > 0.1) { l[iA] = qnorm(qmul(l[iA], axqS(X, room))); l[iF] = qnorm(qmul(axqS(X, -room), l[iF])); }
+            d = qrot(l[iF], X);
+            const maxOut = Math.sin(12 * D2R); // natural carrying angle tolerance
+            let nd = d.slice(); nd[1] = clamp(nd[1], -maxOut, maxOut); if (nd[2] < 0.02) nd[2] = 0.02; nd = norm(nd);
+            if (len(sub(nd, d)) > 1e-4) l[iF] = qnorm(qmul(qFromTo(d, nd), l[iF]));
+          }
+          l[iF] = twistLimit(swingLimit(l[iF], X, () => 150), X, 80); }
+        // wrist
+        l[ix[S + 'Hand']] = twistLimit(swingLimit(l[ix[S + 'Hand']], X, () => 75), X, 40);
+        // fingers: curl into the palm freely, only a little sideways or backwards
+        for (const F of FINGERS) { const tp = HAND_TEMPLATE[F], fd = [sx * tp.dir[0], tp.dir[1], tp.dir[2]];
+          for (let k = 1; k <= 3; k++) { const i = ix[`${S}Hand${F}${k}`]; l[i] = twistLimit(swingLimit(l[i], fd, d => { const b = sub(norm(d), fd); return F === 'Thumb' ? 70 : (b[1] < -0.05 ? 105 : 22); }), fd, F === 'Thumb' ? 35 : 12); } }
+        // hip: far forward, less backward / outward / across
+        l[ix[S + 'UpLeg']] = twistLimit(swingLimit(l[ix[S + 'UpLeg']], NY, d => (d[2] > 0.2 ? 125 : d[2] < -0.2 ? (final ? 60 : 45) : d[0] * sx > 0.2 ? 65 : 35)), NY, final ? 50 : 40);
+        // knee = hinge: line it up by turning the thigh, then keep the shin in the hinge plane, bending backwards only
+        { const iU = ix[S + 'UpLeg'], iL = ix[S + 'Leg']; let d = qrot(l[iL], NY);
+          if (Math.hypot(d[0], d[2]) > 0.05) {
+            const need = Math.atan2(d[0], -d[2]) / D2R, curTw = twistOf(l[iU], NY), room = clamp(curTw + need, -40, 40) - curTw;
+            if (Math.abs(room) > 0.1) { l[iU] = qnorm(qmul(l[iU], axqS(NY, room))); l[iL] = qnorm(qmul(axqS(NY, -room), l[iL])); }
+            d = qrot(l[iL], NY);
+            let nd = d.slice(); const maxOut = Math.sin((final ? 15 : 8) * D2R); nd[0] = clamp(nd[0], -maxOut, maxOut); if (nd[2] > -0.02 && Math.hypot(nd[0], nd[2]) > 0.05) nd[2] = Math.min(nd[2], -0.02); nd = norm(nd);
+            if (len(sub(nd, d)) > 1e-4) l[iL] = qnorm(qmul(qFromTo(d, nd), l[iL]));
+          }
+          l[iL] = twistLimit(swingLimit(l[iL], NY, () => 150), NY, 10); }
+        // ankle and toes
+        if (!final) l[ix[S + 'Foot']] = twistLimit(swingLimit(l[ix[S + 'Foot']], FOOTDIR, d => (d[1] > dot(FOOTDIR, [0, 1, 0]) ? 40 : 50)), FOOTDIR, 15); // planted feet are laid flat by the foot clean-up
+        l[ix[S + 'ToeBase']] = clampQ(l[ix[S + 'ToeBase']], 40);
+      }
+      return l;
+    });
   }
   const axqS = (ax, deg) => { const h = deg * Math.PI / 360, s = Math.sin(h); return [ax[0] * s, ax[1] * s, ax[2] * s, Math.cos(h)]; };
 
@@ -1346,6 +1406,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="seg" id="fingerSeg"><button data-v="ai" class="on">🤖 AI tracked</button><button data-v="fist">✊ Closed</button><button data-v="relaxed">🖐 Open</button></div>
     <div class="mini" style="margin:-2px 0 6px">AI tracked follows the real fingers from the video; Closed / Open sets a fixed hand shape.</div>
     <div class="row"><label>Elbow guard <span class="mini">bends naturally, never spins or breaks</span></label><input type="checkbox" id="elbowGuard" checked></div>
+    <div class="row"><label>Human joint limits <span class="mini">every joint kept in a real range of motion</span></label><input type="checkbox" id="proLimits" checked></div>
     <div class="row"><label>Wrist rotation</label><select id="handMode"><option value="limited" selected>Natural limits</option><option value="locked">Locked to forearm</option><option value="free">Free (raw)</option></select></div>
     <div class="sub">Body</div>
     <div class="row"><label>Auto-upright <span class="mini">fix tilt</span></label><input type="checkbox" id="autoLevel" checked></div>
@@ -1925,7 +1986,7 @@ async function processVideo() {
   } finally {
     if (preVid && !procVideo && preVid.isConnected) preVid.remove();
     if (procVideo) { procVideo.removeAttribute('src'); procVideo.load(); procVideo.remove(); procVideo = null; }
-    busy = false; go.textContent = 'Generate motion'; setTimeout(() => (prog.style.display = 'none'), 800); updateRefineLabel();
+    busy = false; go.textContent = 'Generate motion'; setTimeout(() => (prog.style.display = 'none'), 800); updateRefineLabel(); updateUndo();
   }
 }
 $('go').onclick = processVideo;
@@ -2062,7 +2123,7 @@ async function refineAgain() {
   } finally {
     if (preVid && !procVideo && preVid.isConnected) preVid.remove();
     if (procVideo) { procVideo.removeAttribute('src'); procVideo.load(); procVideo.remove(); procVideo = null; }
-    busy = false; go.textContent = 'Generate motion'; setTimeout(() => (prog.style.display = 'none'), 800); updateRefineLabel();
+    busy = false; go.textContent = 'Generate motion'; setTimeout(() => (prog.style.display = 'none'), 800); updateRefineLabel(); updateUndo();
   }
 }
 function updateRefineLabel() { const b = $('refineBtn'); b.disabled = !frames || busy || (!videoURL && !codecSrc); b.innerHTML = `🔁 Refine again${meta && meta.scans > 1 ? ` <span style="opacity:.7">· ${meta.scans} scans</span>` : ''}`; }
@@ -2127,7 +2188,7 @@ function assignHands(fr, hr, W, H) {
 
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: $('elbowGuard').checked, headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
+  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: $('elbowGuard').checked, proLimits: $('proLimits').checked, headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
 }
 let solveT;
 function solve(rebuild = false) {
@@ -2142,7 +2203,7 @@ function solve(rebuild = false) {
 }
 $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#fingerSeg button').forEach(x => x.classList.toggle('on', x === b)); solve(); };
 for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('change', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 30); }); // update once you let go (no stutter while dragging)
-for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard']) $(id).addEventListener('change', () => solve(true));
+for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
 
 function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON']) $(id).disabled = !on; }
 function showStats() {
@@ -2407,7 +2468,7 @@ const LIB = {
   all() { return this.run('readonly', s => s.getAll()); }, del(id) { return this.run('readwrite', s => s.delete(id)); },
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
-const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'elbowGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
+const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
 const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; return s; };
 const writeSettings = s => { if (!s) return; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); };
 const DEFAULT_SETTINGS = readSettings(); // the app's starting settings, used for anything a take never saved
