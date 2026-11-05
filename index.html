@@ -12,27 +12,50 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <meta name="apple-mobile-web-app-title" content="NoCap">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('nocap-theme')||'gold'}catch(e){document.documentElement.dataset.theme='gold'}</script>
 <style>
-:root{
+:root,[data-theme="gold"]{
+  --bg:#050505; --panel:#0c0c0b; --panel2:#141310; --line:#2b2616; --text:#f4ecd6; --dim:#a99c78; --faint:#6e644b;
+  --accent:#d4af37; --accent2:#9c7c1f; --accent3:#f3dc93; --on-accent:#1a1404; --glass:rgba(5,5,5,.85);
+  --scene-bg:#060606; --floor:#0e0d0a; --grid1:#3b331b; --grid2:#1d1a10; --body:#ddd6c6;
+  --warn:#f6ad55; --bad:#ff6b6b; --radius:12px;
+}
+[data-theme="teal"]{
   --bg:#0b0d12; --panel:#12151c; --panel2:#171b24; --line:#232836; --text:#e7eaf0; --dim:#8b93a7; --faint:#5b6377;
-  --accent:#4fd1c5; --accent2:#2a9d93; --warn:#f6ad55; --bad:#fc8181; --radius:12px;
+  --accent:#4fd1c5; --accent2:#2a9d93; --accent3:#7f9cf5; --on-accent:#06201d; --glass:rgba(11,13,18,.85);
+  --scene-bg:#0a0c11; --floor:#10141c; --grid1:#2a3346; --grid2:#1a2030; --body:#c9d1de;
+}
+[data-theme="violet"]{
+  --bg:#09081a; --panel:#100f24; --panel2:#16142e; --line:#28254a; --text:#ece9ff; --dim:#9a94c4; --faint:#615b8c;
+  --accent:#a78bfa; --accent2:#7c5ce0; --accent3:#f472b6; --on-accent:#140b2e; --glass:rgba(9,8,26,.85);
+  --scene-bg:#08071a; --floor:#110f26; --grid1:#2e2a5a; --grid2:#1b1838; --body:#d6d2ee;
+}
+[data-theme="red"]{
+  --bg:#080505; --panel:#110a0a; --panel2:#181010; --line:#352020; --text:#f6e8e8; --dim:#b39494; --faint:#7a5a5a;
+  --accent:#ef4444; --accent2:#b91c1c; --accent3:#fbbf24; --on-accent:#200606; --glass:rgba(8,5,5,.85);
+  --scene-bg:#080505; --floor:#130b0b; --grid1:#4a2525; --grid2:#241313; --body:#e4d6d6;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.45 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 button,select,input{font:inherit;color:inherit}
-header{display:flex;align-items:center;gap:14px;padding:12px 20px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#10131a,#0b0d12)}
-.delg{background:#000;color:#d4af37;border:1px solid #6b5a1e;font-size:9.5px;font-weight:700;letter-spacing:.03em;padding:2px 6px;border-radius:5px;white-space:nowrap}
-.logo{width:30px;height:30px;border-radius:9px;background:conic-gradient(from 200deg,var(--accent),#6b8cff,var(--accent));display:grid;place-items:center;color:#0b0d12;font-weight:800}
+header{display:flex;align-items:center;gap:14px;padding:12px 20px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,var(--panel),var(--bg))}
+.themebtn{position:relative;margin-left:8px;width:32px;height:32px;border-radius:50%;border:1px solid var(--line);background:var(--panel2);cursor:pointer;flex:none;font-size:15px;display:grid;place-items:center}
+.thememenu{position:absolute;right:0;top:40px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:8px;display:none;z-index:80;min-width:170px;box-shadow:0 12px 30px #000a}
+.thememenu.open{display:block}
+.thememenu button{display:flex;align-items:center;gap:10px;width:100%;background:none;border:0;padding:8px;border-radius:8px;cursor:pointer;text-align:left}
+.thememenu button:hover,.thememenu button.on{background:var(--panel)}
+.thememenu i{width:18px;height:18px;border-radius:50%;display:inline-block;border:2px solid #fff3}
+.logo{width:30px;height:30px;border-radius:9px;background:conic-gradient(from 200deg,var(--accent),var(--accent3),var(--accent));display:grid;place-items:center;color:var(--on-accent);font-weight:800}
 header h1{font-size:16px;margin:0;font-weight:700;letter-spacing:.2px}
 header .tag{color:var(--dim);font-size:12.5px}
-header .pill{margin-left:auto;font-size:12px;color:var(--accent);border:1px solid #2a4f4c;background:#0f2422;padding:4px 10px;border-radius:99px}
+header .pill{margin-left:auto;font-size:12px;color:var(--accent);border:1px solid var(--accent2);background:var(--panel2);padding:4px 10px;border-radius:99px}
 .app{display:grid;grid-template-columns:330px 1fr;height:calc(100% - 55px)}
 aside{border-right:1px solid var(--line);background:var(--panel);overflow:auto;padding:14px}
 section.card{background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:12px}
 section.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);margin:0 0 10px;font-weight:600;display:flex;align-items:center;gap:8px}
-section.card h2 .n{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:#20303a;color:var(--accent);font-size:11px}
+section.card h2 .n{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:var(--panel);color:var(--accent);border:1px solid var(--accent2);font-size:11px}
 .drop{border:1.5px dashed #34405a;border-radius:10px;padding:18px 12px;text-align:center;color:var(--dim);cursor:pointer;transition:.15s}
-.drop:hover,.drop.over{border-color:var(--accent);color:var(--text);background:#0f1d1d}
+.drop:hover,.drop.over{border-color:var(--accent);color:var(--text);background:var(--panel)}
 .drop b{color:var(--text)}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:9px 0}
 .row label{color:var(--dim)}
@@ -43,10 +66,21 @@ input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
 .btn{background:#1d2330;border:1px solid #2c3446;border-radius:9px;padding:8px 12px;cursor:pointer;transition:.12s;display:inline-flex;align-items:center;gap:7px;justify-content:center}
 .btn:hover{border-color:#44506a;background:#222a3a}
 .btn:disabled{opacity:.45;cursor:not-allowed}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:#06201d;font-weight:700;width:100%;padding:11px}
-.btn.primary:hover{background:#6ee0d5}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:700;width:100%;padding:11px}
+.btn.primary:hover{filter:brightness(1.1)}
 .btn.small{padding:5px 9px;font-size:12.5px}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px}
+.sub{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--accent);margin:16px 0 4px;font-weight:600}
+.mini{display:block;font-size:11px;color:var(--faint)}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}
+.seg button{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:9px 4px;cursor:pointer;font-size:13px}
+.seg button.on{border-color:var(--accent);color:var(--accent);background:var(--panel2)}
+.take{display:grid;grid-template-columns:64px 1fr;gap:10px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;margin-bottom:8px}
+.take img,.take .ph{width:64px;height:64px;object-fit:cover;border-radius:8px;background:var(--panel2);display:block}
+.take b{display:block;font-size:13px;word-break:break-word}
+.take small{color:var(--faint);font-size:11.5px}
+.take .acts{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+.take .acts .btn{padding:4px 8px;font-size:12px;min-height:0 !important}
 .progress{height:6px;background:#0e1118;border-radius:9px;overflow:hidden;margin-top:10px;display:none}
 .progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));transition:width .15s}
 .status{font-size:12.5px;color:var(--dim);margin-top:8px;min-height:18px}
@@ -57,14 +91,14 @@ main{display:grid;grid-template-rows:1fr auto;min-width:0;min-height:0}
 .view{position:relative;background:#07090d;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;min-height:0}
 #pinBtn{display:none;flex:none;padding:6px 9px;font-size:13px}
 #pinBtn.on{border-color:var(--accent);color:var(--accent)}
-.bigplay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:68px;height:68px;border-radius:50%;border:0;background:#4fd1c5e6;color:#06201d;font-size:26px;z-index:4;display:none;cursor:pointer;box-shadow:0 8px 24px #0008;padding-left:6px}
-.view .label{position:absolute;top:10px;left:12px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);background:#0b0d12cc;padding:3px 8px;border-radius:6px;z-index:3}
+.bigplay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:68px;height:68px;border-radius:50%;border:0;background:var(--accent);color:var(--on-accent);opacity:.92;font-size:26px;z-index:4;display:none;cursor:pointer;box-shadow:0 8px 24px #0008;padding-left:6px}
+.view .label{position:absolute;top:10px;left:12px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);background:var(--glass);padding:3px 8px;border-radius:6px;z-index:3}
 .view video,.view canvas.ov{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
 .view canvas.ov{pointer-events:none;z-index:2}
 #three{position:absolute;inset:0}
 .empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--faint);text-align:center;padding:20px;z-index:1}
 .vtools{position:absolute;right:10px;top:8px;display:flex;gap:6px;z-index:3}
-.vtools .btn{background:#0b0d12cc}
+.vtools .btn{background:var(--glass)}
 .vtools .btn.on{border-color:var(--accent);color:var(--accent)}
 .timeline{border-top:1px solid var(--line);background:var(--panel);padding:10px 16px;display:flex;align-items:center;gap:12px}
 .timeline input[type=range]{flex:1;width:auto}
@@ -337,7 +371,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const chest = rotBetween(basis(BX, BY), basis(sub(P[11], P[12]), up));
     G.Spine = qslerp(G.Hips, chest, 1 / 3); G.Spine1 = qslerp(G.Hips, chest, 2 / 3); G.Spine2 = chest;
     const midEar = mid(P[7], P[8]);
-    const head = rotBetween(basis(BX, HEADFWD), basis(sub(P[7], P[8]), sub(P[0], midEar)));
+    const head = rotBetween(basis(BX, rest.headFwd || HEADFWD), basis(sub(P[7], P[8]), sub(P[0], midEar)));
     G.Neck = qslerp(chest, head, 0.5); G.Head = head;
 
     for (const [S, sx, i] of SIDES) {
@@ -433,7 +467,15 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const HR = hrF ? smoothPoints(hrF.map(a => a.map(toY)), dt, mc * 1.5, 0.6) : null;
 
     const M = measure(P, HL, HR), rest = buildRest(M);
-    let locals = applyLimits(rest, P.map((p, k) => solveFrame(p, HL && HL[k], HR && HR[k], rest)), opt);
+    { // calibrate the face's neutral direction: on average the head faces where the chest faces
+      const pitches = P.map(p => {
+        const ch = rotBetween(basis(BX, BY), basis(sub(p[11], p[12]), sub(mid(p[11], p[12]), mid(p[23], p[24]))));
+        const f = qrot(qconj(ch), sub(p[0], mid(p[7], p[8]))); return Math.atan2(f[1], Math.hypot(f[2], 1e-6) * Math.sign(f[2] || 1));
+      }).filter(Number.isFinite);
+      const pm = clamp(median(pitches) || 0, -0.6, 0.35) + (opt.headTilt || 0) * Math.PI / 180;
+      rest.headFwd = [0, Math.sin(pm), Math.cos(pm)];
+    }
+    let locals = applyLimits(rest, P.map((p, k) => solveFrame(p, HL && HL[k], HR && HR[k], rest)), { ...opt, hasHand: { Left: !!HL, Right: !!HR } });
     // keep quaternion hemispheres continuous
     for (let k = 1; k < n; k++) for (let j = 0; j < locals[k].length; j++) {
       const a = locals[k - 1][j], b = locals[k][j];
@@ -463,6 +505,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
           const sp = len(sub(b, a)) / (dt * Math.max(1, Math.min(n - 1, k + 1) - Math.max(0, k - 1)));
           C[k][S] = FL[k][S].low + RP[k][1] - floor < opt.contactHeight && sp < opt.contactSpeed;
         }
+        C.forEach((c, k) => (c['_v' + S] = gp[Math.min(n - 1, k + 1)].map((v, q) => (v - gp[Math.max(0, k - 1)][q]) / (dt * Math.max(1, Math.min(n - 1, k + 1) - Math.max(0, k - 1))))));
         // debounce
         const minRun = Math.max(2, Math.round(0.08 * fps));
         for (const val of [false, true]) {
@@ -470,6 +513,16 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
           while (k < n) { let e = k; while (e < n && C[e][S] === C[k][S]) e++; if (C[k][S] === val && e - k < minRun && k > 0 && e < n) for (let q = k; q < e; q++) C[q][S] = !val; k = e; }
         }
       }
+      if (opt.rideDetect !== false) { // both feet low and moving together = riding something
+        const rad = Math.max(2, Math.round(0.15 * fps)), ride = new Array(n).fill(false);
+        for (let k = 0; k < n; k++) {
+          const vl = C[k]._vLeft, vr = C[k]._vRight, vm = [(vl[0] + vr[0]) / 2, 0, (vl[2] + vr[2]) / 2];
+          const lowL = FL[k].Left.low + RP[k][1] - floor < opt.contactHeight * 1.8, lowR = FL[k].Right.low + RP[k][1] - floor < opt.contactHeight * 1.8;
+          ride[k] = lowL && lowR && Math.hypot(vm[0], vm[2]) > 0.35 && Math.hypot(vl[0] - vr[0], vl[2] - vr[2]) < 0.3 * Math.max(1, Math.hypot(vm[0], vm[2]));
+        }
+        for (let k = 0; k < n; k++) { let s = 0, c = 0; for (let q = k - rad; q <= k + rad; q++) if (q >= 0 && q < n) { s += ride[q]; c++; } if (s / c > 0.5) { C[k].Left = false; C[k].Right = false; C[k].ride = true; } }
+      }
+      C.forEach(c => { delete c._vLeft; delete c._vRight; });
       return { C, floor };
     };
 
@@ -538,12 +591,26 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const sw = qmul(q, qconj(tw));
     return qnorm(qmul(clampQ(sw, maxSwing), clampQ(tw, maxTwist)));
   }
+  const FINGER_POSES = { // curl per joint (deg): [joint1, joint2, joint3]
+    fist: { Thumb: [20, 35, 45], Index: [85, 100, 65], Middle: [88, 100, 65], Ring: [88, 100, 62], Pinky: [85, 95, 60] },
+    relaxed: { Thumb: [8, 12, 12], Index: [14, 22, 12], Middle: [18, 26, 14], Ring: [22, 30, 16], Pinky: [26, 32, 18] },
+  };
+  function fingerCurl(rest, locals, side, pose) {
+    const ix = rest.index, sx = side === 'Left' ? 1 : -1, P = FINGER_POSES[pose];
+    for (const F of FINGERS) {
+      const tp = HAND_TEMPLATE[F], d = [sx * tp.dir[0], tp.dir[1], tp.dir[2]];
+      const ax = norm(cross(d, [0, -1, 0])); // rotating about d x palmNormal curls the finger toward the palm
+      for (let k = 0; k < 3; k++) { const a = P[F][k] * Math.PI / 360; locals[ix[`${side}Hand${F}${k + 1}`]] = [ax[0] * Math.sin(a), ax[1] * Math.sin(a), ax[2] * Math.sin(a), Math.cos(a)]; }
+    }
+  }
   function applyLimits(rest, locals, opt) {
     const ix = rest.index, hm = opt.handMode || 'limited';
     return locals.map(l => {
       const o = l.slice();
       for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
-        const X = [sx, 0, 0];
+        const X = [sx, 0, 0], fm = opt.fingerMode || 'ai';
+        if (fm === 'fist' || fm === 'relaxed') fingerCurl(rest, o, S, fm);
+        else if (!(opt.hasHand && opt.hasHand[S])) fingerCurl(rest, o, S, 'relaxed'); // no finger data: natural relaxed hand
         if (hm === 'locked') { o[ix[S + 'Hand']] = [0, 0, 0, 1]; o[ix[S + 'ForeArm']] = limitSwingTwist(o[ix[S + 'ForeArm']], X, 25, 160); }
         else if (hm === 'limited') { o[ix[S + 'Hand']] = limitSwingTwist(o[ix[S + 'Hand']], X, 35, 70); o[ix[S + 'ForeArm']] = limitSwingTwist(o[ix[S + 'ForeArm']], X, 70, 160); }
         if (opt.ankleLimit !== false) {
@@ -698,9 +765,15 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
 <body>
 <header>
   <div class="logo">M</div>
-  <div class="delg">Del is a G</div>
   <div><h1>NoCap MoCap</h1><div class="tag">AI video → 3D motion capture · body + fingers · BVH / GLB</div></div>
   <div class="pill" id="netPill">Works offline · Unlimited generations</div>
+  <div style="position:relative"><button class="themebtn" id="themeBtn" aria-label="Change theme">🎨</button>
+    <div class="thememenu" id="themeMenu">
+      <button data-t="gold"><i style="background:linear-gradient(135deg,#000 50%,#d4af37 50%)"></i>Black &amp; Gold</button>
+      <button data-t="teal"><i style="background:linear-gradient(135deg,#0b0d12 50%,#4fd1c5 50%)"></i>Midnight Teal</button>
+      <button data-t="violet"><i style="background:linear-gradient(135deg,#09081a 50%,#a78bfa 50%)"></i>Violet</button>
+      <button data-t="red"><i style="background:linear-gradient(135deg,#080505 50%,#ef4444 50%)"></i>Fight Night Red</button>
+    </div></div>
 </header>
 <div class="app">
 <aside>
@@ -728,13 +801,19 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <section class="card">
     <h2><span class="n">3</span>Refine <span style="margin-left:auto;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400">applies instantly</span></h2>
     <div class="row"><label>Smoothing</label><span><input type="range" id="smooth" min="0" max="1" step="0.01" value="0.45"></span><span class="val" id="smoothV">0.45</span></div>
-    <div class="row"><label>Foot locking (anti-slide)</label><input type="checkbox" id="footLock" checked></div>
+    <div class="sub">Feet</div>
+    <div class="row"><label>Anti-slide <span class="mini">applied while processing</span></label><input type="checkbox" id="footLock" checked></div>
+    <div class="row"><label>Foot lock <span class="mini">plant &amp; flatten on the floor</span></label><input type="checkbox" id="footIK" checked></div>
+    <div class="row"><label>Ride detection <span class="mini">skateboard, scooter, skates</span></label><input type="checkbox" id="rideDetect" checked></div>
     <div class="row"><label>Contact sensitivity</label><span><input type="range" id="contact" min="0.02" max="0.15" step="0.005" value="0.07"></span><span class="val" id="contactV">7cm</span></div>
-    <div class="row"><label>Auto-upright (fix tilt)</label><input type="checkbox" id="autoLevel" checked></div>
-    <div class="row"><label>AI foot clean-up (plant &amp; flatten)</label><input type="checkbox" id="footIK" checked></div>
-    <div class="row"><label>Hands</label><select id="handMode"><option value="limited" selected>Natural limits</option><option value="locked">Locked to forearm</option><option value="free">Free (raw)</option></select></div>
-    <div class="row"><label>Ankle limits (no over-twist)</label><input type="checkbox" id="ankleLimit" checked></div>
-    <div class="row"><label>In-place (no root travel)</label><input type="checkbox" id="inPlace"></div>
+    <div class="row"><label>Ankle limits <span class="mini">no over-twist</span></label><input type="checkbox" id="ankleLimit" checked></div>
+    <div class="sub">Hands options</div>
+    <div class="seg" id="fingerSeg"><button data-v="ai" class="on">🤖 AI tracked</button><button data-v="fist">✊ Closed</button><button data-v="relaxed">🖐 Open</button></div>
+    <div class="row"><label>Wrist rotation</label><select id="handMode"><option value="limited" selected>Natural limits</option><option value="locked">Locked to forearm</option><option value="free">Free (raw)</option></select></div>
+    <div class="sub">Body</div>
+    <div class="row"><label>Auto-upright <span class="mini">fix tilt</span></label><input type="checkbox" id="autoLevel" checked></div>
+    <div class="row"><label>Head tilt</label><span><input type="range" id="headTilt" min="-25" max="25" step="1" value="0"></span><span class="val" id="headTiltV">0°</span></div>
+    <div class="row"><label>In-place <span class="mini">no root travel</span></label><input type="checkbox" id="inPlace"></div>
     <div class="stats" id="stats" style="display:none"></div>
   </section>
 
@@ -749,6 +828,12 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       <b style="color:var(--dim)">JSON</b> → per-frame 3D joint positions + rotations for robots / custom retargeting.
     </div>
   </section>
+
+  <section class="card">
+    <h2><span class="n">5</span>Library <span style="margin-left:auto;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400" id="libCount"></span></h2>
+    <div class="hint" style="margin:0 0 8px">Every motion you generate is saved here on this device, with its video. Open it again or download it any time, even offline.</div>
+    <div id="libList"></div>
+  </section>
 </aside>
 
 <main>
@@ -761,7 +846,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       <canvas class="ov" id="ov"></canvas>
       <div class="empty" id="vEmpty">No video loaded</div>
       <button class="bigplay" id="bigPlay" aria-label="Play">▶</button>
-      <div id="picker" style="display:none;position:absolute;left:8px;right:8px;bottom:8px;z-index:6;background:#0b0d12e6;border:1px solid var(--line);border-radius:10px;padding:8px;font-size:13px"></div>
+      <div id="picker" style="display:none;position:absolute;left:8px;right:8px;bottom:8px;z-index:6;background:var(--glass);border:1px solid var(--line);border-radius:10px;padding:8px;font-size:13px"></div>
     </div>
     <div class="view v3d">
       <div class="label">3D motion</div>
@@ -798,6 +883,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const S = window.Solver;
 window.__appStarted = true;
+const TV = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || '#d4af37';
 const $ = id => document.getElementById(id);
 const MP_VER = '0.10.14';
 const MP_BASE = new URL('vendor/tasks-vision', location.href).href;
@@ -817,13 +903,13 @@ async function saveFile(data, name, type) {
   download(blob, name);
 }
 function download(data, name, type) { const b = data instanceof Blob ? data : new Blob([data], { type }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500); }
-for (const [id, out, f] of [['fov', 'fovV', v => v + '°'], ['smooth', 'smoothV', v => (+v).toFixed(2)], ['contact', 'contactV', v => Math.round(v * 100) + 'cm']]) $(id).addEventListener('input', () => ($(out).textContent = f($(id).value)));
+for (const [id, out, f] of [['headTilt', 'headTiltV', v => (v > 0 ? '+' : '') + v + '°'], ['fov', 'fovV', v => v + '°'], ['smooth', 'smoothV', v => (+v).toFixed(2)], ['contact', 'contactV', v => Math.round(v * 100) + 'cm']]) $(id).addEventListener('input', () => ($(out).textContent = f($(id).value)));
 
 // ---------- state ----------
 let videoURL = null, videoName = 'motion', frames = null, anim = null, meta = null;
 let playing = false, curTime = 0, cancelFlag = false, busy = false, needRender = true;
 const vid = $('vid');
-let codecSrc = null, previews = [], firstPreview = null, previewFps = 30;
+let codecSrc = null, previews = [], firstPreview = null, previewFps = 30, currentSource = null;
 
 // ---------- source loading ----------
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -1050,7 +1136,7 @@ async function loadVideo(file, name) {
   }
   if (my !== loadToken) return;
   if (videoURL) URL.revokeObjectURL(videoURL);
-  videoURL = url; codecSrc = csrc; videoName = name.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_') || 'motion';
+  videoURL = url; codecSrc = csrc; currentSource = { blob, name }; videoName = name.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_') || 'motion';
   let W, H, D;
   if (mode === 'native') {
     useCodecMode(false);
@@ -1158,8 +1244,9 @@ async function processVideo() {
       if (!lms.length) return -1;
       const boxes = lms.map(personBox);
       if (!target) { let b = 0; boxes.forEach((x, i) => { if (x.h > boxes[b].h) b = i; }); return b; }
+      if (boxes.length === 1 && Math.hypot((boxes[0].hx - target.hx) * W, (boxes[0].hy - target.hy) * H) / Math.max(W, H) < 0.5) return 0;
       let best = -1, bc = 1e9;
-      boxes.forEach((x, i) => { const c = Math.hypot((x.cx - target.cx) * W, (x.cy - target.cy) * H) / Math.max(W, H) + 0.3 * Math.abs(Math.log(Math.max(1e-3, x.h) / Math.max(1e-3, target.h))); if (c < bc) { bc = c; best = i; } });
+      boxes.forEach((x, i) => { const c = Math.hypot((x.hx - target.hx) * W, (x.hy - target.hy) * H) / Math.max(W, H) + 0.25 * Math.abs(Math.log(Math.max(1e-3, x.h) / Math.max(1e-3, target.h))); if (c < bc) { bc = c; best = i; } });
       return bc < Math.min(0.6, 0.3 + 0.05 * missed) ? best : -1;
     };
     const detect = (cv, t) => {
@@ -1170,12 +1257,15 @@ async function processVideo() {
       if (k >= 0) {
         fr.pi = pr.landmarks[k].map(p => [p.x, p.y, p.visibility ?? 1]);
         fr.pw = pr.worldLandmarks[k].map(p => [p.x, p.y, p.z]);
-        const b = personBox(pr.landmarks[k]); target = target ? { cx: b.cx * 0.7 + target.cx * 0.3, cy: b.cy * 0.7 + target.cy * 0.3, h: b.h * 0.7 + target.h * 0.3 } : b; missed = 0;
+        const b = personBox(pr.landmarks[k]); target = target ? { hx: b.hx * 0.7 + target.hx * 0.3, hy: b.hy * 0.7 + target.hy * 0.3, h: b.h * 0.7 + target.h * 0.3 } : b; missed = 0;
       } else if (pr.landmarks && pr.landmarks.length) missed++;
       if (wantHands && handLm) { const hr = handLm.detectForVideo(cv, tsClock); if (hr.landmarks && hr.landmarks.length && fr.pi) assignHands(fr, hr, cv.width, cv.height); }
       return fr;
     };
     const out = []; const t0 = performance.now();
+    const sigC = document.createElement('canvas'); sigC.width = 24; sigC.height = 24; const sigX = sigC.getContext('2d', { willReadFrequently: true });
+    let prevSig = null;
+    const isDuplicate = cv => { try { sigX.drawImage(cv, 0, 0, 24, 24); const d = sigX.getImageData(0, 0, 24, 24).data; let diff = 0; if (prevSig) for (let i = 0; i < d.length; i += 4) diff += Math.abs(d[i] - prevSig[i]) + Math.abs(d[i + 1] - prevSig[i + 1]); const dup = prevSig && diff / (d.length / 2) < 0.35; prevSig = d.slice(); return !!dup; } catch (e) { return false; } };
     const report = (k, N) => { const p = Math.min(1, (k + 1) / N), el = (performance.now() - t0) / 1000, eta = el / p - el; bar.style.width = (p * 100).toFixed(1) + '%'; status(`Tracking frame ${k + 1}/${N} · ${(k / Math.max(el, 0.01)).toFixed(1)} fps · ~${Math.max(0, Math.ceil(eta))}s left`); };
     let cv, dur;
     if (codecSrc) {
@@ -1190,7 +1280,7 @@ async function processVideo() {
       target = await choosePerson(cv, status);
       await codecIterate(codecSrc, 1 / pfps, (f, t) => {
         drawCodecFrame(ctx, f, codecSrc, cv.width, cv.height);
-        const fr = detect(cv, t); const idx = out.length; out.push(fr);
+        const dup = isDuplicate(cv); const fr = detect(cv, t); fr.dup = dup; const idx = out.length; out.push(fr);
         if (idx % 2 === 0) report(idx, N);
       }, () => cancelFlag);
       if (cancelFlag) throw new Error('cancelled');
@@ -1212,18 +1302,27 @@ async function processVideo() {
         if (cancelFlag) throw new Error('cancelled');
         const t = Math.min(dur - 0.001, k / pfps);
         await seek(t); ctx.drawImage(pv, 0, 0, cv.width, cv.height);
-        out.push(detect(cv, t));
+        const dup = isDuplicate(cv); const fr = detect(cv, t); fr.dup = dup; out.push(fr);
         if (k % 2 === 0) { report(k, N); await sleep(0); }
       }
     }
-    const N = out.length;
+    // even time grid (phone recordings have uneven frame timing) + frozen frames become gaps the solver fills smoothly
+    const Nu = Math.max(2, Math.round(dur * pfps)), grid = Array.from({ length: Nu }, (_, k) => ({ t: k / pfps, pw: null, pi: null, hl: null, hr: null, hil: null, hir: null }));
+    let frozen = 0;
+    for (const fr of out) { const s = Math.min(Nu - 1, Math.round(fr.t * pfps)); if (s < 0 || grid[s]._set) continue; grid[s]._set = true; if (fr.dup) { frozen++; grid[s].pi = fr.pi; continue; } Object.assign(grid[s], fr, { t: s / pfps }); }
+    for (const g of grid) { delete g._set; delete g.dup; }
+    if (!grid.some(g => g.pw)) throw new Error('No person was detected in this video.');
+    const N = grid.length;
+    out.length = 0; out.push(...grid);
+    if (frozen) console.log('smoothed over', frozen, 'frozen frames');
     frames = out; meta = { W: cv.width, H: cv.height, fps: pfps, dur };
     const found = out.filter(f => f.pw).length, hf = out.filter(f => f.hl || f.hr).length;
     status(`Tracked ${found}/${N} frames with a person${wantHands ? ` · hands in ${hf}` : ''}. Solving…`);
     bar.style.width = '100%';
     solve(true);
     status(`Done · ${found}/${N} frames tracked${wantHands ? ` · fingers in ${Math.round(100 * hf / N)}%` : ''}. Tweak step 3 or export.`);
-    toast('Motion generated. Press ▶ to preview, then export.');
+    toast('Motion generated and saved to your Library. Press ▶ to preview.');
+    saveTake(cv).catch(e => console.warn('library save failed', e));
   } catch (e) {
     if (e.message === 'cancelled') status('Cancelled.');
     else {
@@ -1244,9 +1343,10 @@ function personBox(lm) {
   let x0 = 1, y0 = 1, x1 = 0, y1 = 0, n = 0;
   for (const p of lm) { if ((p.visibility ?? 1) < 0.3) continue; x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); n++; }
   if (n < 4) for (const p of lm) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
-  return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0, x0, y0, x1, y1 };
+  const hx = (lm[23].x + lm[24].x) / 2, hy = (lm[23].y + lm[24].y) / 2; // hips: stable even when arms punch out
+  return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, hx, hy, w: x1 - x0, h: y1 - y0, x0, y0, x1, y1 };
 }
-const PICK_COLORS = ['#4fd1c5', '#f6ad55', '#fc8181', '#b794f4', '#63b3ed'];
+const PICK_COLORS = ['#d4af37', '#4fd1c5', '#fc8181', '#b794f4', '#63b3ed'];
 let pickBoxes = null;
 // detect everyone on the first frame; if more than one person, let the user tap who to capture
 async function choosePerson(cv, status) {
@@ -1299,7 +1399,7 @@ function assignHands(fr, hr, W, H) {
 
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta.fps, W: meta.W, H: meta.H, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
+  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: $('rideDetect').checked, headTilt: +$('headTilt').value, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
 }
 let solveT;
 function solve(rebuild = false) {
@@ -1312,8 +1412,9 @@ function solve(rebuild = false) {
     setReady(true); drawContacts(); showStats(); applyAt(curTime); requestRender();
   } catch (e) { console.error(e); toast(e.message, true); setReady(false); }
 }
-for (const id of ['smooth', 'contact', 'fov']) $(id).addEventListener('input', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 120); });
-for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit']) $(id).addEventListener('change', () => solve(true));
+$('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#fingerSeg button').forEach(x => x.classList.toggle('on', x === b)); solve(); };
+for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('input', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 120); });
+for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'rideDetect']) $(id).addEventListener('change', () => solve(true));
 
 function setReady(on) { for (const id of ['exBVH', 'exGLB', 'exJSON']) $(id).disabled = !on; }
 function showStats() {
@@ -1326,7 +1427,7 @@ function showStats() {
 function drawContacts() {
   const cv = $('ctl'), r = cv.getBoundingClientRect(); cv.width = Math.max(100, r.width * devicePixelRatio | 0); const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
   if (!anim) return; const n = anim.n, w = cv.width / n;
-  anim.contacts.forEach((c, k) => { if (c.Left) { ctx.fillStyle = '#4fd1c5'; ctx.fillRect(k * w, 0, Math.ceil(w), 5); } if (c.Right) { ctx.fillStyle = '#7f9cf5'; ctx.fillRect(k * w, 5, Math.ceil(w), 5); } });
+  anim.contacts.forEach((c, k) => { if (c.Left) { ctx.fillStyle = TV('--accent'); ctx.fillRect(k * w, 0, Math.ceil(w), 5); } if (c.Right) { ctx.fillStyle = TV('--accent3'); ctx.fillRect(k * w, 5, Math.ceil(w), 5); } });
 }
 
 // ---------- 3D viewer ----------
@@ -1335,7 +1436,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffe
 renderer.setPixelRatio(Math.min(matchMedia('(pointer:coarse)').matches ? 1.75 : 2, devicePixelRatio)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping;
 host.appendChild(renderer.domElement);
-const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0a0c11); scene.fog = new THREE.Fog(0x0a0c11, 8, 22);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(TV('--scene-bg')); scene.fog = new THREE.Fog(TV('--scene-bg'), 8, 22);
 const camera = new THREE.PerspectiveCamera(40, 1, 0.02, 100); camera.position.set(0.6, 1.35, 4.3);
 function requestRender() { needRender = true; }
 const controls = new OrbitControls(camera, renderer.domElement); controls.target.set(0, 0.95, 0);
@@ -1344,10 +1445,10 @@ controls.addEventListener('start', () => (userOrbiting = true)); controls.addEve
 scene.add(new THREE.HemisphereLight(0xcfe7ff, 0x1a1f2a, 0.9));
 const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(3, 6, 4); key.castShadow = true; const isPhone = matchMedia('(pointer:coarse)').matches; key.shadow.mapSize.set(isPhone ? 1024 : 2048, isPhone ? 1024 : 2048);
 Object.assign(key.shadow.camera, { left: -4, right: 4, top: 4, bottom: -4, near: 0.5, far: 20 }); scene.add(key); scene.add(key.target);
-const rim = new THREE.DirectionalLight(0x4fd1c5, 1.0); rim.position.set(-4, 3, -4); scene.add(rim);
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0x10141c, roughness: 0.95 })); floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
-const grid = new THREE.GridHelper(60, 120, 0x2a3346, 0x1a2030); grid.position.y = 0.001; scene.add(grid);
-const footMarks = ['Left', 'Right'].map((s, i) => { const m = new THREE.Mesh(new THREE.RingGeometry(0.06, 0.085, 32), new THREE.MeshBasicMaterial({ color: i ? 0x7f9cf5 : 0x4fd1c5, transparent: true, opacity: 0 })); m.rotation.x = -Math.PI / 2; m.position.y = 0.004; scene.add(m); return m; });
+const rim = new THREE.DirectionalLight(TV('--accent'), 1.0); rim.position.set(-4, 3, -4); scene.add(rim);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: TV('--floor'), roughness: 0.95 })); floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+let grid = new THREE.GridHelper(60, 120, TV('--grid1'), TV('--grid2')); grid.position.y = 0.001; scene.add(grid);
+const footMarks = ['Left', 'Right'].map((s, i) => { const m = new THREE.Mesh(new THREE.RingGeometry(0.06, 0.085, 32), new THREE.MeshBasicMaterial({ color: TV(i ? '--accent3' : '--accent'), transparent: true, opacity: 0 })); m.rotation.x = -Math.PI / 2; m.position.y = 0.004; scene.add(m); return m; });
 
 let character = null, userOrbiting = false; // {group, bones, mesh, helper}
 function clearCharacter() { if (!character) return; scene.remove(character.group); if (character.helper) scene.remove(character.helper); character.mesh.geometry.dispose(); character = null; }
@@ -1357,7 +1458,7 @@ function makeRig(rest, nameMap = n => n) {
   const bones = J.map(j => { const b = new THREE.Bone(); b.name = nameMap(j.name); b.position.set(...j.offset); return b; });
   J.forEach((j, i) => { if (j.parent >= 0) bones[j.parent].add(bones[i]); });
   const rw = []; J.forEach((j, i) => { rw[i] = j.parent < 0 ? new THREE.Vector3() : rw[j.parent].clone().add(new THREE.Vector3(...j.offset)); });
-  const geos = [], body = new THREE.Color(0xc9d1de), joint = new THREE.Color(0x4fd1c5), dark = new THREE.Color(0x3a4356);
+  const geos = [], body = new THREE.Color(TV('--body')), joint = new THREE.Color(TV('--accent')), dark = new THREE.Color(0x3a4356);
   const finish = (g, bi, col) => {
     const n = g.attributes.position.count, si = new Uint16Array(n * 4), sw = new Float32Array(n * 4), c = new Float32Array(n * 3);
     for (let v = 0; v < n; v++) { si[v * 4] = bi; sw[v * 4] = 1; c[v * 3] = col.r; c[v * 3 + 1] = col.g; c[v * 3 + 2] = col.b; }
@@ -1430,6 +1531,20 @@ function resize() {
 }
 new ResizeObserver(resize).observe(host); resize();
 const toggle = (id, fn) => $(id).onclick = () => { $(id).classList.toggle('on'); fn($(id).classList.contains('on')); requestRender(); };
+function applyTheme(name) {
+  document.documentElement.dataset.theme = name; try { localStorage.setItem('nocap-theme', name); } catch (e) {}
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', TV('--bg'));
+  scene.background.set(TV('--scene-bg')); scene.fog.color.set(TV('--scene-bg')); rim.color.set(TV('--accent')); floor.material.color.set(TV('--floor'));
+  scene.remove(grid); grid.geometry.dispose(); grid = new THREE.GridHelper(60, 120, TV('--grid1'), TV('--grid2')); grid.position.y = 0.001; scene.add(grid);
+  footMarks[0].material.color.set(TV('--accent')); footMarks[1].material.color.set(TV('--accent3'));
+  if (anim) { buildCharacter(anim.rest); applyAt(curTime); }
+  document.querySelectorAll('#themeMenu button').forEach(b => b.classList.toggle('on', b.dataset.t === name));
+  drawContacts(); drawOverlay(); requestRender();
+}
+$('themeBtn').onclick = e => { e.stopPropagation(); $('themeMenu').classList.toggle('open'); };
+$('themeMenu').onclick = e => { const b = e.target.closest('button'); if (b) { applyTheme(b.dataset.t); $('themeMenu').classList.remove('open'); } };
+document.addEventListener('click', () => $('themeMenu').classList.remove('open'));
+document.querySelectorAll('#themeMenu button').forEach(b => b.classList.toggle('on', b.dataset.t === document.documentElement.dataset.theme));
 toggle('tBody', on => character && (character.mesh.visible = on));
 toggle('tBones', on => character && character.helper && (character.helper.visible = on));
 toggle('tFollow', () => {});
@@ -1465,7 +1580,7 @@ function drawOverlay() {
   ctx.lineCap = 'round';
   const line = (a, b, col) => { ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(a[0] * W, a[1] * H); ctx.lineTo(b[0] * W, b[1] * H); ctx.stroke(); };
   ctx.lineWidth = lw * 1.6;
-  for (const [a, b] of POSE_EDGES) { const pa = f.pi[a], pb = f.pi[b]; if (pa[2] < 0.3 || pb[2] < 0.3) continue; const L = a % 2 === 1 && b % 2 === 1 && a > 10; const R = a % 2 === 0 && b % 2 === 0 && a > 10; line(pa, pb, L ? '#4fd1c5' : R ? '#7f9cf5' : '#e7eaf0'); }
+  for (const [a, b] of POSE_EDGES) { const pa = f.pi[a], pb = f.pi[b]; if (pa[2] < 0.3 || pb[2] < 0.3) continue; const L = a % 2 === 1 && b % 2 === 1 && a > 10; const R = a % 2 === 0 && b % 2 === 0 && a > 10; line(pa, pb, L ? TV('--accent') : R ? TV('--accent3') : '#f4f4f4'); }
   ctx.lineWidth = lw * 0.8;
   for (const h of [f.hil, f.hir]) if (h) for (const [a, b] of HAND_EDGES) line(h[a], h[b], '#f6ad55');
   ctx.fillStyle = '#ffffff';
@@ -1505,12 +1620,65 @@ vid.addEventListener('waiting', () => ($('tlabel').style.opacity = 0.5));
 vid.addEventListener('playing', () => ($('tlabel').style.opacity = 1));
 document.addEventListener('visibilitychange', () => { if (document.hidden && playing) pause(); });
 
+// ---------- library (IndexedDB on this device) ----------
+const LIB = {
+  db: null,
+  open() { if (this.db) return Promise.resolve(this.db); return new Promise((res, rej) => { const r = indexedDB.open('nocap-library', 1); r.onupgradeneeded = () => r.result.createObjectStore('takes', { keyPath: 'id' }); r.onsuccess = () => res((this.db = r.result)); r.onerror = () => rej(r.error); }); },
+  async run(mode, fn) { const db = await this.open(); return new Promise((res, rej) => { const tx = db.transaction('takes', mode), req = fn(tx.objectStore('takes')); tx.oncomplete = () => res(req && req.result); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error); }); },
+  put(x) { return this.run('readwrite', s => s.put(x)); }, get(id) { return this.run('readonly', s => s.get(id)); },
+  all() { return this.run('readonly', s => s.getAll()); }, del(id) { return this.run('readwrite', s => s.delete(id)); },
+};
+try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
+const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'rideDetect', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored'];
+const readSettings = () => { const s = {}; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; return s; };
+const writeSettings = s => { if (!s) return; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); };
+async function saveTake(cv) {
+  const thumb = await new Promise(r => { const c = document.createElement('canvas'), s = 128 / Math.max(cv.width, cv.height); c.width = Math.round(cv.width * s); c.height = Math.round(cv.height * s); c.getContext('2d').drawImage(cv, 0, 0, c.width, c.height); c.toBlob(r, 'image/jpeg', 0.7); });
+  const src = currentSource && currentSource.blob, keepVideo = src && src.size < 200e6;
+  const take = { id: Date.now(), name: videoName, date: new Date().toISOString(), dur: meta.dur, frames, meta, settings: readSettings(), thumb, video: keepVideo ? src : null, videoName: currentSource && currentSource.name };
+  try { await LIB.put(take); } catch (e) { take.video = null; await LIB.put(take); toast('Saved to Library (video too large to keep, motion saved).'); }
+  renderLibrary();
+}
+function takeAnim(take) { const s = take.settings || {}; const o = { ...opts(), fps: take.meta.fps, W: take.meta.W, H: take.meta.H }; return S.solveAll(take.frames, o); }
+async function renderLibrary() {
+  let takes = []; try { takes = (await LIB.all()).sort((a, b) => b.id - a.id); } catch (e) { $('libList').innerHTML = '<div class="hint">Library is not available in this browser mode.</div>'; return; }
+  $('libCount').textContent = takes.length ? `${takes.length} saved` : '';
+  if (!takes.length) { $('libList').innerHTML = '<div class="hint">Nothing saved yet. Generate a motion and it appears here.</div>'; return; }
+  $('libList').innerHTML = takes.map(k => `<div class="take" data-id="${k.id}">${k.thumb ? `<img alt="" data-thumb="${k.id}">` : '<div class="ph"></div>'}<div><b>${(k.name || 'motion').replace(/[<>&]/g, '')}</b><small>${new Date(k.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} · ${(+k.dur || 0).toFixed(1)}s${k.video ? '' : ' · motion only'}</small>
+    <div class="acts"><button class="btn" data-a="open">▶ Open</button><button class="btn" data-a="bvh">BVH</button><button class="btn" data-a="glb">GLB</button><button class="btn" data-a="del" title="Delete">🗑</button></div></div></div>`).join('');
+  for (const k of takes) if (k.thumb) { const img = $('libList').querySelector(`[data-thumb="${k.id}"]`); if (img) { img.src = URL.createObjectURL(k.thumb); img.onload = () => URL.revokeObjectURL(img.src); } }
+}
+let delArm = null;
+$('libList').onclick = async e => {
+  const b = e.target.closest('button[data-a]'); if (!b || busy) return;
+  const id = +b.closest('.take').dataset.id, take = await LIB.get(id); if (!take) return renderLibrary();
+  const base = (take.name || 'motion') + '_' + id;
+  if (b.dataset.a === 'del') {
+    if (delArm !== id) { delArm = id; b.textContent = 'Delete?'; setTimeout(() => { if (delArm === id) { delArm = null; renderLibrary(); } }, 3000); return; }
+    delArm = null; await LIB.del(id); toast('Deleted from Library.'); return renderLibrary();
+  }
+  if (b.dataset.a === 'bvh' || b.dataset.a === 'glb') {
+    writeSettings(take.settings); const a = takeAnim(take);
+    return b.dataset.a === 'bvh' ? exportBVH(a, base) : exportGLB(a, base);
+  }
+  if (b.dataset.a === 'open') {
+    if (take.video) await loadVideo(take.video, take.videoName || take.name);
+    else { pause(); if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = []; }
+    writeSettings(take.settings);
+    frames = take.frames; meta = take.meta; videoName = take.name || 'motion'; curTime = 0;
+    solve(true); updateTimeLabel(); $('scrub').max = meta.dur; $('scrub').disabled = false; $('play').disabled = false;
+    $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); toast('Opened from Library.');
+  }
+};
+renderLibrary();
+
 // ---------- exports ----------
-const outName = ext => `${videoName}_${$('naming').value}_${$('outFps').value}fps.${ext}`;
-$('exBVH').onclick = () => { if (!anim) return; saveFile(S.toBVH(anim, +$('outFps').value, $('naming').value), outName('bvh'), 'text/plain'); toast('BVH exported.'); };
+const outName = (ext, base) => `${base || videoName}_${$('naming').value}_${$('outFps').value}fps.${ext}`;
+function exportBVH(a, base) { saveFile(S.toBVH(a, +$('outFps').value, $('naming').value), outName('bvh', base), 'text/plain'); toast('BVH exported.'); }
+$('exBVH').onclick = () => { if (anim) exportBVH(anim); };
 $('exJSON').onclick = () => { if (!anim) return; saveFile(JSON.stringify(S.toJSON(anim, +$('outFps').value, $('naming').value)), outName('json'), 'application/json'); toast('JSON exported.'); };
-$('exGLB').onclick = () => {
-  if (!anim) return;
+$('exGLB').onclick = () => { if (anim) exportGLB(anim); };
+function exportGLB(anim, base) {
   const naming = $('naming').value, fps = +$('outFps').value, rig = makeRig(anim.rest, S.NAME_MAPS[naming]);
   const N = Math.max(2, Math.round(((anim.n - 1) / anim.fps) * fps) + 1), times = new Float32Array(N);
   const qv = rig.bones.map(() => new Float32Array(N * 4)), pv = new Float32Array(N * 3);
@@ -1520,8 +1688,8 @@ $('exGLB').onclick = () => {
   }
   const tracks = [new THREE.VectorKeyframeTrack(rig.bones[0].uuid + '.position', times, pv)];
   rig.bones.forEach((b, j) => tracks.push(new THREE.QuaternionKeyframeTrack(b.uuid + '.quaternion', times, qv[j])));
-  const clip = new THREE.AnimationClip(videoName || 'mocap', -1, tracks);
-  new GLTFExporter().parse(rig.group, glb => { saveFile(new Blob([glb], { type: 'model/gltf-binary' }), outName('glb')); toast('GLB exported (skinned rig + animation).'); }, err => toast('GLB export failed: ' + err.message, true), { binary: true, animations: [clip] });
+  const clip = new THREE.AnimationClip(base || videoName || 'mocap', -1, tracks);
+  new GLTFExporter().parse(rig.group, glb => { saveFile(new Blob([glb], { type: 'model/gltf-binary' }), outName('glb', base)); toast('GLB exported (skinned rig + animation).'); }, err => toast('GLB export failed: ' + err.message, true), { binary: true, animations: [clip] });
 };
 </script>
 <div id="gate" style="position:fixed;inset:0;z-index:100;background:#0b0d12;display:grid;place-items:center;padding:24px">
