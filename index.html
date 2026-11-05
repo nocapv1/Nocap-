@@ -471,6 +471,17 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     if (!valid) throw new Error('No person was detected in this video.');
     let roots = pw.map((w, k) => (w && pi[k] ? solveRoot(w, pi[k], opt.W, opt.H, opt.fov) : null));
     pw = fillGaps(pw); roots = fillGaps(roots) || pw.map(() => [0, 0, 3]);
+    const piF = fillGaps(pi.map(a => a && a.map(p => [p[0] * opt.W, p[1] * opt.H, p[2] ?? 1])));
+    const footStill = { Left: new Array(pw.length).fill(false), Right: new Array(pw.length).fill(false) };
+    if (piF) {
+      const bodyH = median(piF.map(p => len(sub(mid(p[11], p[12]), mid(p[27], p[28]))))) || 1;
+      for (const [S, ids] of [['Left', [27, 29, 31]], ['Right', [28, 30, 32]]]) {
+        const fp = piF.map(p => sc(add(add(p[ids[0]], p[ids[1]]), p[ids[2]]), 1 / 3));
+        const sp = fp.map((_, k) => { const a = fp[Math.max(0, k - 1)], b = fp[Math.min(fp.length - 1, k + 1)], st = Math.max(1, Math.min(fp.length - 1, k + 1) - Math.max(0, k - 1)); return Math.hypot(b[0] - a[0], b[1] - a[1]) / (st * dt) / bodyH; });
+        const sm = sp.map((_, k) => { let s = 0, c = 0; for (let q = k - 1; q <= k + 1; q++) if (q >= 0 && q < sp.length) { s += sp[q]; c++; } return s / c; });
+        footStill[S] = sm.map(v => v < 0.12); // under ~0.12 body-heights per second in the picture = not going anywhere
+      }
+    }
     const hlF = fillGaps(hl), hrF = fillGaps(hr);
 
     // convert to Y-up and smooth (zero-lag one-euro)
@@ -486,7 +497,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
 
     // ---- depth recovery: limbs pointing at / away from the camera look too short; restore true length along the camera axis ----
     if (opt.depthFix !== false) P = recoverDepth(P, dt);
-    const M = measure(P, HL, HR), rest = buildRest(M);
+    const M = measure(pw.map(a => a.map(toY)), hlF && hlF.map(a => a.map(toY)), hrF && hrF.map(a => a.map(toY))), rest = buildRest(M);
     { // calibrate the face's neutral direction: on average the head faces where the chest faces
       const pitches = P.map(p => {
         const ch = rotBetween(basis(BX, BY), basis(sub(p[11], p[12]), sub(mid(p[11], p[12]), mid(p[23], p[24]))));
@@ -523,7 +534,9 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         for (let k = 0; k < n; k++) {
           const a = gp[Math.max(0, k - 1)], b = gp[Math.min(n - 1, k + 1)];
           const sp = len(sub(b, a)) / (dt * Math.max(1, Math.min(n - 1, k + 1) - Math.max(0, k - 1)));
-          C[k][S] = FL[k][S].low + RP[k][1] - floor < opt.contactHeight && sp < opt.contactSpeed;
+          const h = FL[k][S].low + RP[k][1] - floor;
+          // planted if the 3D says so, OR the foot is still in the video picture and not clearly raised (3D height is easily fooled by shiny floors / reflections)
+          C[k][S] = (h < opt.contactHeight && sp < opt.contactSpeed) || (footStill[S][k] && h < opt.contactHeight * 2.2);
         }
         C.forEach((c, k) => (c['_v' + S] = gp[Math.min(n - 1, k + 1)].map((v, q) => (v - gp[Math.max(0, k - 1)][q]) / (dt * Math.max(1, Math.min(n - 1, k + 1) - Math.max(0, k - 1))))));
         // debounce
@@ -577,13 +590,15 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         const r = rootPos[k]; const des = [];
         for (const S of ['Left', 'Right']) {
           if (C[k][S]) {
-            const gx = FL[k][S].c[0] + r[0], gz = FL[k][S].c[2] + r[2], low = FL[k][S].low + r[1];
+            // with Foot lock the planted foot is laid flat, so the heel (not the toe) is what must reach the floor
+            const gx = FL[k][S].c[0] + r[0], gz = FL[k][S].c[2] + r[2], low = (opt.footIK !== false ? FL[k][S].heel[1] : FL[k][S].low) + r[1];
             if (!anchor[S]) anchor[S] = [gx + c[0], gz + c[2]];
             des.push([anchor[S][0] - gx, floor - low, anchor[S][1] - gz]);
           } else anchor[S] = null;
         }
         if (des.length) {
           const t = des.reduce((a, b) => add(a, b), [0, 0, 0]).map(v => v / des.length);
+          t[1] = Math.min(...des.map(d => d[1])); // hips low enough that EVERY planted foot can reach the floor (knees bend for the rest)
           c = lerp(c, t, alpha);
         }
         out[k] = add(r, c);
@@ -601,7 +616,8 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     } else rootPos = rootPos.map(r => [r[0] - r0[0], r[1], r[2] - r0[2]]);
     if (opt.lowerToFloor !== false) { // never let the feet sink below the floor
       const FL2 = FL;
-      rootPos = rootPos.map((r, k) => { const low = Math.min(FL2[k].Left.low, FL2[k].Right.low) + r[1]; return low < -0.005 ? [r[0], r[1] - low, r[2]] : r; });
+      // only for moments with no planted foot (jumps etc.); planted feet are put exactly on the floor by the leg IK instead
+      rootPos = rootPos.map((r, k) => { if (opt.footIK !== false && (C[k].Left || C[k].Right)) return r; const low = Math.min(FL2[k].Left.low, FL2[k].Right.low) + r[1]; return low < -0.005 ? [r[0], r[1] - low, r[2]] : r; });
     }
     if (opt.inPlace) { // planted means "on the floor", whatever the speed; each foot keeps one fixed spot
       for (let k = 0; k < n; k++) { const f = fk(rest, locals[k], rootPos[k]); for (const S of ['Left', 'Right']) C[k][S] = Math.min(f.pos[ix[S + 'Foot']][1] - M.ankleH, f.pos[ix[S + 'ToeBase']][1]) < opt.contactHeight * 1.6; }
@@ -739,7 +755,8 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         let T = A.slice(), wk = anchor[k] ? w[k] : 0;
         if (wk > 0) T = lerp(A, anchor[k], wk);
         // keep heel and toe above the floor
-        const low = Math.min(A[1] - M.ankleH, toeTip[1], pos[iT][1]);
+        // planted feet are laid flat, so only the heel matters; feet in the air also keep their toes above the floor
+        const low = wk > 0.97 ? A[1] - M.ankleH : Math.min(A[1] - M.ankleH, toeTip[1], pos[iT][1]);
         if (low + (T[1] - A[1]) < 0) T[1] += -(low + (T[1] - A[1]));
         if (len(sub(T, A)) < 1e-4 && wk === 0) continue;
         // two-bone IK hip -> knee -> ankle
@@ -1954,7 +1971,7 @@ function solve(rebuild = false) {
   } catch (e) { console.error(e); toast(e.message, true); setReady(false); }
 }
 $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#fingerSeg button').forEach(x => x.classList.toggle('on', x === b)); solve(); };
-for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('input', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 120); });
+for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('change', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 30); }); // update once you let go (no stutter while dragging)
 for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit']) $(id).addEventListener('change', () => solve(true));
 
 function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON']) $(id).disabled = !on; }
