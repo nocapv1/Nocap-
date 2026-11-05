@@ -1,0 +1,11 @@
+name: FBX check
+on: { push: { branches: [fbx-test] } }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          curl -fsSL -o b.tar.xz https://download.blender.org/release/Blender4.2/blender-4.2.3-linux-x64.tar.xz
+          tar xf b.tar.xz
+          ./blender-4.2.3-linux-x64/blender -b --python check.py 2>&1 | grep -E "RESULT|Error|rror" || true
