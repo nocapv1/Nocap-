@@ -81,6 +81,14 @@ input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
 .take small{color:var(--faint);font-size:11.5px}
 .take .acts{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
 .take .acts .btn{padding:4px 8px;font-size:12px;min-height:0 !important}
+.trimbar{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:10px 12px;margin:0 10px 10px}
+.trimtrack{position:relative;height:34px;background:var(--panel2);border-radius:8px;touch-action:none;margin:4px 8px 10px}
+.trimsel{position:absolute;top:0;bottom:0;background:color-mix(in srgb,var(--accent) 22%,transparent);border-top:2px solid var(--accent);border-bottom:2px solid var(--accent)}
+.trimh{position:absolute;top:-4px;bottom:-4px;width:18px;margin-left:-9px;background:var(--accent);border-radius:5px;cursor:ew-resize;box-shadow:0 2px 8px #000a}
+.trimh::after{content:'';position:absolute;left:7px;top:10px;bottom:10px;width:4px;border-left:2px solid var(--on-accent);border-right:2px solid var(--on-accent);opacity:.6}
+.trimrow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px}
+.trimtxt{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent)}
+#trimBtn.on{border-color:var(--accent);color:var(--accent)}
 .progress{height:6px;background:#0e1118;border-radius:9px;overflow:hidden;margin-top:10px;display:none}
 .progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));transition:width .15s}
 .status{font-size:12.5px;color:var(--dim);margin-top:8px;min-height:18px}
@@ -137,8 +145,12 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   .vtools{right:4px;top:4px;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:96%}
   .vtools .btn{min-height:26px !important;padding:2px 7px !important;font-size:11px}
   .bigplay{width:54px;height:54px;font-size:20px}
+  .trimbar{order:2;margin:0 0 12px}
   .timeline{order:2;border:1px solid var(--line);border-radius:12px;margin:0 0 12px;padding:8px 10px;gap:8px}
-  .time{min-width:0;font-size:11px}
+  .time{min-width:0;font-size:11px;margin-left:auto}
+  .timeline{flex-wrap:wrap}
+  .tlwrap{flex:1 1 100%;order:-1}
+  #speed{width:70px !important}
   #play{width:42px;height:42px;font-size:15px;flex:none}
   #speed{min-width:0;width:64px}
   .btn{min-height:42px} .vtools .btn{min-height:30px;padding:4px 8px}
@@ -1032,7 +1044,14 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     return { rest, fps, n, rootPos, locals, contacts, hasHands: { Left: false, Right: false }, M: rest.M, unknown, plan: plan.map(p => p.move), text };
   }
 
-  g.Solver = { textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
+  // cut an animation down to [a, b] seconds (relative to its own start)
+  function sliceAnim(anim, a, b) {
+    const i0 = clamp(Math.round(a * anim.fps), 0, anim.n - 1), i1 = clamp(Math.round(b * anim.fps), i0 + 1, anim.n - 1);
+    if (i0 === 0 && i1 === anim.n - 1) return anim;
+    return { ...anim, n: i1 - i0 + 1, rootPos: anim.rootPos.slice(i0, i1 + 1), locals: anim.locals.slice(i0, i1 + 1), contacts: anim.contacts.slice(i0, i1 + 1) };
+  }
+
+  g.Solver = { sliceAnim, textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -1150,8 +1169,19 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="tlwrap"><input type="range" id="scrub" min="0" max="1" step="0.0001" value="0" disabled><canvas id="ctl" height="10"></canvas></div>
     <select id="speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
     <div class="time" id="tlabel">0.00s / 0.00s</div>
+    <button class="btn" id="trimBtn" title="Trim">✂️</button>
     <button class="btn" id="pinBtn" title="Keep the video and 3D view on screen while scrolling">📌 Pin</button>
   </div>
+  <div class="trimbar" id="trimBar" style="display:none">
+    <div class="trimtrack" id="trimTrack"><div class="trimsel" id="trimSel"></div><div class="trimh" id="trimA" data-h="a"></div><div class="trimh" id="trimB" data-h="b"></div></div>
+    <div class="trimrow">
+      <button class="btn small" id="trimSetA">⇤ Start here</button>
+      <span class="trimtxt" id="trimTxt">0.00s – 0.00s</span>
+      <button class="btn small" id="trimSetB">End here ⇥</button>
+    </div>
+    <div class="trimrow"><span class="mini" id="trimNote">Drag the gold handles or play to a moment and tap Start / End. Generate, playback, Refine and exports use only this part.</span><button class="btn small" id="trimReset">Reset</button></div>
+  </div>
+
 </main>
 </div>
 <div class="toast" id="toast"></div>
@@ -1200,7 +1230,7 @@ for (const [id, out, f] of [['headTilt', 'headTiltV', v => (v > 0 ? '+' : '') + 
 
 // ---------- state ----------
 let videoURL = null, videoName = 'motion', frames = null, anim = null, meta = null;
-let playing = false, curTime = 0, cancelFlag = false, busy = false, needRender = true;
+let playing = false, curTime = 0, cancelFlag = false, busy = false, needRender = true, uiReady = false;
 const vid = $('vid');
 let codecSrc = null, previews = [], firstPreview = null, previewFps = 30, currentSource = null, currentTakeId = null;
 
@@ -1396,7 +1426,7 @@ function useCodecMode(on) { $('pcv').style.display = on ? 'block' : 'none'; vid.
 
 let loadToken = 0;
 async function loadVideo(file, name) {
-  const my = ++loadToken; pause(); curTime = 0;
+  const my = ++loadToken; pause(); curTime = 0; trim = { s: 0, e: null }; $('trimBar').style.display = 'none'; $('trimBtn').classList.remove('on');
   name = name || file.name || 'video';
   const info = $('vinfo'), cp = $('cprog'), bar = cp.querySelector('i');
   $('go').disabled = true; info.textContent = 'Opening video…';
@@ -1562,7 +1592,7 @@ async function processVideo() {
     let prevSig = null;
     const isDuplicate = cv => { try { sigX.drawImage(cv, 0, 0, 24, 24); const d = sigX.getImageData(0, 0, 24, 24).data; let diff = 0; if (prevSig) for (let i = 0; i < d.length; i += 4) diff += Math.abs(d[i] - prevSig[i]) + Math.abs(d[i + 1] - prevSig[i + 1]); const dup = prevSig && diff / (d.length / 2) < 0.35; prevSig = d.slice(); return !!dup; } catch (e) { return false; } };
     const report = (k, N) => { const p = Math.min(1, (k + 1) / N), el = (performance.now() - t0) / 1000, eta = el / p - el; bar.style.width = (p * 100).toFixed(1) + '%'; status(`Tracking frame ${k + 1}/${N} · ${(k / Math.max(el, 0.01)).toFixed(1)} fps · ~${Math.max(0, Math.ceil(eta))}s left`); };
-    let cv, dur, nativeFrame = null;
+    let cv, dur, nativeFrame = null; const [tS, tE] = trimRange();
     if (codecSrc) {
       pfps = Math.min(pfps, Math.max(5, Math.round(codecSrc.srcFps)));
       dur = codecSrc.duration;
@@ -1570,10 +1600,11 @@ async function processVideo() {
       cv = document.createElement('canvas'); cv.width = Math.round(codecSrc.width * sc); cv.height = Math.round(codecSrc.height * sc);
       const ctx = cv.getContext('2d');
       const [pw, ph] = previewSize(cv.width, cv.height), pc = document.createElement('canvas'); pc.width = pw; pc.height = ph; const pctx = pc.getContext('2d');
-      const N = Math.max(2, Math.floor(dur * pfps));
-      await codecIterate(codecSrc, 1, f => drawCodecFrame(ctx, f, codecSrc, cv.width, cv.height), () => false, 1);
+      const N = Math.max(2, Math.floor((tE - tS) * pfps));
+      { let got = false; await codecIterate(codecSrc, 1 / pfps, (f, t) => { if (!got && t >= tS - 0.5 / pfps) { drawCodecFrame(ctx, f, codecSrc, cv.width, cv.height); got = true; } }, () => got); }
       target = await choosePerson(cv, status);
       await codecIterate(codecSrc, 1 / pfps, (f, t) => {
+        if (t < tS - 0.5 / pfps || t > tE + 0.5 / pfps) return;
         drawCodecFrame(ctx, f, codecSrc, cv.width, cv.height);
         const dup = isDuplicate(cv); const fr = detect(cv, t); fr.dup = dup; const idx = out.length; out.push(fr);
         if (idx % 2 === 0) report(idx, N);
@@ -1590,32 +1621,32 @@ async function processVideo() {
       const ctx = cv.getContext('2d');
       const hasRVFC = 'requestVideoFrameCallback' in pv;
       const seek = async t => { pv.currentTime = t; await waitEvent(pv, 'seeked', 5000); if (hasRVFC) await Promise.race([new Promise(r => pv.requestVideoFrameCallback(() => r())), sleep(60)]); };
-      const N = Math.max(2, Math.floor(dur * pfps));
+      const N = Math.max(2, Math.floor((tE - tS) * pfps));
       nativeFrame = async t => { await seek(t); ctx.drawImage(pv, 0, 0, cv.width, cv.height); };
-      await seek(0); ctx.drawImage(pv, 0, 0, cv.width, cv.height);
+      await seek(tS); ctx.drawImage(pv, 0, 0, cv.width, cv.height);
       target = await choosePerson(cv, status);
       for (let k = 0; k < N; k++) {
         if (cancelFlag) throw new Error('cancelled');
-        const t = Math.min(dur - 0.001, k / pfps);
+        const t = Math.min(dur - 0.001, tS + k / pfps);
         await seek(t); ctx.drawImage(pv, 0, 0, cv.width, cv.height);
         const dup = isDuplicate(cv); const fr = detect(cv, t); fr.dup = dup; out.push(fr);
         if (k % 2 === 0) { report(k, N); await sleep(0); }
       }
     }
     // even time grid (phone recordings have uneven frame timing) + frozen frames become gaps the solver fills smoothly
-    const Nu = Math.max(2, Math.round(dur * pfps)), grid = Array.from({ length: Nu }, (_, k) => ({ t: k / pfps, pw: null, pi: null, hl: null, hr: null, hil: null, hir: null }));
+    const Nu = Math.max(2, Math.round((tE - tS) * pfps) + 1), grid = Array.from({ length: Nu }, (_, k) => ({ t: tS + k / pfps, pw: null, pi: null, hl: null, hr: null, hil: null, hir: null }));
     let frozen = 0;
-    for (const fr of out) { const s = Math.min(Nu - 1, Math.round(fr.t * pfps)); if (s < 0 || grid[s]._set) continue; grid[s]._set = true; if (fr.dup) { frozen++; grid[s].pi = fr.pi; continue; } Object.assign(grid[s], fr, { t: s / pfps }); }
+    for (const fr of out) { const s = Math.min(Nu - 1, Math.round((fr.t - tS) * pfps)); if (s < 0 || grid[s]._set) continue; grid[s]._set = true; if (fr.dup) { frozen++; grid[s].pi = fr.pi; continue; } Object.assign(grid[s], fr, { t: tS + s / pfps }); }
     for (const g of grid) { delete g._set; delete g.dup; }
     if (!grid.some(g => g.pw)) throw new Error('No person was detected in this video.');
 
     // ---- refine pass: re-scan every frame zoomed in on the person, then fuse with the first pass ----
-    meta = { W: cv.width, H: cv.height, fps: pfps, dur, scans: 1 };
+    meta = { W: cv.width, H: cv.height, fps: pfps, dur, scans: 1, t0: tS };
     if ($('refinePass').checked) {
       const iterate = codecSrc
         ? cb => codecIterate(codecSrc, 1 / pfps, (f, t) => { drawCodecFrame(cv.getContext('2d'), f, codecSrc, cv.width, cv.height); cb(t); }, () => cancelFlag)
-        : async cb => { for (let k = 0; k < grid.length; k++) { if (cancelFlag) break; const t = Math.min(dur - 0.001, k / pfps); await nativeFrame(t); cb(t); if (k % 2 === 0) await sleep(0); } };
-      await zoomPass(grid, cv, pfps, iterate, 1.45, 1, wantHands, status, bar);
+        : async cb => { for (let k = 0; k < grid.length; k++) { if (cancelFlag) break; const t = Math.min(dur - 0.001, tS + k / pfps); await nativeFrame(t); cb(t); if (k % 2 === 0) await sleep(0); } };
+      await zoomPass(grid, cv, pfps, iterate, 1.45, 1, wantHands, status, bar, tS);
       meta.scans = 2;
     }
     const N = grid.length;
@@ -1667,7 +1698,7 @@ function runTextMotion(txt, existingId) {
 $('refineBtn').onclick = refineAgain;
 
 // zoomed re-scan of every frame, fused into the existing landmarks. prevScans = how many scans are already averaged in.
-async function zoomPass(grid, cv, pfps, iterate, zoom, prevScans, wantHands, status, bar) {
+async function zoomPass(grid, cv, pfps, iterate, zoom, prevScans, wantHands, status, bar, t0 = 0) {
   const W = cv.width, H = cv.height, M = Math.max(W, H), CS = 640;
   let boxes = grid.map(g => {
     if (!g.pi || !g.pw) return null; let x0 = 1, y0 = 1, x1 = 0, y1 = 0, n = 0;
@@ -1679,7 +1710,7 @@ async function zoomPass(grid, cv, pfps, iterate, zoom, prevScans, wantHands, sta
   const crop = document.createElement('canvas'); crop.width = crop.height = CS; const cx = crop.getContext('2d');
   let fused = 0, k2 = 0; const t1 = performance.now();
   const one = t => {
-    const s = Math.min(grid.length - 1, Math.round(t * pfps)), g = grid[s]; if (!g || (!g.pw && g.pi)) return; // skip frozen frames
+    const s = Math.round((t - t0) * pfps); if (s < 0 || s >= grid.length) return; const g = grid[s]; if (!g || (!g.pw && g.pi)) return; // skip frozen frames / outside trim
     const [bx, by, bs] = sm[s], side = Math.min(M * 1.2, Math.max(M * 0.25, bs * zoom)), sx = bx - side / 2, sy = by - side / 2;
     cx.fillStyle = '#000'; cx.fillRect(0, 0, CS, CS); cx.drawImage(cv, sx, sy, side, side, 0, 0, CS, CS);
     tsClock += Math.max(1, Math.round(1000 / pfps));
@@ -1747,10 +1778,10 @@ async function refineAgain() {
     else {
       preVid.pause(); const pv = await makeHiddenVideo(videoURL, preVid); if (!pv) throw new Error('Video could not be decoded'); procVideo = pv;
       const seek = async t => { pv.currentTime = t; await waitEvent(pv, 'seeked', 5000); if ('requestVideoFrameCallback' in pv) await Promise.race([new Promise(r => pv.requestVideoFrameCallback(() => r())), sleep(60)]); };
-      iterate = async cb => { for (let k = 0; k < frames.length; k++) { if (cancelFlag) break; const t = Math.min(dur - 0.001, k / pfps); await seek(t); ctx.drawImage(pv, 0, 0, W, H); cb(t); if (k % 2 === 0) await sleep(0); } };
+      iterate = async cb => { for (let k = 0; k < frames.length; k++) { if (cancelFlag) break; const t = Math.min(dur - 0.001, (meta.t0 || 0) + k / pfps); await seek(t); ctx.drawImage(pv, 0, 0, W, H); cb(t); if (k % 2 === 0) await sleep(0); } };
     }
     const scans = meta.scans || 1, zoom = [1.3, 1.6, 1.38, 1.52, 1.25, 1.7][(scans - 1) % 6];
-    await zoomPass(frames, cv, pfps, iterate, zoom, scans, $('hands').checked, status, bar);
+    await zoomPass(frames, cv, pfps, iterate, zoom, scans, $('hands').checked, status, bar, meta.t0 || 0);
     meta.scans = scans + 1;
     solve(); updateRefineLabel();
     status(`Refined · ${meta.scans} scans averaged. Press Refine again to keep improving.`);
@@ -1853,9 +1884,11 @@ function showStats() {
   el.innerHTML = `<div>Est. actor height<b>${(height * 100).toFixed(0)} cm</b></div><div>Root travel<b>${travel.toFixed(2)} m</b></div><div>Left foot planted<b>${pct('Left')}%</b></div><div>Right foot planted<b>${pct('Right')}%</b></div><div>Fingers<b>${anim.hasHands.Left || anim.hasHands.Right ? 'captured' : 'default pose'}</b></div><div>Frames<b>${n} @ ${anim.fps}fps</b></div>`;
 }
 function drawContacts() {
+  if (!uiReady) return;
   const cv = $('ctl'), r = cv.getBoundingClientRect(); cv.width = Math.max(100, r.width * devicePixelRatio | 0); const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
-  if (!anim) return; const n = anim.n, w = cv.width / n;
-  anim.contacts.forEach((c, k) => { if (c.Left) { ctx.fillStyle = TV('--accent'); ctx.fillRect(k * w, 0, Math.ceil(w), 5); } if (c.Right) { ctx.fillStyle = TV('--accent3'); ctx.fillRect(k * w, 5, Math.ceil(w), 5); } });
+  const D = dur(); if (!D) return; const X = tt => (tt / D) * cv.width;
+  if (anim) { const t0 = animT0(), w = Math.max(1, X(1 / anim.fps)); anim.contacts.forEach((c, k) => { const x = X(t0 + k / anim.fps); if (c.Left) { ctx.fillStyle = TV('--accent'); ctx.fillRect(x, 0, w, 5); } if (c.Right) { ctx.fillStyle = TV('--accent3'); ctx.fillRect(x, 5, w, 5); } }); }
+  const [s, e] = trimRange(); if (s > 0.001 || e < D - 0.001) { ctx.fillStyle = 'rgba(0,0,0,.7)'; ctx.fillRect(0, 0, X(s), cv.height); ctx.fillRect(X(e), 0, cv.width - X(e), cv.height); }
 }
 
 // ---------- 3D viewer ----------
@@ -1942,11 +1975,11 @@ function buildCharacter(rest) {
 const _v = new THREE.Vector3();
 function applyAt(t) {
   if (!anim || !character) return;
-  const smp = S.sample(anim, t), b = character.bones;
+  const smp = S.sample(anim, t - animT0()), b = character.bones;
   b[0].position.set(...smp.root);
   smp.locals.forEach((q, j) => b[j].quaternion.set(q[0], q[1], q[2], q[3]));
   character.group.updateMatrixWorld(true);
-  const k = Math.round(Math.min(anim.n - 1, Math.max(0, t * anim.fps)));
+  const k = Math.round(Math.min(anim.n - 1, Math.max(0, (t - animT0()) * anim.fps)));
   ['Left', 'Right'].forEach((s, i) => { b[anim.rest.index[s + 'Foot']].getWorldPosition(_v); footMarks[i].position.x = _v.x; footMarks[i].position.z = _v.z; footMarks[i].material.opacity = anim.contacts[k][s] ? 0.9 : 0; });
   if ($('tFollow').classList.contains('on')) {
     b[0].getWorldPosition(_v); const tgt = new THREE.Vector3(_v.x, 0.95, _v.z), d = tgt.clone().sub(controls.target);
@@ -2003,7 +2036,7 @@ function drawOverlay() {
     return;
   }
   if (!frames || !$('tOverlay').classList.contains('on')) return;
-  const k = Math.round(Math.min(frames.length - 1, Math.max(0, curTime * meta.fps))), f = frames[k]; if (!f || !f.pi) return;
+  const kk = Math.round((curTime - animT0()) * meta.fps); if (kk < 0 || kk >= frames.length) return; const f = frames[kk]; if (!f || !f.pi) return;
   const W = ov.width, H = ov.height, lw = Math.max(2, W / 400);
   ctx.lineCap = 'round';
   const line = (a, b, col) => { ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(a[0] * W, a[1] * H); ctx.lineTo(b[0] * W, b[1] * H); ctx.stroke(); };
@@ -2016,11 +2049,38 @@ function drawOverlay() {
 }
 
 // ---------- playback ----------
+let trim = { s: 0, e: null };
+const trimRange = () => { const d = dur(); const s = Math.max(0, Math.min(trim.s, d)), e = trim.e == null ? d : Math.max(s + 0.1, Math.min(trim.e, d)); return [s, e]; };
+const animT0 = () => (meta && meta.t0) || 0;
 const dur = () => (codecSrc ? codecSrc.duration : vid.duration && isFinite(vid.duration) ? vid.duration : anim ? (anim.n - 1) / anim.fps : 0);
+uiReady = true;
 function updateTimeLabel() { $('tlabel').textContent = `${fmt(curTime)} / ${fmt(dur())}`; $('scrub').value = curTime; }
-function play() { if (!dur()) return; playing = true; $('play').textContent = '❚❚'; $('bigPlay').style.display = 'none'; vid.playbackRate = +$('speed').value; if (curTime >= dur() - 0.05) { curTime = 0; vid.currentTime = 0; } vid.play().catch(() => {}); }
+function play() { if (!dur()) return; playing = true; $('play').textContent = '❚❚'; $('bigPlay').style.display = 'none'; vid.playbackRate = +$('speed').value; const [s, e] = trimRange(); if (curTime >= e - 0.05 || curTime < s) { curTime = s; if (vid.src) vid.currentTime = s; } vid.play().catch(() => {}); }
 function pause() { playing = false; $('play').textContent = '▶'; vid.pause(); if (dur()) $('bigPlay').style.display = 'block'; }
 $('play').onclick = () => (playing ? pause() : play());
+// ---------- trim tool ----------
+function renderTrim() {
+  const D = dur() || 1, [s, e] = trimRange();
+  $('trimA').style.left = (s / D * 100) + '%'; $('trimB').style.left = (e / D * 100) + '%';
+  $('trimSel').style.left = (s / D * 100) + '%'; $('trimSel').style.width = ((e - s) / D * 100) + '%';
+  $('trimTxt').textContent = `${s.toFixed(2)}s – ${e.toFixed(2)}s (${(e - s).toFixed(2)}s)`;
+  const outside = frames && meta && (s < meta.t0 - 0.05 || e > meta.t0 + (frames.length - 1) / meta.fps + 0.05);
+  $('trimNote').innerHTML = outside ? '<span style="color:var(--warn)">This range goes beyond the part already processed. Tap Generate motion to capture it.</span>' : 'Drag the gold handles or play to a moment and tap Start / End. Generate, playback, Refine and exports use only this part.';
+  $('trimBtn').classList.toggle('on', s > 0.001 || e < (dur() - 0.001));
+  drawContacts();
+}
+function setTrim(s, e) { const D = dur(); if (!D) return; trim.s = Math.max(0, Math.min(s, D - 0.1)); trim.e = Math.min(D, Math.max(e, trim.s + 0.1)); if (trim.e >= D - 0.001) trim.e = null; renderTrim(); }
+$('trimBtn').onclick = () => { const bar = $('trimBar'), open = bar.style.display === 'none'; bar.style.display = open ? 'block' : 'none'; if (open) renderTrim(); };
+$('trimSetA').onclick = () => { const [, e] = trimRange(); setTrim(curTime, e); };
+$('trimSetB').onclick = () => { const [s] = trimRange(); setTrim(s, curTime); };
+$('trimReset').onclick = () => { trim = { s: 0, e: null }; renderTrim(); };
+{ let drag = null;
+  const pos = ev => { const r = $('trimTrack').getBoundingClientRect(); return Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * dur(); };
+  $('trimTrack').addEventListener('pointerdown', ev => { if (!dur()) return; const t = pos(ev), [s, e] = trimRange(); drag = ev.target.dataset.h || (Math.abs(t - s) < Math.abs(t - e) ? 'a' : 'b'); $('trimTrack').setPointerCapture(ev.pointerId); move(ev); });
+  const move = ev => { if (!drag) return; const t = pos(ev), [s, e] = trimRange(); pause(); if (drag === 'a') setTrim(t, e); else setTrim(s, t); curTime = drag === 'a' ? trimRange()[0] : trimRange()[1]; if (vid.src) seekDisplay(curTime); applyAt(curTime); drawOverlay(); updateTimeLabel(); requestRender(); };
+  $('trimTrack').addEventListener('pointermove', move);
+  $('trimTrack').addEventListener('pointerup', () => (drag = null)); $('trimTrack').addEventListener('pointercancel', () => (drag = null));
+}
 $('bigPlay').onclick = () => play();
 $('pinBtn').onclick = () => { const on = document.body.classList.toggle('pinned'); $('pinBtn').classList.toggle('on', on); $('pinBtn').textContent = on ? '📌 Unpin' : '📌 Pin'; if (on) $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); };
 $('vview').addEventListener('click', e => { if (playing && e.target.closest('.vtools') == null) pause(); });
@@ -2035,7 +2095,7 @@ function loop(now) {
   if (playing) {
     if (vid.src && !vid.paused && !vid.seeking) curTime = vid.currentTime;
     else if (!vid.src || vid.paused) curTime += Math.min(dt, 0.1) * (+$('speed').value);
-    if (curTime >= dur() - 0.01 || vid.ended) { curTime = 0; vid.currentTime = 0; if (vid.src) vid.play().catch(() => {}); }
+    { const [s, e] = trimRange(); if (curTime >= e - 0.01 || vid.ended || curTime < s - 0.05) { curTime = s; if (vid.src) { vid.currentTime = s; vid.play().catch(() => {}); } } }
     applyAt(curTime); drawOverlay(); updateTimeLabel(); needRender = true;
   }
   if (controls.update()) needRender = true;
@@ -2058,8 +2118,8 @@ const LIB = {
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'depthFix'];
-const readSettings = () => { const s = {}; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; return s; };
-const writeSettings = s => { if (!s) return; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); };
+const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; return s; };
+const writeSettings = s => { if (!s) return; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); };
 async function videoBytes() {
   const src = currentSource && currentSource.blob; if (!src || src.size > 250e6) return null;
   return { buf: await src.arrayBuffer(), type: src.type || 'video/mp4' };
@@ -2123,13 +2183,14 @@ renderLibrary();
 
 // ---------- exports ----------
 const outName = (ext, base) => `${base || videoName}_${$('naming').value}_${$('outFps').value}fps.${ext}`;
-function exportBVH(a, base) { saveFile(S.toBVH(a, +$('outFps').value, $('naming').value), outName('bvh', base), 'text/plain'); toast('BVH exported.'); }
+function trimmedAnim(a) { if (a !== anim) return a; const [s, e] = trimRange(), t0 = animT0(); return S.sliceAnim(a, s - t0, e - t0); }
+function exportBVH(a, base) { a = trimmedAnim(a); saveFile(S.toBVH(a, +$('outFps').value, $('naming').value), outName('bvh', base), 'text/plain'); toast('BVH exported.'); }
 $('exBVH').onclick = () => { if (anim) exportBVH(anim); };
-function exportFBX(a, base) { saveFile(new Blob([S.toFBX(a, +$('outFps').value, $('naming').value)], { type: 'application/octet-stream' }), outName('fbx', base)); toast('FBX exported.'); }
+function exportFBX(a, base) { a = trimmedAnim(a); saveFile(new Blob([S.toFBX(a, +$('outFps').value, $('naming').value)], { type: 'application/octet-stream' }), outName('fbx', base)); toast('FBX exported.'); }
 $('exFBX').onclick = () => { if (anim) exportFBX(anim); };
-$('exJSON').onclick = () => { if (!anim) return; saveFile(JSON.stringify(S.toJSON(anim, +$('outFps').value, $('naming').value)), outName('json'), 'application/json'); toast('JSON exported.'); };
+$('exJSON').onclick = () => { if (!anim) return; saveFile(JSON.stringify(S.toJSON(trimmedAnim(anim), +$('outFps').value, $('naming').value)), outName('json'), 'application/json'); toast('JSON exported.'); };
 $('exGLB').onclick = () => { if (anim) exportGLB(anim); };
-function exportGLB(anim, base) {
+function exportGLB(anim, base) { anim = trimmedAnim(anim);
   const naming = $('naming').value, fps = +$('outFps').value, rig = makeRig(anim.rest, S.NAME_MAPS[naming]);
   const N = Math.max(2, Math.round(((anim.n - 1) / anim.fps) * fps) + 1), times = new Float32Array(N);
   const qv = rig.bones.map(() => new Float32Array(N * 4)), pv = new Float32Array(N * 3);
