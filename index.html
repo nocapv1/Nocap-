@@ -654,8 +654,14 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     if (opt.inPlace) { // planted means "on the floor", whatever the speed; each foot keeps one fixed spot
       for (let k = 0; k < n; k++) { const f = fk(rest, locals[k], rootPos[k]); for (const S of ['Left', 'Right']) C[k][S] = Math.min(f.pos[ix[S + 'Foot']][1] - M.ankleH, f.pos[ix[S + 'ToeBase']][1]) < opt.contactHeight * 1.6; }
     }
+    if (opt.kneeGuard !== false) locals = kneeGuard(rest, locals, fps);
     if (opt.antiJitter !== false) locals = antiJitter(locals, fps, Math.max(1, Math.round((1 + 3 * clamp(opt.smooth, 0, 1)) * fps / 30)));
     if (opt.footIK !== false || opt.inPlace) locals = footCleanup(rest, locals, rootPos, C, M, fps, !!opt.inPlace);
+    if (opt.footIK !== false || opt.inPlace) { // final pass: smooth the legs so planting a foot never makes the knee pop
+      const legs = ['Left', 'Right'].flatMap(S => [S + 'UpLeg', S + 'Leg', S + 'Foot']).map(nm => rest.index[nm]);
+      const sm = antiJitter(locals, fps, Math.max(1, Math.round(0.07 * fps)));
+      locals = locals.map((l, k) => { const c = l.slice(); for (const j of legs) c[j] = sm[k][j]; return c; });
+    }
     return { rest, fps, n, rootPos, locals, contacts: C, hasHands: { Left: !!HL, Right: !!HR }, M };
   }
 
@@ -694,6 +700,40 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     }
     return res;
   }
+
+  // knee guard: no backwards knees, a tiny natural bend instead of a dead-straight lock, and sudden one-off "snaps" straight are replaced from the good frames around them
+  function kneeGuard(rest, locals, fps) {
+    const n = locals.length, ix = rest.index, out = locals.map(l => l.slice());
+    const MIN = 3, win = Math.max(3, Math.round(0.15 * fps));
+    const flexOf = q => { const d = qrot(q, [0, -1, 0]); return Math.atan2(-d[2], -d[1]) * 180 / Math.PI; };
+    for (const S of ['Left', 'Right']) {
+      const iL = ix[S + 'Leg'], iU = ix[S + 'UpLeg'];
+      let flex = out.map(l => flexOf(l[iL]));
+      // 1) snaps: a knee much straighter than the frames around it, for only a short moment
+      const bad = new Array(n).fill(false);
+      for (let k = 0; k < n; k++) {
+        const nb = []; for (let q = k - win; q <= k + win; q++) if (q >= 0 && q < n && Math.abs(q - k) > 1) nb.push(flex[q]);
+        if (nb.length < 3) continue; const med = median(nb);
+        if (med - flex[k] > 18 && flex[k] < 12) bad[k] = true;
+      }
+      for (let k = 0; k < n; k++) {
+        if (!bad[k]) continue; let e = k; while (e < n && bad[e]) e++;
+        const a = k - 1, b = e;
+        if (e - k <= win * 2) for (let q = k; q < e; q++) {
+          if (a >= 0 && b < n) { const u = (q - a) / (b - a); out[q][iL] = qslerp(out[a][iL], out[b][iL], u); out[q][iU] = qslerp(out[a][iU], out[b][iU], u); }
+          else { const src = a >= 0 ? a : b; if (src >= 0 && src < n) { out[q][iL] = out[src][iL]; out[q][iU] = out[src][iU]; } }
+        }
+        k = e;
+      }
+      // 2) never backwards, never dead straight: keep at least a few degrees of natural bend
+      for (let k = 0; k < n; k++) {
+        const f = flexOf(out[k][iL]);
+        if (f < MIN) { const fix = qmul(axqS([1, 0, 0], MIN - f), out[k][iL]); out[k][iL] = qnorm(fix); }
+      }
+    }
+    return out;
+  }
+  const axqS = (ax, deg) => { const h = deg * Math.PI / 360, s = Math.sin(h); return [ax[0] * s, ax[1] * s, ax[2] * s, Math.cos(h)]; };
 
   function cleanTracks(pw, pi, fps) {
     const n = pw.length; pw = pw.map(a => a && a.map(p => p.slice())); pi = pi.map(a => a && a.map(p => p.slice()));
@@ -775,7 +815,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   function footCleanup(rest, locals, rootPos, C, M, fps, oneSpot = false) {
     const n = locals.length, ix = rest.index, J = rest.joints;
     const out = locals.map(l => l.slice());
-    const rad = Math.max(1, Math.round(0.08 * fps)); // blend in/out over ~80 ms
+    const rad = Math.max(2, Math.round(0.1 * fps)); // blend in/out over ~100 ms
     for (const S of ['Left', 'Right']) {
       const iU = ix[S + 'UpLeg'], iL = ix[S + 'Leg'], iF = ix[S + 'Foot'], iT = ix[S + 'ToeBase'];
       // smooth contact weight
@@ -794,20 +834,31 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         const xs = [], zs = []; for (let k = 0; k < n; k++) if (raw[k]) { xs.push(base[k].pos[iF][0]); zs.push(base[k].pos[iF][2]); }
         if (xs.length) { const a = [median(xs), M.ankleH, median(zs)]; for (let k = 0; k < n; k++) if (anchor[k]) anchor[k] = a; }
       }
+      // pass 1: where should the ankle be on every frame?  (smoothstep blending, never dragged far)
+      const ease = x => x * x * (3 - 2 * x);
+      const plan = new Array(n), wts = new Array(n), lifts = new Array(n).fill(-9);
+      for (let k = 0; k < n; k++) {
+        const { pos, rot } = fk(rest, out[k], rootPos[k]);
+        const A = pos[iF], toeTip = add(pos[iT], qrot(rot[iT], J[iT].end || [0, 0, 0.05]));
+        let wk = anchor[k] ? ease(w[k]) : 0;
+        if (wk > 0 && !oneSpot) { const dist = len(sub(anchor[k], A)); if (dist > 0.25) wk *= 0.25 / dist; } // a far-away spot is a bad anchor: don't drag the leg to it
+        let T = wk > 0 ? lerp(A, anchor[k], wk) : A.slice();
+        const low = wk > 0.97 ? A[1] - M.ankleH : Math.min(A[1] - M.ankleH, toeTip[1], pos[iT][1]);
+        if (low + (T[1] - A[1]) < 0) T[1] += -(low + (T[1] - A[1]));
+        plan[k] = sub(T, A); wts[k] = wk; lifts[k] = -low; // lowest allowed offset (keeps the foot on or above the floor)
+      }
+      // smooth the corrections over time so the knee never jumps when a foot plants or lifts
+      const sm = [0, 1, 2].map(c => loess(plan.map(p => p[c]), Math.max(1, Math.round(0.08 * fps))));
       for (let k = 0; k < n; k++) {
         const { pos, rot } = fk(rest, out[k], rootPos[k]);
         const H = pos[iU], K = pos[iL], A = pos[iF];
-        const toeTip = add(pos[iT], qrot(rot[iT], J[iT].end || [0, 0, 0.05]));
-        let T = A.slice(), wk = anchor[k] ? w[k] : 0;
-        if (wk > 0) T = lerp(A, anchor[k], wk);
-        // keep heel and toe above the floor
-        // planted feet are laid flat, so only the heel matters; feet in the air also keep their toes above the floor
-        const low = wk > 0.97 ? A[1] - M.ankleH : Math.min(A[1] - M.ankleH, toeTip[1], pos[iT][1]);
-        if (low + (T[1] - A[1]) < 0) T[1] += -(low + (T[1] - A[1]));
-        if (len(sub(T, A)) < 1e-4 && wk === 0) continue;
+        const wk = wts[k], off = [sm[0][k], Math.max(sm[1][k], lifts[k]), sm[2][k]], T = add(A, off); // never lower than the floor needs
+        if (len(off) < 1e-4 && wk === 0) continue;
         // two-bone IK hip -> knee -> ankle
         const a = len(sub(K, H)), b = len(sub(A, K));
-        let dv = sub(T, H); const d = clamp(len(dv), Math.abs(a - b) + 1e-4, a + b - 1e-4); const dir = norm(dv);
+        let dv = sub(T, H), dRaw = len(dv); const L = a + b, ds = L * 0.985; // soft IK: ease into full reach instead of locking the knee
+        if (dRaw > ds) dRaw = ds + (L * 0.998 - ds) * (1 - Math.exp(-(dRaw - ds) / (L * 0.998 - ds)));
+        const d = clamp(dRaw, Math.abs(a - b) + 1e-4, L * 0.998); const dir = norm(dv);
         let pole = perp(sub(K, H), dir);
         if (len(pole) < 1e-4) pole = perp(qrot(rot[iF], [0, 0, 1]), dir);
         pole = norm(pole);
@@ -1247,6 +1298,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>Anti-jitter <span class="mini">steadies small shakes, keeps fast moves</span></label><input type="checkbox" id="antiJitter" checked></div>
     <div class="row"><label>Foot lock <span class="mini">plant &amp; flatten on the floor</span></label><input type="checkbox" id="footIK" checked></div>
     <div class="row"><label>Contact sensitivity</label><span><input type="range" id="contact" min="0.02" max="0.15" step="0.005" value="0.07"></span><span class="val" id="contactV">7cm</span></div>
+    <div class="row"><label>Knee guard <span class="mini">no locked, snapping or backwards knees</span></label><input type="checkbox" id="kneeGuard" checked></div>
     <div class="row"><label>Ankle limits <span class="mini">no over-twist</span></label><input type="checkbox" id="ankleLimit" checked></div>
     <div class="sub">Hands options</div>
     <div class="seg" id="fingerSeg"><button data-v="ai" class="on">🤖 AI tracked</button><button data-v="fist">✊ Closed</button><button data-v="relaxed">🖐 Open</button></div>
@@ -2026,7 +2078,7 @@ function assignHands(fr, hr, W, H) {
 
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: $('antiJitter').checked, headTilt: +$('headTilt').value, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
+  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: $('antiJitter').checked, kneeGuard: $('kneeGuard').checked, headTilt: +$('headTilt').value, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
 }
 let solveT;
 function solve(rebuild = false) {
@@ -2041,7 +2093,7 @@ function solve(rebuild = false) {
 }
 $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#fingerSeg button').forEach(x => x.classList.toggle('on', x === b)); solve(); };
 for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('change', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 30); }); // update once you let go (no stutter while dragging)
-for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter']) $(id).addEventListener('change', () => solve(true));
+for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard']) $(id).addEventListener('change', () => solve(true));
 
 function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON']) $(id).disabled = !on; }
 function showStats() {
@@ -2294,7 +2346,7 @@ const LIB = {
   all() { return this.run('readonly', s => s.getAll()); }, del(id) { return this.run('readwrite', s => s.delete(id)); },
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
-const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter'];
+const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard'];
 const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; return s; };
 const writeSettings = s => { if (!s) return; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); };
 async function videoBytes() {
