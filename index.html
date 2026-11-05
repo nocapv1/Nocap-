@@ -277,12 +277,21 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   function fillGaps(arr) {
     const valid = []; arr.forEach((v, i) => { if (v) valid.push(i); });
     if (!valid.length) return null;
-    const out = arr.slice(); const L = (a, b, t) => Array.isArray(a[0]) ? a.map((p, k) => lerp(p, b[k], t)) : lerp(a, b, t);
+    const out = arr.slice();
+    // cubic Hermite: keeps the speed going into and out of the gap, so bridged frames don't look like a stop-start
+    const herm = (p0, p1, m0, m1, t) => { const t2 = t * t, t3 = t2 * t; return p0 * (2 * t3 - 3 * t2 + 1) + m0 * (t3 - 2 * t2 + t) + p1 * (-2 * t3 + 3 * t2) + m1 * (t3 - t2); };
+    const V3 = (a, b, c, d, t, span) => [0, 1, 2].map(q => (a ? herm(b[q], c[q], (b[q] - a[q]) * span, d ? (d[q] - c[q]) * span : (c[q] - b[q]), t) : b[q] + (c[q] - b[q]) * t));
     for (let i = 0; i < arr.length; i++) {
       if (out[i]) continue;
       let a = -1, b = -1;
       for (const v of valid) { if (v < i) a = v; else { b = v; break; } }
-      if (a < 0) out[i] = arr[b]; else if (b < 0) out[i] = arr[a]; else out[i] = L(arr[a], arr[b], (i - a) / (b - a));
+      if (a < 0) out[i] = arr[b]; else if (b < 0) out[i] = arr[a];
+      else {
+        const t = (i - a) / (b - a), span = b - a, A0 = arr[a - 1] || null, B1 = arr[b + 1] || null;
+        if (Array.isArray(arr[a][0])) out[i] = arr[a].map((p, k) => { const r = V3(A0 && A0[k], p, arr[b][k], B1 && B1[k], t, span); return arr[a][k].length > 3 ? r.concat(arr[a][k].slice(3)) : r.concat(arr[a][k].length === 3 ? [] : []); });
+        else out[i] = V3(A0, arr[a], arr[b], B1, t, span);
+        if (Array.isArray(arr[a][0]) && arr[a][0].length === 3 && out[i][0].length === 3) { /* already xyz */ }
+      }
     }
     return out;
   }
@@ -1187,6 +1196,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>Camera field of view</label><span><input type="range" id="fov" min="25" max="100" value="55"> </span><span class="val" id="fovV">55°</span></div>
     <button class="btn primary" id="go" disabled>Generate motion</button>
     <button class="btn" id="refineBtn" disabled style="width:100%;margin-top:8px">🔁 Refine again</button>
+    <button class="btn" id="undoBtn" style="width:100%;margin-top:6px;display:none">↩️ Undo last refine</button>
     <div class="mini" style="margin-top:4px">Each press re-scans the video zoomed in and cleans up glitches. Press as many times as you like.</div>
     <div class="progress" id="prog"><i></i></div>
     <div class="status" id="pstat"></div>
@@ -1321,6 +1331,7 @@ for (const [id, out, f] of [['headTilt', 'headTiltV', v => (v > 0 ? '+' : '') + 
 let videoURL = null, videoName = 'motion', frames = null, anim = null, meta = null;
 let playing = false, curTime = 0, cancelFlag = false, busy = false, needRender = true, uiReady = false;
 const vid = $('vid');
+let undoStack = [];
 let codecSrc = null, previews = [], firstPreview = null, previewFps = 30, currentSource = null, currentTakeId = null;
 
 // ---------- source loading ----------
@@ -1519,7 +1530,7 @@ async function loadVideo(file, name) {
   name = name || file.name || 'video';
   const info = $('vinfo'), cp = $('cprog'), bar = cp.querySelector('i');
   $('go').disabled = true; info.textContent = 'Opening video…';
-  frames = null; anim = null; clearCharacter(); setReady(false); previews = []; firstPreview = null; pvShown = -2;
+  frames = null; anim = null; clearCharacter(); setReady(false); previews = []; firstPreview = null; pvShown = -2; undoStack = []; $('undoBtn').style.display = 'none';
   let blob = file, url = null, mode = null, csrc = null, converted = false;
   const tryNative = async b => { const u = URL.createObjectURL(b); if (await probeVideo(u)) return u; URL.revokeObjectURL(u); return null; };
   const tryCodec = async b => { info.textContent = 'Decoding video directly…'; try { return await openCodecSource(b, name); } catch (e) { console.warn(e); return null; } };
@@ -1678,13 +1689,23 @@ async function processVideo() {
       return fr;
     };
     const out = []; const t0 = performance.now();
-    // frozen-frame check: a frame only counts as frozen if EVERY part of the picture is unchanged (a small moving person still counts as motion)
-    const SG = 48, CELL = 6, sigC = document.createElement('canvas'); sigC.width = SG; sigC.height = SG; const sigX = sigC.getContext('2d', { willReadFrequently: true });
-    let prevSig = null;
-    const isDuplicate = cv => { try {
-      sigX.drawImage(cv, 0, 0, SG, SG); const d = sigX.getImageData(0, 0, SG, SG).data; let dup = false;
-      if (prevSig) { let maxCell = 0; for (let cy = 0; cy < SG; cy += CELL) for (let cx = 0; cx < SG; cx += CELL) { let s = 0; for (let y = cy; y < cy + CELL; y++) for (let x = cx; x < cx + CELL; x++) { const i = (y * SG + x) * 4; s += Math.abs(d[i] - prevSig[i]) + Math.abs(d[i + 1] - prevSig[i + 1]) + Math.abs(d[i + 2] - prevSig[i + 2]); } maxCell = Math.max(maxCell, s / (CELL * CELL * 3)); } dup = maxCell < 1.2; }
-      prevSig = d.slice(); return dup; } catch (e) { return false; } };
+    // frozen-frame check: compares only the area around the person with the previous frame (so a frozen video inside a screen recording is caught
+    // even though buttons/counters elsewhere keep changing). A frame is frozen only if every part of that area is unchanged.
+    const SG = 48, CELL = 6, sigA = document.createElement('canvas'), sigB = document.createElement('canvas'); sigA.width = sigA.height = sigB.width = sigB.height = SG;
+    const xA = sigA.getContext('2d', { willReadFrequently: true }), xB = sigB.getContext('2d', { willReadFrequently: true });
+    const prevC = document.createElement('canvas'); let havePrev = false, lastBox = null;
+    const isDuplicate = (cv, pi) => { try {
+      if (pi) { let x0 = 1, y0 = 1, x1 = 0, y1 = 0; for (const p of pi) if (p[2] > 0.3) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); } if (x1 > x0) { const m = 0.25 * Math.max(x1 - x0, y1 - y0); lastBox = [Math.max(0, x0 - m), Math.max(0, y0 - m), Math.min(1, x1 + m), Math.min(1, y1 + m)]; } }
+      const b = lastBox || [0, 0, 1, 1], W = cv.width, H = cv.height, sx = b[0] * W, sy = b[1] * H, sw = Math.max(8, (b[2] - b[0]) * W), sh = Math.max(8, (b[3] - b[1]) * H);
+      let dup = false;
+      if (havePrev) {
+        xA.drawImage(cv, sx, sy, sw, sh, 0, 0, SG, SG); const sc = prevC.width / W; xB.drawImage(prevC, sx * sc, sy * sc, sw * sc, sh * sc, 0, 0, SG, SG);
+        const d = xA.getImageData(0, 0, SG, SG).data, e = xB.getImageData(0, 0, SG, SG).data; let maxCell = 0;
+        for (let cy = 0; cy < SG; cy += CELL) for (let cx = 0; cx < SG; cx += CELL) { let s = 0; for (let y = cy; y < cy + CELL; y++) for (let x = cx; x < cx + CELL; x++) { const i = (y * SG + x) * 4; s += Math.abs(d[i] - e[i]) + Math.abs(d[i + 1] - e[i + 1]) + Math.abs(d[i + 2] - e[i + 2]); } maxCell = Math.max(maxCell, s / (CELL * CELL * 3)); }
+        dup = maxCell < 2.0;
+      }
+      const ps = Math.min(1, 480 / Math.max(W, H)); prevC.width = Math.round(W * ps); prevC.height = Math.round(H * ps); prevC.getContext('2d').drawImage(cv, 0, 0, prevC.width, prevC.height); havePrev = true;
+      return dup; } catch (e) { return false; } };
     const report = (k, N) => { const p = Math.min(1, (k + 1) / N), el = (performance.now() - t0) / 1000, eta = el / p - el; bar.style.width = (p * 100).toFixed(1) + '%'; status(`Tracking frame ${k + 1}/${N} · ${(k / Math.max(el, 0.01)).toFixed(1)} fps · ~${Math.max(0, Math.ceil(eta))}s left`); };
     let cv, dur, nativeFrame = null; const [tS, tE] = trimRange();
     if (codecSrc) {
@@ -1700,7 +1721,7 @@ async function processVideo() {
       await codecIterate(codecSrc, 1 / pfps, (f, t) => {
         if (t < tS - 0.5 / pfps || t > tE + 0.5 / pfps) return;
         drawCodecFrame(ctx, f, codecSrc, cv.width, cv.height);
-        const dup = isDuplicate(cv); const fr = detect(cv, t); fr.dup = dup; const idx = out.length; out.push(fr);
+        const fr = detect(cv, t); fr.dup = isDuplicate(cv, fr.pi); const idx = out.length; out.push(fr);
         if (idx % 2 === 0) report(idx, N);
       }, () => cancelFlag);
       if (cancelFlag) throw new Error('cancelled');
@@ -1723,7 +1744,7 @@ async function processVideo() {
         if (cancelFlag) throw new Error('cancelled');
         const t = Math.min(dur - 0.001, tS + k / pfps);
         await seek(t); ctx.drawImage(pv, 0, 0, cv.width, cv.height);
-        const dup = isDuplicate(cv); const fr = detect(cv, t); fr.dup = dup; out.push(fr);
+        const fr = detect(cv, t); fr.dup = isDuplicate(cv, fr.pi); out.push(fr);
         if (k % 2 === 0) { report(k, N); await sleep(0); }
       }
     }
@@ -1796,6 +1817,7 @@ function runTextMotion(txt, existingId) {
   if (!existingId) putTake({ id, name: videoName, date: new Date().toISOString(), dur: meta.dur, prompt: txt, frames: null, meta, settings: readSettings(), thumb: null, status: 'done' }).catch(e => toast('Library save failed: ' + e.message, true));
 }
 $('refineBtn').onclick = refineAgain;
+$('undoBtn').onclick = () => { if (busy || !undoStack.length) return; const u = undoStack.pop(); frames = u.frames; meta.scans = u.scans; solve(); updateRefineLabel(); if (!undoStack.length) $('undoBtn').style.display = 'none'; toast('Undid the last refine.'); saveTake(null).catch(() => {}); };
 
 // zoomed re-scan of every frame, fused into the existing landmarks. prevScans = how many scans are already averaged in.
 async function zoomPass(grid, cv, pfps, iterate, zoom, prevScans, wantHands, status, bar, t0 = 0) {
@@ -1808,18 +1830,23 @@ async function zoomPass(grid, cv, pfps, iterate, zoom, prevScans, wantHands, sta
   boxes = S.fillGaps(boxes); if (!boxes) return 0;
   const sm = boxes.map((_, k) => { const a = [0, 0, 0]; let c = 0; for (let q = k - 4; q <= k + 4; q++) if (boxes[q]) { a[0] += boxes[q][0]; a[1] += boxes[q][1]; a[2] = Math.max(a[2], boxes[q][2]); c++; } return [a[0] / c, a[1] / c, a[2]]; });
   const crop = document.createElement('canvas'); crop.width = crop.height = CS; const cx = crop.getContext('2d');
-  let fused = 0, k2 = 0; const t1 = performance.now();
+  let fused = 0, k2 = 0, rejected = 0; const t1 = performance.now();
+  await setMode('IMAGE');
   const one = t => {
     const s = Math.round((t - t0) * pfps); if (s < 0 || s >= grid.length) return; const g = grid[s]; if (!g || (!g.pw && g.pi)) return; // skip frozen frames / outside trim
     const [bx, by, bs] = sm[s], side = Math.min(M * 1.2, Math.max(M * 0.25, bs * zoom)), sx = bx - side / 2, sy = by - side / 2;
     cx.fillStyle = '#000'; cx.fillRect(0, 0, CS, CS); cx.drawImage(cv, sx, sy, side, side, 0, 0, CS, CS);
-    tsClock += Math.max(1, Math.round(1000 / pfps));
-    const pr = poseLm.detectForVideo(crop, tsClock);
+    const pr = poseLm.detect(crop);
     const mapP = p => [(sx + p.x * side) / W, (sy + p.y * side) / H, p.visibility ?? 1];
     if (pr.landmarks && pr.landmarks.length) {
       let best = 0, bd = 9; pr.landmarks.forEach((lm, i) => { const d = Math.hypot((lm[23].x + lm[24].x) / 2 - 0.5, (lm[23].y + lm[24].y) / 2 - 0.5); if (d < bd) { bd = d; best = i; } });
       if (bd < 0.35) {
         const pi2 = pr.landmarks[best].map(mapP), pw2 = pr.worldLandmarks[best].map(p => [p.x, p.y, p.z]);
+        // sanity check: the zoomed result must agree with what we already have (same person, same rough pose), otherwise it is ignored
+        if (g.pw) {
+          let dW = 0, dI = 0; for (const i of [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]) { dW += Math.hypot(pw2[i][0] - g.pw[i][0], pw2[i][1] - g.pw[i][1], pw2[i][2] - g.pw[i][2]); dI += Math.hypot((pi2[i][0] - g.pi[i][0]) * W / M, (pi2[i][1] - g.pi[i][1]) * H / M); }
+          if (dW / 12 > 0.12 || dI / 12 > 0.06) { rejected++; k2++; return; }
+        }
         if (g.pw) { // visibility-weighted running average; the zoomed view is trusted a bit more
           const wA = i => Math.max(0.05, g.pi[i][2]) * prevScans, wB = i => Math.max(0.05, pi2[i][2]) * 1.4;
           g.pw = g.pw.map((p, i) => { const a = wA(i), b = wB(i); return [0, 1, 2].map(c => (p[c] * a + pw2[i][c] * b) / (a + b)); });
@@ -1827,7 +1854,7 @@ async function zoomPass(grid, cv, pfps, iterate, zoom, prevScans, wantHands, sta
         } else { g.pw = pw2; g.pi = pi2; }
         fused++;
         if (wantHands && handLm) {
-          const hr = handLm.detectForVideo(crop, tsClock);
+          const hr = handLm.detect(crop);
           if (hr.landmarks && hr.landmarks.length) {
             const tmp = { pi: g.pi, hl: null, hr: null, hil: null, hir: null };
             assignHands(tmp, { landmarks: hr.landmarks.map(lm => lm.map(p => ({ x: (sx + p.x * side) / W, y: (sy + p.y * side) / H }))), worldLandmarks: hr.worldLandmarks }, W, H);
@@ -1844,11 +1871,13 @@ async function zoomPass(grid, cv, pfps, iterate, zoom, prevScans, wantHands, sta
     if (k2 % 2 === 0) { const p = Math.min(1, k2 / grid.length), el = (performance.now() - t1) / 1000; bar.style.width = (p * 100).toFixed(1) + '%'; status(`Refining (zoomed re-scan) ${k2}/${grid.length} · ~${Math.max(0, Math.ceil(el / p - el))}s left`); }
   };
   status('Refining (zoomed re-scan)…'); bar.style.width = '0%';
-  await iterate(one);
+  try { await iterate(one); } finally { await setMode('VIDEO'); }
   if (cancelFlag) throw new Error('cancelled');
   cleanOutliers(grid);
-  return fused;
+  console.log('refine: fused', fused, 'rejected', rejected);
+  return { fused, rejected };
 }
+async function setMode(m) { try { await poseLm.setOptions({ runningMode: m }); if (handLm) await handLm.setOptions({ runningMode: m }); } catch (e) { console.warn('mode switch', e); } }
 // temporal clean-up: a landmark that suddenly jumps away from its neighbours (a glitch) is replaced by the neighbours' median
 function cleanOutliers(grid) {
   const n = grid.length; if (n < 5) return;
@@ -1881,10 +1910,12 @@ async function refineAgain() {
       iterate = async cb => { for (let k = 0; k < frames.length; k++) { if (cancelFlag) break; const t = Math.min(dur - 0.001, (meta.t0 || 0) + k / pfps); await seek(t); ctx.drawImage(pv, 0, 0, W, H); cb(t); if (k % 2 === 0) await sleep(0); } };
     }
     const scans = meta.scans || 1, zoom = [1.3, 1.6, 1.38, 1.52, 1.25, 1.7][(scans - 1) % 6];
-    await zoomPass(frames, cv, pfps, iterate, zoom, scans, $('hands').checked, status, bar, meta.t0 || 0);
+    undoStack.push({ frames: JSON.parse(JSON.stringify(frames)), scans }); if (undoStack.length > 5) undoStack.shift();
+    const res = await zoomPass(frames, cv, pfps, iterate, zoom, scans, $('hands').checked, status, bar, meta.t0 || 0);
+    if (res.fused === 0) { const u = undoStack.pop(); frames = u.frames; toast('Refine found nothing it could improve safely, so nothing was changed.'); return; }
     meta.scans = scans + 1;
     solve();
-    status(`Refined · ${meta.scans} scans averaged. Press Refine again to keep improving.`);
+    status(`Refined · ${meta.scans} scans averaged (${res.rejected} doubtful frames ignored). Press again to keep improving, or Undo.`); $('undoBtn').style.display = 'block';
     toast(`Refined (${meta.scans} scans). Each press makes it match the video more closely.`);
     saveTake(cv).catch(e => toast('Library save failed: ' + e.message, true));
   } catch (e) {
@@ -2151,11 +2182,12 @@ function drawOverlay() {
 // ---------- playback ----------
 let trim = { s: 0, e: null };
 const trimRange = () => { const d = dur(); const s = Math.max(0, Math.min(trim.s, d)), e = trim.e == null ? d : Math.max(s + 0.1, Math.min(trim.e, d)); return [s, e]; };
+const playRange = () => { let [s, e] = trimRange(); if (anim) { const t0 = animT0(), aEnd = t0 + (anim.n - 1) / anim.fps; s = Math.max(s, t0); e = Math.min(e, aEnd); if (e <= s) e = s + 0.1; } return [s, e]; };
 const animT0 = () => (meta && meta.t0) || 0;
 const dur = () => (codecSrc ? codecSrc.duration : vid.duration && isFinite(vid.duration) ? vid.duration : anim ? (anim.n - 1) / anim.fps : 0);
 uiReady = true;
 function updateTimeLabel() { $('tlabel').textContent = `${fmt(curTime)} / ${fmt(dur())}`; $('scrub').value = curTime; }
-function play() { if (!dur()) return; playing = true; $('play').textContent = '❚❚'; $('bigPlay').style.display = 'none'; vid.playbackRate = +$('speed').value; const [s, e] = trimRange(); if (curTime >= e - 0.05 || curTime < s) { curTime = s; if (vid.src) vid.currentTime = s; } vid.play().catch(() => {}); }
+function play() { if (!dur()) return; playing = true; $('play').textContent = '❚❚'; $('bigPlay').style.display = 'none'; vid.playbackRate = +$('speed').value; const [s, e] = playRange(); if (curTime >= e - 0.05 || curTime < s) { curTime = s; if (vid.src) vid.currentTime = s; } vid.play().catch(() => {}); }
 function pause() { playing = false; $('play').textContent = '▶'; vid.pause(); if (dur()) $('bigPlay').style.display = 'block'; }
 $('play').onclick = () => (playing ? pause() : play());
 // ---------- trim tool ----------
@@ -2198,7 +2230,7 @@ function loop(now) {
       if (vt !== lastVT) { curTime = vt; lastVT = vt; stallT = 0; }
       else if ((stallT += dt) > 0.25) { curTime += Math.min(dt, 0.1) * (+$('speed').value); } // video player stalled: keep moving
     } else if (!vid.src || vid.paused) curTime += Math.min(dt, 0.1) * (+$('speed').value);
-    { const [s, e] = trimRange(); if (curTime >= e - 0.01 || vid.ended || curTime < s - 0.05) { curTime = s; if (vid.src) { vid.currentTime = s; vid.play().catch(() => {}); } } }
+    { const [s, e] = playRange(); if (curTime >= e - 0.01 || vid.ended || curTime < s - 0.05) { curTime = s; if (vid.src) { vid.currentTime = s; vid.play().catch(() => {}); } } }
     applyAt(curTime); drawOverlay(); updateTimeLabel(); needRender = true;
   }
   if (controls.update()) needRender = true;
