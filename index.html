@@ -1174,10 +1174,13 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const o = { dirs }; for (const k of ['hipsYaw', 'hipsPitch', 'hipsRoll', 'chestYaw', 'chestPitch', 'headPitch', 'rootY', 'guard']) o[k] = (a[k] || 0) * (1 - w) + (b[k] || 0) * w;
     o.air = Math.max(a.air || 0, b.air || 0) * (w > 0.05 && w < 0.95 ? 1 : 0); return o;
   }
-  function textToMotion(text, fps = 30) {
+  function textToMotion(text, fps = 30, seed = 0) {
+    let sd = (seed * 9301 + 49297) % 233280 || 1; const rnd = () => { sd = (sd * 9301 + 49297) % 233280; return sd / 233280; }; // repeatable variation per seed
     const { plan, unknown } = parsePrompt(text || ''), style = detectStyles(text || '');
     if (!plan.length && style.boxing) plan.push({ move: 'stance', speed: 1, secs: 3 });
     if (!plan.length) throw new Error('I didn\'t recognise any moves. Try words like: walk, run, jump, jab, cross, hook, uppercut, kick, roundhouse, squat, wave, dance, spin, stance, idle.');
+    if (seed) for (const p of plan) p.speed *= 0.88 + rnd() * 0.24; // each new take varies the timing a little
+    const vYaw = seed ? (rnd() - 0.5) * 14 : 0, vBounce = seed ? 1.4 + rnd() * 0.7 : 1.7, vLean = seed ? (rnd() - 0.5) * 8 : 0;
     for (const p of plan) { const M_ = MOVES[p.move]; p.len = p.secs || (M_.loop && !p.secs ? M_.dur * (p.move === 'walk' || p.move === 'run' ? 3 : 1) : M_.dur) / (p.secs ? 1 : p.speed); }
     const total = plan.reduce((a, p) => a + p.len, 0), n = Math.max(2, Math.round(total * fps) + 1), rest = buildRest({ ...DEFAULT_M }), ix = rest.index, J = rest.joints;
     const BLEND = 0.18; const locals = [], rootPos = [], contacts = []; let z = 0, yaw = 0;
@@ -1193,7 +1196,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
           P_.chestPitch += 8; P_.headPitch += 12; P_.chestYaw += -10;
         }
         if ((P_.guard || 0) > 0.5 && !kicking) { // light bounce on the balls of the feet
-          const b = (Math.sin(t * 2 * Math.PI * 1.7) + 1) / 2 * 0.8;
+          const b = (Math.sin(t * 2 * Math.PI * vBounce) + 1) / 2 * 0.8;
           for (const j in GUARD_LOW) P_.dirs[j] = lerpN(P_.dirs[j], lerpN(GUARD[j], GUARD_LOW[j], 1), b * 0.6);
           P_.headPitch += Math.sin(t * 2 * Math.PI * 0.6) * 4; P_.chestYaw += Math.sin(t * 2 * Math.PI * 0.45) * 5; // head & shoulder movement
         }
@@ -1205,7 +1208,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       if (style.angry) { P_.chestPitch += 10; P_.headPitch += 6; }
       if (style.happy) { for (const j of ['LeftArm', 'RightArm']) P_.dirs[j] = lerpN(P_.dirs[j], V(j[0] === 'L' ? 0.6 : -0.6, 0.2, 0.4), 0.25); P_.chestPitch -= 4; }
       if (style.drunk) { P_.hipsRoll = (P_.hipsRoll || 0) + Math.sin(t * 2 * Math.PI * 0.5) * 7; P_.chestYaw += Math.sin(t * 2 * Math.PI * 0.35) * 10; P_.headPitch += Math.sin(t * 2 * Math.PI * 0.7) * 10; }
-      const hy = P_.hipsYaw + yaw, Hq = qmul(qmul(axq([0, 1, 0], hy), axq([1, 0, 0], P_.hipsPitch)), axq([0, 0, 1], P_.hipsRoll || 0));
+      P_.chestPitch += vLean; const hy = P_.hipsYaw + yaw + vYaw, Hq = qmul(qmul(axq([0, 1, 0], hy), axq([1, 0, 0], P_.hipsPitch)), axq([0, 0, 1], P_.hipsRoll || 0));
       const Cq = qmul(Hq, qmul(axq([0, 1, 0], P_.chestYaw), axq([1, 0, 0], P_.chestPitch)));
       const G = {}; G.Hips = Hq; G.Spine = qslerp(Hq, Cq, 1 / 3); G.Spine1 = qslerp(Hq, Cq, 2 / 3); G.Spine2 = Cq; G.Neck = Cq; G.Head = qmul(Cq, axq([1, 0, 0], P_.headPitch - P_.chestPitch * 0.6));
       for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
@@ -1279,11 +1282,12 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <h2><span class="n">2</span>Capture</h2>
     <div class="row"><label>AI model</label><select id="quality"><option value="heavy" selected>Heavy (best)</option><option value="full">Full</option><option value="lite">Lite (fast)</option></select></div>
     <div class="row"><label>Analysis rate</label><select id="procFps"><option>15</option><option>24</option><option selected>30</option><option>60</option></select></div>
-    <div class="row"><label>Finger capture</label><input type="checkbox" id="hands" checked></div>
+    <input type="checkbox" id="hands" checked hidden>
     <div class="row"><label>Mirrored (selfie) video</label><input type="checkbox" id="mirrored"></div>
     <div class="row"><label>Camera field of view</label><span><input type="range" id="fov" min="25" max="100" value="55"> </span><span class="val" id="fovV">55°</span></div>
     <button class="btn primary" id="go" disabled>Generate motion</button>
     <button class="btn" id="refineBtn" disabled style="width:100%;margin-top:8px">🔁 Refine again</button>
+    <button class="btn" id="undoRefine" disabled style="width:100%;margin-top:6px">↩️ Undo</button>
     <div class="mini" style="margin-top:4px">Each press re-scans the video zoomed in and cleans up glitches. Press as many times as you like.</div>
     <div class="progress" id="prog"><i></i></div>
     <div class="status" id="pstat"></div>
@@ -1294,17 +1298,18 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>Smoothing <span class="mini">left = snappy · right = very smooth</span></label><span><input type="range" id="smooth" min="0" max="1" step="0.01" value="0.45"></span><span class="val" id="smoothV">0.45</span></div>
     <div class="sub">Feet</div>
     <div class="row"><label>Anti-slide <span class="mini">applied while processing</span></label><input type="checkbox" id="footLock" checked></div>
-    <div class="row"><label>Anti-jitter <span class="mini">steadies small shakes, keeps fast moves</span></label><input type="checkbox" id="antiJitter" checked></div>
+    <input type="checkbox" id="antiJitter" checked hidden>
     <div class="row"><label>Foot lock <span class="mini">plant &amp; flatten on the floor</span></label><input type="checkbox" id="footIK" checked></div>
     <div class="row"><label>Contact sensitivity</label><span><input type="range" id="contact" min="0.02" max="0.15" step="0.005" value="0.07"></span><span class="val" id="contactV">7cm</span></div>
     <div class="row"><label>Knee guard <span class="mini">no locked, snapping or backwards knees</span></label><input type="checkbox" id="kneeGuard" checked></div>
     <div class="row"><label>Ankle limits <span class="mini">no over-twist</span></label><input type="checkbox" id="ankleLimit" checked></div>
     <div class="sub">Hands options</div>
     <div class="seg" id="fingerSeg"><button data-v="ai" class="on">🤖 AI tracked</button><button data-v="fist">✊ Closed</button><button data-v="relaxed">🖐 Open</button></div>
+    <div class="mini" style="margin:-2px 0 6px">AI tracked follows the real fingers from the video; Closed / Open sets a fixed hand shape.</div>
     <div class="row"><label>Wrist rotation</label><select id="handMode"><option value="limited" selected>Natural limits</option><option value="locked">Locked to forearm</option><option value="free">Free (raw)</option></select></div>
     <div class="sub">Body</div>
     <div class="row"><label>Auto-upright <span class="mini">fix tilt</span></label><input type="checkbox" id="autoLevel" checked></div>
-    <div class="row"><label>Head tilt</label><span><input type="range" id="headTilt" min="-25" max="25" step="1" value="0"></span><span class="val" id="headTiltV">0°</span></div>
+    <input type="range" id="headTilt" min="-25" max="25" step="1" value="0" hidden><span id="headTiltV" hidden></span>
     <div class="row"><label>In-place <span class="mini">feet stay on one spot, body keeps moving</span></label><input type="checkbox" id="inPlace"></div>
     <div class="stats" id="stats" style="display:none"></div>
   </section>
@@ -1380,6 +1385,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <textarea id="ttmText" rows="3" placeholder="e.g. boxing stance, then 3 jabs, a cross and a hook, then walk" style="width:100%;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px;resize:vertical"></textarea>
   <div id="ttmChips" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0"></div>
   <button class="btn primary" id="ttmGo">Create motion</button>
+  <div class="mini" style="margin-top:4px">Tap again for a fresh variation of the same prompt · Enter = create</div>
   <div class="hint">Moves: walk, run, jump, jab, cross, hook, uppercut, kick, roundhouse, squat, wave, dance, spin, stance, idle. Styles change the whole body: boxing / fighter, tired, sneaky, proud, happy, angry, drunk, old. Add numbers ("3 jabs"), speed ("fast", "slowly"), time ("walk for 5 seconds") and chain them with "then" or commas.</div>
 </div></div>
 <div class="modal" id="camModal"><div class="box">
@@ -1617,7 +1623,7 @@ function useCodecMode(on) { $('pcv').style.display = on ? 'block' : 'none'; vid.
 
 let loadToken = 0;
 async function loadVideo(file, name) {
-  const my = ++loadToken; pause(); curTime = 0; trim = { s: 0, e: null }; $('trimBar').style.display = 'none'; $('trimBtn').classList.remove('on');
+  const my = ++loadToken; pause(); curTime = 0; ttmCaption = null; trim = { s: 0, e: null }; $('trimBar').style.display = 'none'; $('trimBtn').classList.remove('on');
   name = name || file.name || 'video';
   const info = $('vinfo'), cp = $('cprog'), bar = cp.querySelector('i');
   $('go').disabled = true; info.textContent = 'Opening video…';
@@ -1884,29 +1890,31 @@ async function processVideo() {
 }
 $('go').onclick = processVideo;
 // ---- text to motion ----
-let lastPrompt = null;
-$('inPlace').addEventListener('change', () => { if (!frames && lastPrompt && anim) runTextMotion(lastPrompt, currentTakeId); });
+let lastPrompt = null, ttmSeeds = {}, lastSeed = 0, ttmCaption = null;
+$('inPlace').addEventListener('change', () => { if (!frames && lastPrompt && anim) runTextMotion(lastPrompt, currentTakeId, lastSeed); });
 const TTM_EXAMPLES = ['boxing stance then jab cross hook', 'boxer walking then 3 jabs', 'tired walk for 4 seconds', 'sneaky walk then jump', 'proud walk then wave', 'drunk walk', 'roundhouse kick', 'happy dance'];
 $('ttmChips').innerHTML = TTM_EXAMPLES.map(e => `<button class="btn small" data-e="${e}">${e}</button>`).join('');
 $('ttmChips').onclick = e => { const b = e.target.closest('button'); if (b) $('ttmText').value = b.dataset.e; };
 $('ttmBtn').onclick = () => { $('ttmModal').style.display = 'grid'; setTimeout(() => $('ttmText').focus(), 50); };
 $('ttmClose').onclick = () => ($('ttmModal').style.display = 'none');
+$('ttmText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('ttmGo').click(); } });
 $('ttmGo').onclick = () => { const txt = $('ttmText').value.trim(); if (!txt) { toast('Type what the character should do.', true); return; } runTextMotion(txt); };
-function runTextMotion(txt, existingId) {
-  let a; try { a = S.textToMotion(txt, 30); } catch (e) { toast(e.message, true, 9000); return; }
+function runTextMotion(txt, existingId, seed) {
+  if (seed == null) seed = existingId ? (ttmSeeds[existingId] || 0) : Math.floor(Math.random() * 1e6) + 1;
+  let a; try { a = S.textToMotion(txt, 30, seed); } catch (e) { toast(e.message, true, 9000); return; }
   lastPrompt = txt; if ($('inPlace').checked) a.rootPos = a.rootPos.map(r => [0, r[1], 0]);
   $('ttmModal').style.display = 'none'; pause();
   if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; currentSource = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = [];
   frames = null; meta = { fps: 30, dur: (a.n - 1) / 30, scans: 0 }; anim = a; videoName = txt.slice(0, 40).replace(/[^\w-]+/g, '_') || 'text_motion'; curTime = 0;
-  $('vEmpty').style.display = 'grid'; $('vEmpty').textContent = '✍️ ' + txt; $('bigPlay').style.display = 'none';
+  $('vEmpty').style.display = 'none'; ttmCaption = txt; $('bigPlay').style.display = 'none';
   buildCharacter(a.rest); setReady(true); drawContacts(); applyAt(0); requestRender(); updateRefineLabel();
   $('scrub').max = meta.dur; $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel();
   $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); play();
   const sty = a.styles && a.styles.length ? ` (${a.styles.join(', ')} style)` : '';
   if (a.unknown.length) toast(`Made: ${a.plan.join(', ')}${sty}. Skipped: "${a.unknown.join('", "')}"`, false, 7000); else toast(`Made: ${a.plan.join(', ')}${sty}`);
-  const id = existingId || Date.now(); currentTakeId = id;
+  const id = existingId || Date.now(); currentTakeId = id; ttmSeeds[id] = seed; lastSeed = seed;
   if (!existingId) resetHistory();
-  if (!existingId) putTake({ id, name: videoName, date: new Date().toISOString(), dur: meta.dur, prompt: txt, frames: null, meta, settings: readSettings(), thumb: null, status: 'done' }).catch(e => toast('Library save failed: ' + e.message, true));
+  if (!existingId) putTake({ id, name: videoName, date: new Date().toISOString(), dur: meta.dur, prompt: txt, seed, frames: null, meta, settings: readSettings(), thumb: null, status: 'done' }).catch(e => toast('Library save failed: ' + e.message, true));
 }
 $('refineBtn').onclick = refineAgain;
 
@@ -2079,7 +2087,7 @@ function assignHands(fr, hr, W, H) {
 
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: $('antiJitter').checked, kneeGuard: $('kneeGuard').checked, headTilt: +$('headTilt').value, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
+  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
 }
 let solveT;
 function solve(rebuild = false) {
@@ -2239,10 +2247,22 @@ $('tReset').onclick = () => { requestRender(); controls.target.set(0, 0.95, 0); 
 const POSE_EDGES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28], [27, 29], [29, 31], [27, 31], [28, 30], [30, 32], [28, 32], [15, 17], [15, 19], [17, 19], [16, 18], [16, 20], [18, 20], [0, 7], [0, 8]];
 const HAND_EDGES = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [0, 17], [17, 18], [18, 19], [19, 20]];
 const ov = $('ov');
+// text-to-motion has no video, so the top panel shows the generated motion itself (front view, like a camera)
+function drawTextPreview(ctx) {
+  const W = 720, H = 720; if (ov.width !== W) { ov.width = W; ov.height = H; }
+  ctx.clearRect(0, 0, W, H); ctx.fillStyle = TV('--scene-bg'); ctx.fillRect(0, 0, W, H);
+  const smp = S.sample(anim, curTime - animT0()), r = S.fk(anim.rest, smp.locals, [0, smp.root[1], 0]), J = anim.rest.joints;
+  const P = v => [W / 2 + v[0] * 260, H * 0.9 - v[1] * 260];
+  ctx.strokeStyle = TV('--line'); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(W * 0.15, H * 0.9); ctx.lineTo(W * 0.85, H * 0.9); ctx.stroke();
+  ctx.lineCap = 'round';
+  J.forEach((j, i) => { if (j.parent < 0 || /Hand.+\d/.test(j.name)) return; const a = P(r.pos[j.parent]), b = P(r.pos[i]); ctx.strokeStyle = /^Left/.test(j.name) ? TV('--accent') : /^Right/.test(j.name) ? TV('--accent3') : '#e8e2d0'; ctx.lineWidth = /Spine|Neck/.test(j.name) ? 9 : 7; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); });
+  const hd = P(r.pos[anim.rest.index.Head]); ctx.fillStyle = '#e8e2d0'; ctx.beginPath(); ctx.arc(hd[0], hd[1] - 22, 24, 0, 7); ctx.fill();
+  ctx.fillStyle = TV('--dim'); ctx.font = '600 26px system-ui'; ctx.textAlign = 'center'; ctx.fillText('✍️ ' + (ttmCaption.length > 44 ? ttmCaption.slice(0, 42) + '…' : ttmCaption), W / 2, 46);
+}
 function drawOverlay() {
   const ctx = ov.getContext('2d');
   const sw = codecSrc ? codecSrc.width : vid.videoWidth, sh = codecSrc ? codecSrc.height : vid.videoHeight;
-  if (!sw) return;
+  if (!sw) { if (!frames && anim && ttmCaption) drawTextPreview(ctx); return; }
   if (codecSrc) { if (previews.length) { const k = Math.round(Math.min(previews.length - 1, Math.max(0, curTime * previewFps))); showPreviewBlob(previews[k], k); } else if (firstPreview) showPreviewBlob(firstPreview, -1); }
   if (ov.width !== sw) { ov.width = sw; ov.height = sh; }
   ctx.clearRect(0, 0, ov.width, ov.height);
@@ -2312,7 +2332,7 @@ $('speed').onchange = () => (vid.playbackRate = +$('speed').value);
 let pendingSeek = null;
 function seekDisplay(t) { if (!vid.src) return; if (vid.seeking) { pendingSeek = t; return; } vid.currentTime = t; }
 $('scrub').addEventListener('input', () => { pause(); curTime = +$('scrub').value; seekDisplay(curTime); applyAt(curTime); drawOverlay(); updateTimeLabel(); requestRender(); });
-document.addEventListener('keydown', e => { if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return; if (e.code === 'Space') { e.preventDefault(); playing ? pause() : play(); } });
+document.addEventListener('keydown', e => { const tg = e.target; if (tg.isContentEditable || tg.tagName === 'TEXTAREA' || tg.tagName === 'SELECT' || (tg.tagName === 'INPUT' && tg.type !== 'range' && tg.type !== 'checkbox') || $('ttmModal').style.display === 'grid') return; if (e.code === 'Space') { e.preventDefault(); playing ? pause() : play(); } });
 let last = performance.now(), lastVT = -1, stallT = 0, lastSync = 0;
 function loop(now) {
   const dt = (now - last) / 1000; last = now;
@@ -2353,7 +2373,7 @@ const writeSettings = s => { if (!s) return; s = { ...DEFAULT_SETTINGS, ...s, tr
 const DEFAULT_SETTINGS = readSettings(); // the app's starting settings, used for anything a take never saved
 for (const id of settingIds) $(id).addEventListener('change', () => setTimeout(() => recordChange(), 0));
 $('fingerSeg').addEventListener('click', () => setTimeout(() => recordChange(), 0));
-$('undoAll').onclick = undoLast;
+$('undoAll').onclick = undoLast; $('undoRefine').onclick = undoLast;
 async function videoBytes() {
   const src = currentSource && currentSource.blob; if (!src || src.size > 250e6) return null;
   return { buf: await src.arrayBuffer(), type: src.type || 'video/mp4' };
@@ -2368,7 +2388,7 @@ async function putTake(take) {
 let history = [], lastSnap = null, quiet = false, autosaveT = null;
 const snap = () => ({ settings: readSettings() });
 function resetHistory() { history = []; lastSnap = snap(); updateUndo(); }
-function updateUndo() { const b = $('undoAll'); if (b) { b.disabled = !history.length || busy; b.title = history.length ? `Undo (${history.length})` : 'Nothing to undo'; } }
+function updateUndo() { const u2 = $('undoRefine'); if (u2) u2.disabled = !history.length || busy; const b = $('undoAll'); if (b) { b.disabled = !history.length || busy; b.title = history.length ? `Undo (${history.length})` : 'Nothing to undo'; } }
 function recordChange(extra) { // call after something changed
   if (quiet) return;
   const now = snap();
@@ -2395,7 +2415,7 @@ async function undoLast() {
   try {
     writeSettings(h.settings);
     if (h.frames) { frames = h.frames; meta.scans = h.scans; updateRefineLabel(); }
-    if (frames) solve(); else if (lastPrompt && anim) runTextMotion(lastPrompt, currentTakeId);
+    if (frames) solve(); else if (lastPrompt && anim) runTextMotion(lastPrompt, currentTakeId, lastSeed);
     if ($('trimBar').style.display !== 'none') renderTrim(); else drawContacts();
   } finally { quiet = false; }
   lastSnap = snap(); updateUndo(); autosave(); toast('Undone.');
@@ -2435,12 +2455,12 @@ $('libList').onclick = async e => {
   }
   if (b.dataset.a === 'bvh' || b.dataset.a === 'glb' || b.dataset.a === 'fbx') {
     if (!take.frames && !take.prompt) { toast('This take did not finish processing. Open it and tap Generate motion.', true); return; }
-    const mine = readSettings(); quiet = true; writeSettings(take.settings); let a; try { a = take.prompt ? S.textToMotion(take.prompt, 30) : takeAnim(take); } finally { writeSettings(mine); quiet = false; }
+    const mine = readSettings(); quiet = true; writeSettings(take.settings); let a; try { a = take.prompt ? S.textToMotion(take.prompt, 30, take.seed || 0) : takeAnim(take); } finally { writeSettings(mine); quiet = false; }
     return b.dataset.a === 'bvh' ? exportBVH(a, base) : b.dataset.a === 'fbx' ? exportFBX(a, base) : exportGLB(a, base);
   }
   if (b.dataset.a === 'open') {
     clearTimeout(autosaveT);
-    if (take.prompt) { quiet = true; writeSettings(take.settings); quiet = false; runTextMotion(take.prompt, take.id); resetHistory(); return; }
+    if (take.prompt) { quiet = true; writeSettings(take.settings); quiet = false; ttmSeeds[take.id] = take.seed || 0; runTextMotion(take.prompt, take.id, take.seed || 0); resetHistory(); return; }
     const vblob = take.videoBuf ? new Blob([take.videoBuf], { type: take.videoType || 'video/mp4' }) : take.video;
     if (vblob) await loadVideo(vblob, take.videoName || take.name);
     else { pause(); if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = []; }
