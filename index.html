@@ -263,11 +263,12 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     return f.map((v, i) => 0.5 * (v + b[i]));
   }
   // smooth an array (frames) of arrays of points
-  function smoothPoints(frames, dt, minCut, beta) {
+  function smoothPoints(frames, dt, minCut, beta, perPoint) {
     if (!frames.length || !frames[0]) return frames;
     const nP = frames[0].length, out = frames.map(() => new Array(nP));
     for (let p = 0; p < nP; p++) for (let c = 0; c < 3; c++) {
-      const s = smoothSeries(frames.map(f => f[p][c]), dt, minCut, beta);
+      const [mc, bt] = perPoint ? perPoint(p, minCut, beta) : [minCut, beta];
+      const s = smoothSeries(frames.map(f => f[p][c]), dt, mc, bt);
       for (let i = 0; i < frames.length; i++) { if (!out[i][p]) out[i][p] = [0, 0, 0]; out[i][p][c] = s[i]; }
     }
     return out;
@@ -473,7 +474,10 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     // convert to Y-up and smooth (zero-lag one-euro)
     const s = clamp(opt.smooth, 0, 1);
     const mc = s <= 0 ? 999 : 6 * Math.pow(0.06, s); // 6Hz .. 0.36Hz
-    let P = smoothPoints(pw.map(a => a.map(toY)), dt, mc, 0.4);
+    // sharp mode: wrists, hands, elbows, ankles and feet follow fast moves (punches, kicks) instead of being rounded off
+    const EXTREME = new Set([13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 25, 26, 27, 28, 29, 30, 31, 32]);
+    const sharpFn = opt.sharp === false ? null : (p, m, b) => (EXTREME.has(p) ? [m * 1.6, b * 12] : [m, b]);
+    let P = smoothPoints(pw.map(a => a.map(toY)), dt, mc, 0.4, sharpFn);
     let R = smoothPoints(roots.map(r => [toY(r)]), dt, mc * 0.5, 0.2).map(a => a[0]);
     const HL = hlF ? smoothPoints(hlF.map(a => a.map(toY)), dt, mc * 1.5, 0.6) : null;
     const HR = hrF ? smoothPoints(hrF.map(a => a.map(toY)), dt, mc * 1.5, 0.6) : null;
@@ -587,12 +591,20 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     // floor to y=0, start at origin
     rootPos = rootPos.map(r => [r[0], r[1] - floor, r[2]]);
     const r0 = rootPos[0];
-    rootPos = rootPos.map(r => (opt.inPlace ? [0, r[1], 0] : [r[0] - r0[0], r[1], r[2] - r0[2]]));
+    if (opt.inPlace) {
+      // remove travel but keep the body's own sway / weight shifts (subtract a 1-second moving average)
+      const w = Math.max(2, Math.round(fps * 0.5));
+      const avg = rootPos.map((_, k) => { let sx = 0, sz = 0, c = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) { sx += rootPos[q][0]; sz += rootPos[q][2]; c++; } return [sx / c, sz / c]; });
+      rootPos = rootPos.map((r, k) => [r[0] - avg[k][0], r[1], r[2] - avg[k][1]]);
+    } else rootPos = rootPos.map(r => [r[0] - r0[0], r[1], r[2] - r0[2]]);
     if (opt.lowerToFloor !== false) { // never let the feet sink below the floor
       const FL2 = FL;
       rootPos = rootPos.map((r, k) => { const low = Math.min(FL2[k].Left.low, FL2[k].Right.low) + r[1]; return low < -0.005 ? [r[0], r[1] - low, r[2]] : r; });
     }
-    if (opt.footIK !== false) locals = footCleanup(rest, locals, rootPos, C, M, fps);
+    if (opt.inPlace) { // planted means "on the floor", whatever the speed; each foot keeps one fixed spot
+      for (let k = 0; k < n; k++) { const f = fk(rest, locals[k], rootPos[k]); for (const S of ['Left', 'Right']) C[k][S] = Math.min(f.pos[ix[S + 'Foot']][1] - M.ankleH, f.pos[ix[S + 'ToeBase']][1]) < opt.contactHeight * 1.6; }
+    }
+    if (opt.footIK !== false || opt.inPlace) locals = footCleanup(rest, locals, rootPos, C, M, fps, !!opt.inPlace);
     return { rest, fps, n, rootPos, locals, contacts: C, hasHands: { Left: !!HL, Right: !!HR }, M };
   }
 
@@ -672,7 +684,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   }
 
   // ---- AI foot clean-up: planted feet are pinned flat to the floor with leg IK; feet never sink below it ----
-  function footCleanup(rest, locals, rootPos, C, M, fps) {
+  function footCleanup(rest, locals, rootPos, C, M, fps, oneSpot = false) {
     const n = locals.length, ix = rest.index, J = rest.joints;
     const out = locals.map(l => l.slice());
     const rad = Math.max(1, Math.round(0.08 * fps)); // blend in/out over ~80 ms
@@ -689,6 +701,10 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         const a = [sx / (e - k), M.ankleH, sz / (e - k)];
         for (let q = Math.max(0, k - rad); q < Math.min(n, e + rad); q++) if (!anchor[q] || raw[q]) anchor[q] = a;
         k = e;
+      }
+      if (oneSpot) { // in-place: every planted moment uses the same spot for this foot
+        const xs = [], zs = []; for (let k = 0; k < n; k++) if (raw[k]) { xs.push(base[k].pos[iF][0]); zs.push(base[k].pos[iF][2]); }
+        if (xs.length) { const a = [median(xs), M.ankleH, median(zs)]; for (let k = 0; k < n; k++) if (anchor[k]) anchor[k] = a; }
       }
       for (let k = 0; k < n; k++) {
         const { pos, rot } = fk(rest, out[k], rootPos[k]);
@@ -930,15 +946,17 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     LeftUpLeg: V(0.03, -1, 0), LeftLeg: V(0, -1, -0.02), RightUpLeg: V(-0.03, -1, 0), RightLeg: V(0, -1, -0.02),
   };
   const GUARD = { LeftArm: V(0.3, -0.8, 0.5), LeftForeArm: V(-0.25, 0.85, 0.55), RightArm: V(-0.3, -0.85, 0.4), RightForeArm: V(0.25, 0.9, 0.5),
-    LeftUpLeg: V(0.12, -1, 0.18), LeftLeg: V(0.05, -1, -0.12), RightUpLeg: V(-0.12, -1, -0.15), RightLeg: V(-0.05, -1, -0.12) };
+    // fighting stance: lead (left) foot forward, rear foot back, both knees bent, weight on the balls of the feet
+    LeftUpLeg: V(0.14, -0.92, 0.42), LeftLeg: V(0.06, -1, -0.04), RightUpLeg: V(-0.12, -1, -0.12), RightLeg: V(-0.04, -0.95, -0.42) };
+  const GUARD_LOW = { LeftUpLeg: V(0.15, -0.85, 0.52), LeftLeg: V(0.06, -1, -0.12), RightUpLeg: V(-0.12, -0.97, -0.05), RightLeg: V(-0.04, -0.9, -0.5) };
   const pose = (dirs = {}, o = {}) => ({ dirs: { ...BASE, ...dirs }, hipsYaw: 0, hipsPitch: 0, chestYaw: 0, chestPitch: 0, headPitch: 0, rootY: 0, ...o });
-  const guardP = (extra = {}, o = {}) => pose({ ...GUARD, ...extra }, { hipsYaw: -20, chestYaw: -10, ...o });
+  const guardP = (extra = {}, o = {}) => pose({ ...GUARD, ...extra }, { hipsYaw: -38, chestYaw: -8, chestPitch: 8, headPitch: 14, ...o, guard: 1 });
   // each move: dur (s), keys [[time 0..1, pose]], optional travel (m/s forward), loop flag
   const MOVES = {
     idle: { dur: 2, loop: true, keys: [[0, pose({}, { chestPitch: 0 })], [0.5, pose({ LeftArm: V(0.27, -1, 0.06), RightArm: V(-0.27, -1, 0.06) }, { chestPitch: -2, rootY: -0.005 })], [1, pose()]] },
     stance: { dur: 1.2, loop: true, keys: [[0, guardP()], [0.5, guardP({}, { rootY: -0.02 })], [1, guardP()]] },
-    jab: { dur: 0.55, keys: [[0, guardP()], [0.35, guardP({ LeftArm: V(0.05, 0.05, 1), LeftForeArm: V(0, 0.05, 1) }, { chestYaw: 12, hipsYaw: -12 })], [0.55, guardP({ LeftArm: V(0.05, 0.05, 1), LeftForeArm: V(0, 0.05, 1) }, { chestYaw: 12, hipsYaw: -12 })], [1, guardP()]] },
-    cross: { dur: 0.65, keys: [[0, guardP()], [0.4, guardP({ RightArm: V(-0.05, 0.05, 1), RightForeArm: V(0, 0.05, 1), RightUpLeg: V(-0.12, -1, -0.12) }, { chestYaw: 25, hipsYaw: 15, chestPitch: 5 })], [0.6, guardP({ RightArm: V(-0.05, 0.05, 1), RightForeArm: V(0, 0.05, 1) }, { chestYaw: 25, hipsYaw: 15, chestPitch: 5 })], [1, guardP()]] },
+    jab: { dur: 0.55, keys: [[0, guardP()], [0.35, guardP({ LeftArm: V(0.05, 0.05, 1), LeftForeArm: V(0, 0.05, 1) }, { chestYaw: -12, hipsYaw: -45, chestPitch: 12 })], [0.55, guardP({ LeftArm: V(0.05, 0.05, 1), LeftForeArm: V(0, 0.05, 1) }, { chestYaw: -12, hipsYaw: -45, chestPitch: 12 })], [1, guardP()]] },
+    cross: { dur: 0.65, keys: [[0, guardP()], [0.4, guardP({ RightArm: V(-0.05, 0.05, 1), RightForeArm: V(0, 0.05, 1), RightUpLeg: V(-0.2, -1, 0.0), RightLeg: V(-0.1, -1, -0.3) }, { chestYaw: 28, hipsYaw: 5, chestPitch: 12 })], [0.6, guardP({ RightArm: V(-0.05, 0.05, 1), RightForeArm: V(0, 0.05, 1), RightUpLeg: V(-0.2, -1, 0.0), RightLeg: V(-0.1, -1, -0.3) }, { chestYaw: 28, hipsYaw: 5, chestPitch: 12 })], [1, guardP()]] },
     hook: { dur: 0.7, keys: [[0, guardP()], [0.25, guardP({}, { chestYaw: -25 })], [0.55, guardP({ LeftArm: V(0.7, 0.1, 0.7), LeftForeArm: V(-0.9, 0.05, 0.4) }, { chestYaw: 35, hipsYaw: 10 })], [1, guardP()]] },
     uppercut: { dur: 0.7, keys: [[0, guardP()], [0.3, guardP({ RightArm: V(-0.3, -0.9, 0.3), RightForeArm: V(0, -0.2, 1) }, { chestYaw: 10, rootY: -0.08, chestPitch: 8 })], [0.6, guardP({ RightArm: V(-0.15, -0.2, 0.95), RightForeArm: V(0, 1, 0.15) }, { chestYaw: 25, chestPitch: -10 })], [1, guardP()]] },
     kick: { dur: 1.1, keys: [[0, guardP()], [0.3, guardP({ RightUpLeg: V(-0.05, 0.1, 1), RightLeg: V(0, -1, 0.2) }, { chestPitch: -10 })], [0.5, guardP({ RightUpLeg: V(-0.05, 0.25, 1), RightLeg: V(0, 0.2, 1) }, { chestPitch: -15 })], [0.75, guardP({ RightUpLeg: V(-0.05, 0.1, 1), RightLeg: V(0, -1, 0.2) })], [1, guardP()]] },
@@ -970,6 +988,13 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     [/\b(stance|guard|fight stance|boxing stance|bounce)/, 'stance'], [/\b(idle|stand|standing|wait|breath)/, 'idle'],
   ];
   const NUMS = { one: 1, once: 1, two: 2, twice: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  const STYLE_WORDS = {
+    boxing: /\b(box|boxer|boxing|fight|fighter|fighting|jab|cross|hook|uppercut|punch|punches|stance|guard|spar|sparring|mma|kickbox|kickboxing|muay|karate)/,
+    tired: /\b(tired|exhausted|sleepy|weak|sad|depressed)/, proud: /\b(proud|confident|strut|swagger|cool)/,
+    sneaky: /\b(sneak|sneaky|sneaking|stealth|creep|creeping|crouch(ed)?)\b/, happy: /\b(happy|excited|joyful|cheerful|bouncy)/,
+    angry: /\b(angry|aggressive|furious|mad|rage)/, drunk: /\b(drunk|dizzy|wobbly|stumbl)/, old: /\b(old|elderly|old man|old woman)/,
+  };
+  function detectStyles(text) { const s = {}; for (const k in STYLE_WORDS) if (STYLE_WORDS[k].test(text.toLowerCase())) s[k] = true; return s; }
   function parsePrompt(text) {
     const segs = text.toLowerCase().split(/\bthen\b|,|;|\.|\band then\b|\bfollowed by\b|\band\b/).map(s => s.trim()).filter(Boolean);
     const plan = [], unknown = [];
@@ -981,9 +1006,10 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       hits.sort((a, b) => a.at - b.at);
       const nm = s.match(/(\d+)\s*(x|times)?/) || s.match(/\b(one|once|two|twice|three|four|five|six|seven|eight|nine|ten)\b/);
       let count = nm ? (+nm[1] || NUMS[nm[1]] || 1) : 1; const secs = s.match(/(\d+(\.\d+)?)\s*(s|sec|secs|seconds)\b/);
-      const speed = /\b(slow|slowly|gentle)/.test(s) ? 0.65 : /\b(fast|quick|quickly|rapid|explosive)/.test(s) ? 1.5 : 1;
+      const st = detectStyles(text), speed = (/\b(slow|slowly|gentle)/.test(s) ? 0.65 : /\b(fast|quick|quickly|rapid|explosive)/.test(s) ? 1.5 : 1) * (st.tired || st.old ? 0.7 : st.sneaky ? 0.6 : st.angry || st.happy ? 1.15 : 1);
       if (secs) count = 1;
-      for (let r = 0; r < Math.min(count, 20); r++) for (const h of hits) plan.push({ move: h.m, speed, secs: secs ? +secs[1] : null });
+      const boxing = detectStyles(text).boxing;
+      for (let r = 0; r < Math.min(count, 20); r++) for (const h of hits) plan.push({ move: boxing && h.m === 'idle' ? 'stance' : h.m, speed, secs: secs ? +secs[1] : null });
     }
     return { plan, unknown };
   }
@@ -1005,11 +1031,12 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   }
   function blendPose(a, b, w) {
     const dirs = {}; for (const j in a.dirs) dirs[j] = lerpN(a.dirs[j], b.dirs[j] || a.dirs[j], w);
-    const o = { dirs }; for (const k of ['hipsYaw', 'hipsPitch', 'chestYaw', 'chestPitch', 'headPitch', 'rootY']) o[k] = (a[k] || 0) * (1 - w) + (b[k] || 0) * w;
+    const o = { dirs }; for (const k of ['hipsYaw', 'hipsPitch', 'hipsRoll', 'chestYaw', 'chestPitch', 'headPitch', 'rootY', 'guard']) o[k] = (a[k] || 0) * (1 - w) + (b[k] || 0) * w;
     o.air = Math.max(a.air || 0, b.air || 0) * (w > 0.05 && w < 0.95 ? 1 : 0); return o;
   }
   function textToMotion(text, fps = 30) {
-    const { plan, unknown } = parsePrompt(text || '');
+    const { plan, unknown } = parsePrompt(text || ''), style = detectStyles(text || '');
+    if (!plan.length && style.boxing) plan.push({ move: 'stance', speed: 1, secs: 3 });
     if (!plan.length) throw new Error('I didn\'t recognise any moves. Try words like: walk, run, jump, jab, cross, hook, uppercut, kick, roundhouse, squat, wave, dance, spin, stance, idle.');
     for (const p of plan) { const M_ = MOVES[p.move]; p.len = p.secs || (M_.loop && !p.secs ? M_.dur * (p.move === 'walk' || p.move === 'run' ? 3 : 1) : M_.dur) / (p.secs ? 1 : p.speed); }
     const total = plan.reduce((a, p) => a + p.len, 0), n = Math.max(2, Math.round(total * fps) + 1), rest = buildRest({ ...DEFAULT_M }), ix = rest.index, J = rest.joints;
@@ -1018,7 +1045,27 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const t = k / fps, cur = samplePlan(plan, t); let P_ = cur.pose;
       // smooth hand-over between moves
       if (cur.i > 0 && cur.lt < BLEND) { const prev = plan[cur.i - 1]; P_ = blendPose(movePose(prev, prev.len), P_, ss(cur.lt / BLEND)); }
-      const hy = P_.hipsYaw + yaw, Hq = qmul(axq([0, 1, 0], hy), axq([1, 0, 0], P_.hipsPitch));
+      P_ = { ...P_, dirs: { ...P_.dirs } };
+      const mv = cur.p.move, kicking = mv === 'kick' || mv === 'roundhouse';
+      if (style.boxing) {
+        if (mv === 'walk' || mv === 'run') { // footwork with the hands up
+          for (const j of ['LeftArm', 'LeftForeArm', 'RightArm', 'RightForeArm']) P_.dirs[j] = GUARD[j];
+          P_.chestPitch += 8; P_.headPitch += 12; P_.chestYaw += -10;
+        }
+        if ((P_.guard || 0) > 0.5 && !kicking) { // light bounce on the balls of the feet
+          const b = (Math.sin(t * 2 * Math.PI * 1.7) + 1) / 2 * 0.8;
+          for (const j in GUARD_LOW) P_.dirs[j] = lerpN(P_.dirs[j], lerpN(GUARD[j], GUARD_LOW[j], 1), b * 0.6);
+          P_.headPitch += Math.sin(t * 2 * Math.PI * 0.6) * 4; P_.chestYaw += Math.sin(t * 2 * Math.PI * 0.45) * 5; // head & shoulder movement
+        }
+      }
+      if (style.tired) { P_.chestPitch += 18; P_.headPitch += 14; for (const j of ['LeftArm', 'RightArm']) P_.dirs[j] = lerpN(P_.dirs[j], BASE[j], 0.5); }
+      if (style.old) { P_.chestPitch += 22; P_.headPitch -= 8; for (const S of ['Left', 'Right']) { P_.dirs[S + 'UpLeg'] = lerpN(P_.dirs[S + 'UpLeg'], V(0, -0.9, 0.35), 0.35); P_.dirs[S + 'Leg'] = lerpN(P_.dirs[S + 'Leg'], V(0, -1, -0.15), 0.35); } }
+      if (style.proud) { P_.chestPitch -= 8; P_.headPitch -= 8; P_.chestYaw += Math.sin(t * 2 * Math.PI) * 4; }
+      if (style.sneaky) { P_.chestPitch += 20; P_.headPitch -= 10; for (const S of ['Left', 'Right']) { P_.dirs[S + 'UpLeg'] = lerpN(P_.dirs[S + 'UpLeg'], V(0, -0.7, 0.75), 0.55); P_.dirs[S + 'Leg'] = lerpN(P_.dirs[S + 'Leg'], V(0, -1, -0.45), 0.55); } }
+      if (style.angry) { P_.chestPitch += 10; P_.headPitch += 6; }
+      if (style.happy) { for (const j of ['LeftArm', 'RightArm']) P_.dirs[j] = lerpN(P_.dirs[j], V(j[0] === 'L' ? 0.6 : -0.6, 0.2, 0.4), 0.25); P_.chestPitch -= 4; }
+      if (style.drunk) { P_.hipsRoll = (P_.hipsRoll || 0) + Math.sin(t * 2 * Math.PI * 0.5) * 7; P_.chestYaw += Math.sin(t * 2 * Math.PI * 0.35) * 10; P_.headPitch += Math.sin(t * 2 * Math.PI * 0.7) * 10; }
+      const hy = P_.hipsYaw + yaw, Hq = qmul(qmul(axq([0, 1, 0], hy), axq([1, 0, 0], P_.hipsPitch)), axq([0, 0, 1], P_.hipsRoll || 0));
       const Cq = qmul(Hq, qmul(axq([0, 1, 0], P_.chestYaw), axq([1, 0, 0], P_.chestPitch)));
       const G = {}; G.Hips = Hq; G.Spine = qslerp(Hq, Cq, 1 / 3); G.Spine1 = qslerp(Hq, Cq, 2 / 3); G.Spine2 = Cq; G.Neck = Cq; G.Head = qmul(Cq, axq([1, 0, 0], P_.headPitch - P_.chestPitch * 0.6));
       for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
@@ -1028,7 +1075,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       }
       const glob = [], loc = [];
       for (let j = 0; j < J.length; j++) { const p = J[j].parent; glob[j] = G[J[j].name] || glob[p]; loc[j] = p >= 0 ? qnorm(qmul(qconj(glob[p]), glob[j])) : glob[j]; }
-      fingerCurl(rest, loc, 'Left', /jab|cross|hook|uppercut|stance/.test(cur.p.move) ? 'fist' : 'relaxed'); fingerCurl(rest, loc, 'Right', /jab|cross|hook|uppercut|stance/.test(cur.p.move) ? 'fist' : 'relaxed');
+      const fist = style.boxing || /jab|cross|hook|uppercut|stance/.test(cur.p.move) || style.angry; fingerCurl(rest, loc, 'Left', fist ? 'fist' : 'relaxed'); fingerCurl(rest, loc, 'Right', fist ? 'fist' : 'relaxed');
       // root: feet on the ground (unless airborne), forward travel for walk/run
       const f0 = fk(rest, loc, [0, 0, 0]);
       const low = Math.min(...['Left', 'Right'].flatMap(S => [f0.pos[ix[S + 'Foot']][1] - DEFAULT_M.ankleH, f0.pos[ix[S + 'ToeBase']][1]]));
@@ -1041,7 +1088,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       contacts.push({ Left: !P_.air && f0.pos[ix.LeftFoot][1] - low < 0.1, Right: !P_.air && f0.pos[ix.RightFoot][1] - low < 0.1 });
     }
     for (let k = 1; k < n; k++) for (let j = 0; j < locals[k].length; j++) { const a = locals[k - 1][j], b = locals[k][j]; if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0) locals[k][j] = b.map(v => -v); }
-    return { rest, fps, n, rootPos, locals, contacts, hasHands: { Left: false, Right: false }, M: rest.M, unknown, plan: plan.map(p => p.move), text };
+    return { rest, fps, n, rootPos, locals, contacts, hasHands: { Left: false, Right: false }, M: rest.M, unknown, plan: plan.map(p => p.move), styles: Object.keys(style), text };
   }
 
   // cut an animation down to [a, b] seconds (relative to its own start)
@@ -1093,11 +1140,11 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>AI model</label><select id="quality"><option value="heavy" selected>Heavy (best)</option><option value="full">Full</option><option value="lite">Lite (fast)</option></select></div>
     <div class="row"><label>Analysis rate</label><select id="procFps"><option>15</option><option>24</option><option selected>30</option><option>60</option></select></div>
     <div class="row"><label>Finger capture</label><input type="checkbox" id="hands" checked></div>
-    <div class="row"><label>Refine pass <span class="mini">zoomed second scan, more accurate</span></label><input type="checkbox" id="refinePass" checked></div>
     <div class="row"><label>Mirrored (selfie) video</label><input type="checkbox" id="mirrored"></div>
     <div class="row"><label>Camera field of view</label><span><input type="range" id="fov" min="25" max="100" value="55"> </span><span class="val" id="fovV">55°</span></div>
     <button class="btn primary" id="go" disabled>Generate motion</button>
     <button class="btn" id="refineBtn" disabled style="width:100%;margin-top:8px">🔁 Refine again</button>
+    <div class="mini" style="margin-top:4px">Each press re-scans the video zoomed in and cleans up glitches. Press as many times as you like.</div>
     <div class="progress" id="prog"><i></i></div>
     <div class="status" id="pstat"></div>
   </section>
@@ -1116,8 +1163,8 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="sub">Body</div>
     <div class="row"><label>Auto-upright <span class="mini">fix tilt</span></label><input type="checkbox" id="autoLevel" checked></div>
     <div class="row"><label>Head tilt</label><span><input type="range" id="headTilt" min="-25" max="25" step="1" value="0"></span><span class="val" id="headTiltV">0°</span></div>
-    <div class="row"><label>Full reach fix <span class="mini">punches &amp; kicks aimed at / away from the camera reach full length</span></label><input type="checkbox" id="depthFix" checked></div>
-    <div class="row"><label>In-place <span class="mini">no root travel</span></label><input type="checkbox" id="inPlace"></div>
+    <div class="row"><label>Sharp fast moves <span class="mini">punches &amp; kicks keep their full speed and reach</span></label><input type="checkbox" id="sharp" checked></div>
+    <div class="row"><label>In-place <span class="mini">feet stay on one spot, body keeps moving</span></label><input type="checkbox" id="inPlace"></div>
     <div class="stats" id="stats" style="display:none"></div>
   </section>
 
@@ -1190,7 +1237,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <textarea id="ttmText" rows="3" placeholder="e.g. boxing stance, then 3 jabs, a cross and a hook, then walk" style="width:100%;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px;resize:vertical"></textarea>
   <div id="ttmChips" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0"></div>
   <button class="btn primary" id="ttmGo">Create motion</button>
-  <div class="hint">Moves it knows: walk, run, jump, jab, cross, hook, uppercut, kick, roundhouse, squat, wave, dance, spin, stance, idle. Add numbers ("3 jabs"), speed ("fast", "slowly"), time ("walk for 5 seconds") and chain them with "then" or commas.</div>
+  <div class="hint">Moves: walk, run, jump, jab, cross, hook, uppercut, kick, roundhouse, squat, wave, dance, spin, stance, idle. Styles change the whole body: boxing / fighter, tired, sneaky, proud, happy, angry, drunk, old. Add numbers ("3 jabs"), speed ("fast", "slowly"), time ("walk for 5 seconds") and chain them with "then" or commas.</div>
 </div></div>
 <div class="modal" id="camModal"><div class="box">
   <video id="camVid" muted playsinline autoplay></video>
@@ -1642,7 +1689,7 @@ async function processVideo() {
 
     // ---- refine pass: re-scan every frame zoomed in on the person, then fuse with the first pass ----
     meta = { W: cv.width, H: cv.height, fps: pfps, dur, scans: 1, t0: tS };
-    if ($('refinePass').checked) {
+    if (false) {
       const iterate = codecSrc
         ? cb => codecIterate(codecSrc, 1 / pfps, (f, t) => { drawCodecFrame(cv.getContext('2d'), f, codecSrc, cv.width, cv.height); cb(t); }, () => cancelFlag)
         : async cb => { for (let k = 0; k < grid.length; k++) { if (cancelFlag) break; const t = Math.min(dur - 0.001, tS + k / pfps); await nativeFrame(t); cb(t); if (k % 2 === 0) await sleep(0); } };
@@ -1671,12 +1718,14 @@ async function processVideo() {
   } finally {
     if (preVid && !procVideo && preVid.isConnected) preVid.remove();
     if (procVideo) { procVideo.removeAttribute('src'); procVideo.load(); procVideo.remove(); procVideo = null; }
-    busy = false; go.textContent = 'Generate motion'; setTimeout(() => (prog.style.display = 'none'), 800);
+    busy = false; go.textContent = 'Generate motion'; setTimeout(() => (prog.style.display = 'none'), 800); updateRefineLabel();
   }
 }
 $('go').onclick = processVideo;
 // ---- text to motion ----
-const TTM_EXAMPLES = ['boxing stance then jab cross hook', 'walk for 4 seconds then wave', 'run fast then jump', '3 jabs then an uppercut', 'roundhouse kick', 'dance slowly', 'squat twice then spin'];
+let lastPrompt = null;
+$('inPlace').addEventListener('change', () => { if (!frames && lastPrompt && anim) runTextMotion(lastPrompt, currentTakeId); });
+const TTM_EXAMPLES = ['boxing stance then jab cross hook', 'boxer walking then 3 jabs', 'tired walk for 4 seconds', 'sneaky walk then jump', 'proud walk then wave', 'drunk walk', 'roundhouse kick', 'happy dance'];
 $('ttmChips').innerHTML = TTM_EXAMPLES.map(e => `<button class="btn small" data-e="${e}">${e}</button>`).join('');
 $('ttmChips').onclick = e => { const b = e.target.closest('button'); if (b) $('ttmText').value = b.dataset.e; };
 $('ttmBtn').onclick = () => { $('ttmModal').style.display = 'grid'; setTimeout(() => $('ttmText').focus(), 50); };
@@ -1684,6 +1733,7 @@ $('ttmClose').onclick = () => ($('ttmModal').style.display = 'none');
 $('ttmGo').onclick = () => { const txt = $('ttmText').value.trim(); if (!txt) { toast('Type what the character should do.', true); return; } runTextMotion(txt); };
 function runTextMotion(txt, existingId) {
   let a; try { a = S.textToMotion(txt, 30); } catch (e) { toast(e.message, true, 9000); return; }
+  lastPrompt = txt; if ($('inPlace').checked) a.rootPos = a.rootPos.map(r => [0, r[1], 0]);
   $('ttmModal').style.display = 'none'; pause();
   if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; currentSource = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = [];
   frames = null; meta = { fps: 30, dur: (a.n - 1) / 30, scans: 0 }; anim = a; videoName = txt.slice(0, 40).replace(/[^\w-]+/g, '_') || 'text_motion'; curTime = 0;
@@ -1691,7 +1741,8 @@ function runTextMotion(txt, existingId) {
   buildCharacter(a.rest); setReady(true); drawContacts(); applyAt(0); requestRender(); updateRefineLabel();
   $('scrub').max = meta.dur; $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel();
   $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); play();
-  if (a.unknown.length) toast(`Made: ${a.plan.join(', ')}. Skipped: "${a.unknown.join('", "')}"`, false, 7000); else toast(`Made: ${a.plan.join(', ')}`);
+  const sty = a.styles && a.styles.length ? ` (${a.styles.join(', ')} style)` : '';
+  if (a.unknown.length) toast(`Made: ${a.plan.join(', ')}${sty}. Skipped: "${a.unknown.join('", "')}"`, false, 7000); else toast(`Made: ${a.plan.join(', ')}${sty}`);
   const id = existingId || Date.now(); currentTakeId = id;
   if (!existingId) putTake({ id, name: videoName, date: new Date().toISOString(), dur: meta.dur, prompt: txt, frames: null, meta, settings: readSettings(), thumb: null, status: 'done' }).catch(e => toast('Library save failed: ' + e.message, true));
 }
@@ -1783,7 +1834,7 @@ async function refineAgain() {
     const scans = meta.scans || 1, zoom = [1.3, 1.6, 1.38, 1.52, 1.25, 1.7][(scans - 1) % 6];
     await zoomPass(frames, cv, pfps, iterate, zoom, scans, $('hands').checked, status, bar, meta.t0 || 0);
     meta.scans = scans + 1;
-    solve(); updateRefineLabel();
+    solve();
     status(`Refined · ${meta.scans} scans averaged. Press Refine again to keep improving.`);
     toast(`Refined (${meta.scans} scans). Each press makes it match the video more closely.`);
     saveTake(cv).catch(e => toast('Library save failed: ' + e.message, true));
@@ -1792,10 +1843,10 @@ async function refineAgain() {
   } finally {
     if (preVid && !procVideo && preVid.isConnected) preVid.remove();
     if (procVideo) { procVideo.removeAttribute('src'); procVideo.load(); procVideo.remove(); procVideo = null; }
-    busy = false; go.textContent = 'Generate motion'; btn.disabled = !frames; setTimeout(() => (prog.style.display = 'none'), 800);
+    busy = false; go.textContent = 'Generate motion'; setTimeout(() => (prog.style.display = 'none'), 800); updateRefineLabel();
   }
 }
-function updateRefineLabel() { const b = $('refineBtn'); b.disabled = !frames || busy; b.innerHTML = `🔁 Refine again${meta && meta.scans > 1 ? ` <span style="opacity:.7">· ${meta.scans} scans</span>` : ''}`; }
+function updateRefineLabel() { const b = $('refineBtn'); b.disabled = !frames || busy || (!videoURL && !codecSrc); b.innerHTML = `🔁 Refine again${meta && meta.scans > 1 ? ` <span style="opacity:.7">· ${meta.scans} scans</span>` : ''}`; }
 
 function personBox(lm) {
   let x0 = 1, y0 = 1, x1 = 0, y1 = 0, n = 0;
@@ -1857,7 +1908,7 @@ function assignHands(fr, hr, W, H) {
 
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: $('depthFix').checked, headTilt: +$('headTilt').value, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
+  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: $('sharp').checked, headTilt: +$('headTilt').value, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
 }
 let solveT;
 function solve(rebuild = false) {
@@ -1872,7 +1923,7 @@ function solve(rebuild = false) {
 }
 $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#fingerSeg button').forEach(x => x.classList.toggle('on', x === b)); solve(); };
 for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('input', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 120); });
-for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'depthFix']) $(id).addEventListener('change', () => solve(true));
+for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'sharp']) $(id).addEventListener('change', () => solve(true));
 
 function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON']) $(id).disabled = !on; }
 function showStats() {
@@ -2117,7 +2168,7 @@ const LIB = {
   all() { return this.run('readonly', s => s.getAll()); }, del(id) { return this.run('readwrite', s => s.delete(id)); },
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
-const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'depthFix'];
+const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'sharp'];
 const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; return s; };
 const writeSettings = s => { if (!s) return; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); };
 async function videoBytes() {
