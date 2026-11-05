@@ -37,7 +37,7 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.45 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-button,select,input{font:inherit;color:inherit}
+button,select,input,textarea{font:inherit;color:inherit}
 header{display:flex;align-items:center;gap:14px;padding:12px 20px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,var(--panel),var(--bg))}
 .themebtn{position:relative;margin-left:8px;width:32px;height:32px;border-radius:50%;border:1px solid var(--line);background:var(--panel2);cursor:pointer;flex:none;font-size:15px;display:grid;place-items:center}
 .thememenu{position:absolute;right:0;top:40px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:8px;display:none;z-index:80;min-width:170px;box-shadow:0 12px 30px #000a}
@@ -63,8 +63,8 @@ section.card h2 .n{display:inline-grid;place-items:center;width:18px;height:18px
 select{background:#0e1118;border:1px solid var(--line);border-radius:8px;padding:6px 8px;min-width:120px}
 input[type=range]{accent-color:var(--accent);width:130px}
 input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
-.btn{background:#1d2330;border:1px solid #2c3446;border-radius:9px;padding:8px 12px;cursor:pointer;transition:.12s;display:inline-flex;align-items:center;gap:7px;justify-content:center}
-.btn:hover{border-color:#44506a;background:#222a3a}
+.btn{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:8px 12px;cursor:pointer;transition:.12s;display:inline-flex;align-items:center;gap:7px;justify-content:center}
+.btn:hover{border-color:var(--accent2);background:var(--panel)}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:700;width:100%;padding:11px}
 .btn.primary:hover{filter:brightness(1.1)}
@@ -906,7 +906,133 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     return res;
   }
 
-  g.Solver = { toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
+  // ================= TEXT TO MOTION (procedural motion library driven by your words) =================
+  const DEFAULT_M = { hipW: 0.2, shoulderW: 0.36, torso: 0.5, neckLen: 0.2, upper: 0.28, fore: 0.26, thigh: 0.43, shin: 0.42, foot: 0.15, ankleH: 0.07, hand: 0.095 };
+  const V = (x, y, z) => norm([x, y, z]);
+  const ss = x => x * x * (3 - 2 * x); // smoothstep
+  const lerpN = (a, b, t) => norm(lerp(a, b, t));
+  const axq = (ax, deg) => { const h = deg * Math.PI / 360, s = Math.sin(h); return [ax[0] * s, ax[1] * s, ax[2] * s, Math.cos(h)]; };
+  // limb directions are in the body's own frame (x = character's left, y = up, z = forward)
+  const BASE = { // relaxed standing
+    LeftArm: V(0.25, -1, 0.05), LeftForeArm: V(0.15, -1, 0.25), RightArm: V(-0.25, -1, 0.05), RightForeArm: V(-0.15, -1, 0.25),
+    LeftUpLeg: V(0.03, -1, 0), LeftLeg: V(0, -1, -0.02), RightUpLeg: V(-0.03, -1, 0), RightLeg: V(0, -1, -0.02),
+  };
+  const GUARD = { LeftArm: V(0.3, -0.8, 0.5), LeftForeArm: V(-0.25, 0.85, 0.55), RightArm: V(-0.3, -0.85, 0.4), RightForeArm: V(0.25, 0.9, 0.5),
+    LeftUpLeg: V(0.12, -1, 0.18), LeftLeg: V(0.05, -1, -0.12), RightUpLeg: V(-0.12, -1, -0.15), RightLeg: V(-0.05, -1, -0.12) };
+  const pose = (dirs = {}, o = {}) => ({ dirs: { ...BASE, ...dirs }, hipsYaw: 0, hipsPitch: 0, chestYaw: 0, chestPitch: 0, headPitch: 0, rootY: 0, ...o });
+  const guardP = (extra = {}, o = {}) => pose({ ...GUARD, ...extra }, { hipsYaw: -20, chestYaw: -10, ...o });
+  // each move: dur (s), keys [[time 0..1, pose]], optional travel (m/s forward), loop flag
+  const MOVES = {
+    idle: { dur: 2, loop: true, keys: [[0, pose({}, { chestPitch: 0 })], [0.5, pose({ LeftArm: V(0.27, -1, 0.06), RightArm: V(-0.27, -1, 0.06) }, { chestPitch: -2, rootY: -0.005 })], [1, pose()]] },
+    stance: { dur: 1.2, loop: true, keys: [[0, guardP()], [0.5, guardP({}, { rootY: -0.02 })], [1, guardP()]] },
+    jab: { dur: 0.55, keys: [[0, guardP()], [0.35, guardP({ LeftArm: V(0.05, 0.05, 1), LeftForeArm: V(0, 0.05, 1) }, { chestYaw: 12, hipsYaw: -12 })], [0.55, guardP({ LeftArm: V(0.05, 0.05, 1), LeftForeArm: V(0, 0.05, 1) }, { chestYaw: 12, hipsYaw: -12 })], [1, guardP()]] },
+    cross: { dur: 0.65, keys: [[0, guardP()], [0.4, guardP({ RightArm: V(-0.05, 0.05, 1), RightForeArm: V(0, 0.05, 1), RightUpLeg: V(-0.12, -1, -0.12) }, { chestYaw: 25, hipsYaw: 15, chestPitch: 5 })], [0.6, guardP({ RightArm: V(-0.05, 0.05, 1), RightForeArm: V(0, 0.05, 1) }, { chestYaw: 25, hipsYaw: 15, chestPitch: 5 })], [1, guardP()]] },
+    hook: { dur: 0.7, keys: [[0, guardP()], [0.25, guardP({}, { chestYaw: -25 })], [0.55, guardP({ LeftArm: V(0.7, 0.1, 0.7), LeftForeArm: V(-0.9, 0.05, 0.4) }, { chestYaw: 35, hipsYaw: 10 })], [1, guardP()]] },
+    uppercut: { dur: 0.7, keys: [[0, guardP()], [0.3, guardP({ RightArm: V(-0.3, -0.9, 0.3), RightForeArm: V(0, -0.2, 1) }, { chestYaw: 10, rootY: -0.08, chestPitch: 8 })], [0.6, guardP({ RightArm: V(-0.15, -0.2, 0.95), RightForeArm: V(0, 1, 0.15) }, { chestYaw: 25, chestPitch: -10 })], [1, guardP()]] },
+    kick: { dur: 1.1, keys: [[0, guardP()], [0.3, guardP({ RightUpLeg: V(-0.05, 0.1, 1), RightLeg: V(0, -1, 0.2) }, { chestPitch: -10 })], [0.5, guardP({ RightUpLeg: V(-0.05, 0.25, 1), RightLeg: V(0, 0.2, 1) }, { chestPitch: -15 })], [0.75, guardP({ RightUpLeg: V(-0.05, 0.1, 1), RightLeg: V(0, -1, 0.2) })], [1, guardP()]] },
+    roundhouse: { dur: 1.2, keys: [[0, guardP()], [0.3, guardP({ RightUpLeg: V(-0.8, -0.2, 0.6), RightLeg: V(-0.6, -0.7, -0.2) }, { hipsYaw: 50, chestYaw: -20, chestPitch: -10 })], [0.5, guardP({ RightUpLeg: V(-0.3, 0.45, 0.85), RightLeg: V(0.3, 0.4, 0.85) }, { hipsYaw: 80, chestYaw: -40, chestPitch: -20 })], [0.75, guardP({ RightUpLeg: V(-0.8, -0.2, 0.6), RightLeg: V(-0.6, -0.7, -0.2) }, { hipsYaw: 45 })], [1, guardP()]] },
+    squat: { dur: 2, keys: [[0, pose()], [0.45, pose({ LeftUpLeg: V(0.2, -0.35, 1), LeftLeg: V(0.05, -1, -0.25), RightUpLeg: V(-0.2, -0.35, 1), RightLeg: V(-0.05, -1, -0.25), LeftArm: V(0.1, 0, 1), RightArm: V(-0.1, 0, 1), LeftForeArm: V(0, 0, 1), RightForeArm: V(0, 0, 1) }, { chestPitch: 30, rootY: -0.38 })], [0.55, pose({ LeftUpLeg: V(0.2, -0.35, 1), LeftLeg: V(0.05, -1, -0.25), RightUpLeg: V(-0.2, -0.35, 1), RightLeg: V(-0.05, -1, -0.25), LeftArm: V(0.1, 0, 1), RightArm: V(-0.1, 0, 1), LeftForeArm: V(0, 0, 1), RightForeArm: V(0, 0, 1) }, { chestPitch: 30, rootY: -0.38 })], [1, pose()]] },
+    wave: { dur: 2, keys: [[0, pose()], [0.15, pose({ RightArm: V(-1, 0.3, 0.15), RightForeArm: V(-0.3, 1, 0.1) })], [0.3, pose({ RightArm: V(-1, 0.3, 0.15), RightForeArm: V(0.25, 1, 0.1) })], [0.45, pose({ RightArm: V(-1, 0.3, 0.15), RightForeArm: V(-0.45, 1, 0.1) })], [0.6, pose({ RightArm: V(-1, 0.3, 0.15), RightForeArm: V(0.25, 1, 0.1) })], [0.75, pose({ RightArm: V(-1, 0.3, 0.15), RightForeArm: V(-0.3, 1, 0.1) })], [1, pose()]] },
+    jump: { dur: 1.2, keys: [[0, pose()], [0.25, pose({ LeftUpLeg: V(0.05, -0.75, 0.7), LeftLeg: V(0, -1, -0.5), RightUpLeg: V(-0.05, -0.75, 0.7), RightLeg: V(0, -1, -0.5), LeftArm: V(0.3, -0.7, -0.6), RightArm: V(-0.3, -0.7, -0.6) }, { chestPitch: 25, rootY: -0.22 })], [0.5, pose({ LeftArm: V(0.3, 1, 0.2), RightArm: V(-0.3, 1, 0.2), LeftForeArm: V(0.2, 1, 0.1), RightForeArm: V(-0.2, 1, 0.1) }, { rootY: 0.45, air: 1 })], [0.75, pose({ LeftUpLeg: V(0.05, -0.8, 0.6), LeftLeg: V(0, -1, -0.4), RightUpLeg: V(-0.05, -0.8, 0.6), RightLeg: V(0, -1, -0.4) }, { chestPitch: 20, rootY: -0.18 })], [1, pose()]] },
+    spin: { dur: 1.2, keys: [[0, pose()], [0.5, pose({ LeftArm: V(1, -0.2, 0), RightArm: V(-1, -0.2, 0), LeftForeArm: V(1, -0.2, 0), RightForeArm: V(-1, -0.2, 0) }, { hipsYaw: 180 })], [1, pose({}, { hipsYaw: 360 })]] },
+    dance: { dur: 2, loop: true, keys: [0, 0.25, 0.5, 0.75, 1].map((tt, i) => [tt, pose({ LeftArm: V(0.6, i % 2 ? 0.6 : -0.2, 0.5), LeftForeArm: V(0, 1, 0.3), RightArm: V(-0.6, i % 2 ? -0.2 : 0.6, 0.5), RightForeArm: V(0, 1, 0.3), LeftUpLeg: V(0.08, -1, i % 2 ? 0.25 : 0), LeftLeg: V(0, -1, i % 2 ? -0.3 : 0), RightUpLeg: V(-0.08, -1, i % 2 ? 0 : 0.25), RightLeg: V(0, -1, i % 2 ? 0 : -0.3) }, { hipsYaw: i % 2 ? 15 : -15, chestYaw: i % 2 ? -10 : 10, rootY: i % 2 ? -0.06 : 0 })]) },
+  };
+  // walk / run are generated as cycles
+  function cyclePose(t, run) {
+    const ph = t * 2 * Math.PI, a = run ? 0.75 : 0.45, s = Math.sin(ph), c = Math.cos(ph);
+    const leg = (sg) => { const sw = sg * s; const knee = Math.max(0, sg * c) * (run ? 1.4 : 0.9) + 0.08;
+      return [V(sg * 0.03, -1, Math.tan(sw * a)), lerpN(V(0, -1, Math.tan(sw * a)), V(0, -0.2, -1), clamp(knee / 2, 0, 0.8))]; };
+    const [lu, ll] = leg(1), [ru, rl] = leg(-1);
+    const arm = (sg, x) => run ? [V(x * 0.2, -0.8, -sg * s * 0.9), V(0, 0.2, 1)] : [V(x * 0.25, -1, -sg * s * 0.5), V(x * 0.1, -1, 0.3 - sg * s * 0.2)];
+    const [la, lf] = arm(1, 1), [ra, rf] = arm(-1, -1);
+    return pose({ LeftUpLeg: lu, LeftLeg: ll, RightUpLeg: ru, RightLeg: rl, LeftArm: la, LeftForeArm: lf, RightArm: ra, RightForeArm: rf },
+      { chestPitch: run ? 14 : 3, chestYaw: s * (run ? 10 : 6), hipsYaw: -s * (run ? 8 : 5), rootY: (run ? 0.05 : 0.02) * Math.abs(Math.sin(ph * 2)) - (run ? 0.06 : 0.01) });
+  }
+  MOVES.walk = { dur: 1.1, loop: true, travel: 1.3, cycle: false };
+  MOVES.run = { dur: 0.7, loop: true, travel: 3.6, cycle: true };
+  const WORDS = [
+    [/\b(walk|walking|stroll)/, 'walk'], [/\b(run|running|sprint|jog)/, 'run'], [/\b(jump|jumping|hop|leap)/, 'jump'],
+    [/\b(jab|jabs|punch|punches|punching)/, 'jab'], [/\b(cross|straight|right hand)/, 'cross'], [/\b(hook|hooks)/, 'hook'], [/\b(uppercut|upper cut)/, 'uppercut'],
+    [/\b(roundhouse|round house|round kick)/, 'roundhouse'], [/\b(kick|kicks|kicking)/, 'kick'], [/\b(squat|squats|crouch)/, 'squat'],
+    [/\b(wave|waving|hello|hi\b)/, 'wave'], [/\b(dance|dancing|groove)/, 'dance'], [/\b(spin|turn around|twirl)/, 'spin'],
+    [/\b(stance|guard|fight stance|boxing stance|bounce)/, 'stance'], [/\b(idle|stand|standing|wait|breath)/, 'idle'],
+  ];
+  const NUMS = { one: 1, once: 1, two: 2, twice: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  function parsePrompt(text) {
+    const segs = text.toLowerCase().split(/\bthen\b|,|;|\.|\band then\b|\bfollowed by\b|\band\b/).map(s => s.trim()).filter(Boolean);
+    const plan = [], unknown = [];
+    for (const s of segs) {
+      const hits = []; for (const [re, m] of WORDS) { const mm = s.match(re); if (mm && !hits.some(h => h.m === m)) hits.push({ m, at: mm.index }); }
+      // "jab cross hook" in one segment = combo in written order
+      if (!hits.length) { unknown.push(s); continue; }
+      if (hits.some(h => h.m === 'roundhouse')) { const i = hits.findIndex(h => h.m === 'kick'); if (i >= 0) hits.splice(i, 1); }
+      hits.sort((a, b) => a.at - b.at);
+      const nm = s.match(/(\d+)\s*(x|times)?/) || s.match(/\b(one|once|two|twice|three|four|five|six|seven|eight|nine|ten)\b/);
+      let count = nm ? (+nm[1] || NUMS[nm[1]] || 1) : 1; const secs = s.match(/(\d+(\.\d+)?)\s*(s|sec|secs|seconds)\b/);
+      const speed = /\b(slow|slowly|gentle)/.test(s) ? 0.65 : /\b(fast|quick|quickly|rapid|explosive)/.test(s) ? 1.5 : 1;
+      if (secs) count = 1;
+      for (let r = 0; r < Math.min(count, 20); r++) for (const h of hits) plan.push({ move: h.m, speed, secs: secs ? +secs[1] : null });
+    }
+    return { plan, unknown };
+  }
+  function samplePlan(plan, t) { // returns pose at global time t
+    let acc = 0;
+    for (let i = 0; i < plan.length; i++) {
+      const p = plan[i], d = p.len;
+      if (t <= acc + d || i === plan.length - 1) { const lt = clamp(t - acc, 0, d); return { p, pose: movePose(p, lt), lt, i }; }
+      acc += d;
+    }
+  }
+  function movePose(p, lt) {
+    const M_ = MOVES[p.move], cyc = M_.dur / p.speed;
+    if (p.move === 'walk' || p.move === 'run') return cyclePose((lt % cyc) / cyc, p.move === 'run');
+    let u = M_.loop ? (lt % cyc) / cyc : clamp(lt / cyc, 0, 1);
+    const K = M_.keys; let k = 0; while (k < K.length - 2 && u > K[k + 1][0]) k++;
+    const [t0, a] = K[k], [t1, b] = K[k + 1], w = ss(clamp((u - t0) / Math.max(1e-6, t1 - t0), 0, 1));
+    return blendPose(a, b, w);
+  }
+  function blendPose(a, b, w) {
+    const dirs = {}; for (const j in a.dirs) dirs[j] = lerpN(a.dirs[j], b.dirs[j] || a.dirs[j], w);
+    const o = { dirs }; for (const k of ['hipsYaw', 'hipsPitch', 'chestYaw', 'chestPitch', 'headPitch', 'rootY']) o[k] = (a[k] || 0) * (1 - w) + (b[k] || 0) * w;
+    o.air = Math.max(a.air || 0, b.air || 0) * (w > 0.05 && w < 0.95 ? 1 : 0); return o;
+  }
+  function textToMotion(text, fps = 30) {
+    const { plan, unknown } = parsePrompt(text || '');
+    if (!plan.length) throw new Error('I didn\'t recognise any moves. Try words like: walk, run, jump, jab, cross, hook, uppercut, kick, roundhouse, squat, wave, dance, spin, stance, idle.');
+    for (const p of plan) { const M_ = MOVES[p.move]; p.len = p.secs || (M_.loop && !p.secs ? M_.dur * (p.move === 'walk' || p.move === 'run' ? 3 : 1) : M_.dur) / (p.secs ? 1 : p.speed); }
+    const total = plan.reduce((a, p) => a + p.len, 0), n = Math.max(2, Math.round(total * fps) + 1), rest = buildRest({ ...DEFAULT_M }), ix = rest.index, J = rest.joints;
+    const BLEND = 0.18; const locals = [], rootPos = [], contacts = []; let z = 0, yaw = 0;
+    for (let k = 0; k < n; k++) {
+      const t = k / fps, cur = samplePlan(plan, t); let P_ = cur.pose;
+      // smooth hand-over between moves
+      if (cur.i > 0 && cur.lt < BLEND) { const prev = plan[cur.i - 1]; P_ = blendPose(movePose(prev, prev.len), P_, ss(cur.lt / BLEND)); }
+      const hy = P_.hipsYaw + yaw, Hq = qmul(axq([0, 1, 0], hy), axq([1, 0, 0], P_.hipsPitch));
+      const Cq = qmul(Hq, qmul(axq([0, 1, 0], P_.chestYaw), axq([1, 0, 0], P_.chestPitch)));
+      const G = {}; G.Hips = Hq; G.Spine = qslerp(Hq, Cq, 1 / 3); G.Spine1 = qslerp(Hq, Cq, 2 / 3); G.Spine2 = Cq; G.Neck = Cq; G.Head = qmul(Cq, axq([1, 0, 0], P_.headPitch - P_.chestPitch * 0.6));
+      for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
+        G[S + 'Shoulder'] = Cq;
+        G[S + 'Arm'] = qmul(Cq, qFromTo([sx, 0, 0], P_.dirs[S + 'Arm'])); G[S + 'ForeArm'] = qmul(Cq, qFromTo([sx, 0, 0], P_.dirs[S + 'ForeArm'])); G[S + 'Hand'] = G[S + 'ForeArm'];
+        G[S + 'UpLeg'] = qmul(Hq, qFromTo([0, -1, 0], P_.dirs[S + 'UpLeg'])); G[S + 'Leg'] = qmul(Hq, qFromTo([0, -1, 0], P_.dirs[S + 'Leg'])); G[S + 'Foot'] = axq([0, 1, 0], hy);
+      }
+      const glob = [], loc = [];
+      for (let j = 0; j < J.length; j++) { const p = J[j].parent; glob[j] = G[J[j].name] || glob[p]; loc[j] = p >= 0 ? qnorm(qmul(qconj(glob[p]), glob[j])) : glob[j]; }
+      fingerCurl(rest, loc, 'Left', /jab|cross|hook|uppercut|stance/.test(cur.p.move) ? 'fist' : 'relaxed'); fingerCurl(rest, loc, 'Right', /jab|cross|hook|uppercut|stance/.test(cur.p.move) ? 'fist' : 'relaxed');
+      // root: feet on the ground (unless airborne), forward travel for walk/run
+      const f0 = fk(rest, loc, [0, 0, 0]);
+      const low = Math.min(...['Left', 'Right'].flatMap(S => [f0.pos[ix[S + 'Foot']][1] - DEFAULT_M.ankleH, f0.pos[ix[S + 'ToeBase']][1]]));
+      const travel = MOVES[cur.p.move].travel ? MOVES[cur.p.move].travel * (cur.p.speed || 1) : 0;
+      if (k > 0) z += travel / fps;
+      const fwd = qrot(axq([0, 1, 0], yaw), [0, 0, 1]);
+      const y = -low + (P_.air ? Math.max(0, P_.rootY) : Math.min(0, P_.rootY) * 0 + 0);
+      rootPos.push([fwd[0] * z, y + (P_.air ? 0 : 0), fwd[2] * z]);
+      locals.push(loc);
+      contacts.push({ Left: !P_.air && f0.pos[ix.LeftFoot][1] - low < 0.1, Right: !P_.air && f0.pos[ix.RightFoot][1] - low < 0.1 });
+    }
+    for (let k = 1; k < n; k++) for (let j = 0; j < locals[k].length; j++) { const a = locals[k - 1][j], b = locals[k][j]; if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0) locals[k][j] = b.map(v => -v); }
+    return { rest, fps, n, rootPos, locals, contacts, hasHands: { Left: false, Right: false }, M: rest.M, unknown, plan: plan.map(p => p.move), text };
+  }
+
+  g.Solver = { textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -938,7 +1064,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <h2><span class="n">1</span>Source video</h2>
     <div class="drop" id="drop"><b>Drop a video here</b><br>or tap to choose — any format (iPhone MOV/HEVC, MP4, MKV, AVI…)</div>
     <input type="file" id="file" accept="video/*,.mov,.qt,.mp4,.m4v,.hevc,.heic,.webm,.mkv,.avi,.wmv,.flv,.3gp,.3g2,.mts,.m2ts,.ts,.mpg,.mpeg,.ogv,.ogg,.mxf,.dv,.vob,.gif" hidden>
-    <div style="display:flex;gap:7px;margin-top:8px"><button class="btn small" id="camBtn" style="flex:1">● Record with webcam</button></div>
+    <div style="display:flex;gap:7px;margin-top:8px"><button class="btn small" id="camBtn" style="flex:1">● Record with webcam</button><button class="btn small" id="ttmBtn" style="flex:1">✍️ Text to motion</button></div>
     <div class="progress" id="cprog"><i></i></div>
     <div class="status" id="vinfo">One clearly visible person, full body in frame, steady camera works best.</div>
   </section>
@@ -952,6 +1078,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>Mirrored (selfie) video</label><input type="checkbox" id="mirrored"></div>
     <div class="row"><label>Camera field of view</label><span><input type="range" id="fov" min="25" max="100" value="55"> </span><span class="val" id="fovV">55°</span></div>
     <button class="btn primary" id="go" disabled>Generate motion</button>
+    <button class="btn" id="refineBtn" disabled style="width:100%;margin-top:8px">🔁 Refine again</button>
     <div class="progress" id="prog"><i></i></div>
     <div class="status" id="pstat"></div>
   </section>
@@ -962,7 +1089,6 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="sub">Feet</div>
     <div class="row"><label>Anti-slide <span class="mini">applied while processing</span></label><input type="checkbox" id="footLock" checked></div>
     <div class="row"><label>Foot lock <span class="mini">plant &amp; flatten on the floor</span></label><input type="checkbox" id="footIK" checked></div>
-    <div class="row"><label>Ride detection <span class="mini">skateboard, scooter, skates</span></label><input type="checkbox" id="rideDetect" checked></div>
     <div class="row"><label>Contact sensitivity</label><span><input type="range" id="contact" min="0.02" max="0.15" step="0.005" value="0.07"></span><span class="val" id="contactV">7cm</span></div>
     <div class="row"><label>Ankle limits <span class="mini">no over-twist</span></label><input type="checkbox" id="ankleLimit" checked></div>
     <div class="sub">Hands options</div>
@@ -971,7 +1097,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="sub">Body</div>
     <div class="row"><label>Auto-upright <span class="mini">fix tilt</span></label><input type="checkbox" id="autoLevel" checked></div>
     <div class="row"><label>Head tilt</label><span><input type="range" id="headTilt" min="-25" max="25" step="1" value="0"></span><span class="val" id="headTiltV">0°</span></div>
-    <div class="row"><label>Depth recovery <span class="mini">full reach toward / away from camera</span></label><input type="checkbox" id="depthFix" checked></div>
+    <div class="row"><label>Full reach fix <span class="mini">punches &amp; kicks aimed at / away from the camera reach full length</span></label><input type="checkbox" id="depthFix" checked></div>
     <div class="row"><label>In-place <span class="mini">no root travel</span></label><input type="checkbox" id="inPlace"></div>
     <div class="stats" id="stats" style="display:none"></div>
   </section>
@@ -1029,6 +1155,13 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
 </main>
 </div>
 <div class="toast" id="toast"></div>
+<div class="modal" id="ttmModal"><div class="box">
+  <div style="display:flex;align-items:center;margin-bottom:8px"><b style="font-size:16px">✍️ Text to motion</b><button class="btn small" id="ttmClose" style="margin-left:auto">✕</button></div>
+  <textarea id="ttmText" rows="3" placeholder="e.g. boxing stance, then 3 jabs, a cross and a hook, then walk" style="width:100%;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px;resize:vertical"></textarea>
+  <div id="ttmChips" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0"></div>
+  <button class="btn primary" id="ttmGo">Create motion</button>
+  <div class="hint">Moves it knows: walk, run, jump, jab, cross, hook, uppercut, kick, roundhouse, squat, wave, dance, spin, stance, idle. Add numbers ("3 jabs"), speed ("fast", "slowly"), time ("walk for 5 seconds") and chain them with "then" or commas.</div>
+</div></div>
 <div class="modal" id="camModal"><div class="box">
   <video id="camVid" muted playsinline autoplay></video>
   <div style="display:flex;gap:8px;margin-top:10px"><button class="btn" id="recBtn" style="flex:1">Start recording</button><button class="btn" id="camClose">Close</button></div>
@@ -1069,7 +1202,7 @@ for (const [id, out, f] of [['headTilt', 'headTiltV', v => (v > 0 ? '+' : '') + 
 let videoURL = null, videoName = 'motion', frames = null, anim = null, meta = null;
 let playing = false, curTime = 0, cancelFlag = false, busy = false, needRender = true;
 const vid = $('vid');
-let codecSrc = null, previews = [], firstPreview = null, previewFps = 30, currentSource = null;
+let codecSrc = null, previews = [], firstPreview = null, previewFps = 30, currentSource = null, currentTakeId = null;
 
 // ---------- source loading ----------
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -1394,6 +1527,8 @@ async function processVideo() {
   const status = m => (st.textContent = m);
   go.textContent = 'Cancel'; prog.style.display = 'block'; bar.style.width = '0%';
   try {
+    currentTakeId = Date.now();
+    saveTakeStart().catch(e => toast('Library save failed: ' + e.message, true));
     let q = $('quality').value, pfps = +$('procFps').value; const wantHands = $('hands').checked;
     try { await loadModels(q, wantHands, status); }
     catch (e) { if (q !== 'heavy') throw e; console.warn(e); q = 'full'; $('quality').value = 'full'; toast('Heavy model is too big for this device, using Full.'); poseLm = null; await loadModels(q, wantHands, status); }
@@ -1475,73 +1610,25 @@ async function processVideo() {
     if (!grid.some(g => g.pw)) throw new Error('No person was detected in this video.');
 
     // ---- refine pass: re-scan every frame zoomed in on the person, then fuse with the first pass ----
+    meta = { W: cv.width, H: cv.height, fps: pfps, dur, scans: 1 };
     if ($('refinePass').checked) {
-      const W = cv.width, H = cv.height, M = Math.max(W, H), CS = 640;
-      // crop boxes from pass 1 (smoothed over time, gaps filled)
-      let boxes = grid.map(g => {
-        if (!g.pi || !g.pw) return null; let x0 = 1, y0 = 1, x1 = 0, y1 = 0, n = 0;
-        for (const p of g.pi) if (p[2] > 0.3) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); n++; }
-        return n >= 5 ? [(x0 + x1) / 2 * W, (y0 + y1) / 2 * H, Math.max((x1 - x0) * W, (y1 - y0) * H)] : null;
-      });
-      boxes = S.fillGaps(boxes);
-      if (boxes) {
-        const sm = boxes.map((_, k) => { const a = [0, 0, 0]; let c = 0; for (let q = k - 4; q <= k + 4; q++) if (boxes[q]) { a[0] += boxes[q][0]; a[1] += boxes[q][1]; a[2] = Math.max(a[2], boxes[q][2]); c++; } return [a[0] / c, a[1] / c, a[2]]; });
-        const subjectFrac = Math.max(...sm.map(b => b[2])) / M;
-        if (subjectFrac < 0.9) { // worth zooming
-          const crop = document.createElement('canvas'); crop.width = crop.height = CS; const cx = crop.getContext('2d');
-          let fused = 0, k2 = 0; const t1 = performance.now();
-          const pass2 = (t) => {
-            const s = Math.min(grid.length - 1, Math.round(t * pfps)), g = grid[s]; if (!g || (!g.pw && g.pi)) return; // skip frozen frames
-            const [bx, by, bs] = sm[s], side = Math.min(M * 1.2, Math.max(M * 0.25, bs * 1.45)), sx = bx - side / 2, sy = by - side / 2;
-            cx.fillStyle = '#000'; cx.fillRect(0, 0, CS, CS); cx.drawImage(cv, sx, sy, side, side, 0, 0, CS, CS);
-            tsClock += Math.max(1, Math.round(1000 / pfps));
-            const pr = poseLm.detectForVideo(crop, tsClock);
-            const mapP = p => [(sx + p.x * side) / W, (sy + p.y * side) / H, p.visibility ?? 1];
-            if (pr.landmarks && pr.landmarks.length) {
-              let best = 0, bd = 9; pr.landmarks.forEach((lm, i) => { const d = Math.hypot((lm[23].x + lm[24].x) / 2 - 0.5, (lm[23].y + lm[24].y) / 2 - 0.5); if (d < bd) { bd = d; best = i; } });
-              if (bd < 0.35) {
-                const pi2 = pr.landmarks[best].map(mapP), pw2 = pr.worldLandmarks[best].map(p => [p.x, p.y, p.z]);
-                if (g.pw) { // visibility-weighted fusion, zoomed scan trusted a bit more
-                  g.pw = g.pw.map((p, i) => { const a = Math.max(0.05, g.pi[i][2]), b = Math.max(0.05, pi2[i][2]) * 1.4; return [0, 1, 2].map(c => (p[c] * a + pw2[i][c] * b) / (a + b)); });
-                  g.pi = g.pi.map((p, i) => { const a = Math.max(0.05, p[2]), b = Math.max(0.05, pi2[i][2]) * 1.4; return [(p[0] * a + pi2[i][0] * b) / (a + b), (p[1] * a + pi2[i][1] * b) / (a + b), Math.max(p[2], pi2[i][2])]; });
-                } else { g.pw = pw2; g.pi = pi2; }
-                fused++;
-                if (wantHands && handLm) {
-                  const hr = handLm.detectForVideo(crop, tsClock);
-                  if (hr.landmarks && hr.landmarks.length) {
-                    const tmp = { pi: g.pi, hl: null, hr: null, hil: null, hir: null };
-                    assignHands(tmp, { landmarks: hr.landmarks.map(lm => lm.map(p => ({ x: (sx + p.x * side) / W, y: (sy + p.y * side) / H }))), worldLandmarks: hr.worldLandmarks }, W, H);
-                    for (const key of ['hl', 'hr', 'hil', 'hir']) if (tmp[key]) g[key] = tmp[key];
-                  }
-                }
-              }
-            }
-            k2++;
-            if (k2 % 2 === 0) { const p = Math.min(1, k2 / grid.length), el = (performance.now() - t1) / 1000; bar.style.width = (p * 100).toFixed(1) + '%'; status(`Refining (zoomed re-scan) ${k2}/${grid.length} · ~${Math.max(0, Math.ceil(el / p - el))}s left`); }
-          };
-          status('Refining (zoomed re-scan)…'); bar.style.width = '0%';
-          if (codecSrc) {
-            const ctx2 = cv.getContext('2d');
-            await codecIterate(codecSrc, 1 / pfps, (f, t) => { drawCodecFrame(ctx2, f, codecSrc, W, H); pass2(t); }, () => cancelFlag);
-          } else {
-            for (let k = 0; k < grid.length; k++) { if (cancelFlag) break; const t = Math.min(dur - 0.001, k / pfps); await nativeFrame(t); pass2(t); if (k % 2 === 0) await sleep(0); }
-          }
-          if (cancelFlag) throw new Error('cancelled');
-          console.log('refine pass fused', fused, 'frames');
-        }
-      }
+      const iterate = codecSrc
+        ? cb => codecIterate(codecSrc, 1 / pfps, (f, t) => { drawCodecFrame(cv.getContext('2d'), f, codecSrc, cv.width, cv.height); cb(t); }, () => cancelFlag)
+        : async cb => { for (let k = 0; k < grid.length; k++) { if (cancelFlag) break; const t = Math.min(dur - 0.001, k / pfps); await nativeFrame(t); cb(t); if (k % 2 === 0) await sleep(0); } };
+      await zoomPass(grid, cv, pfps, iterate, 1.45, 1, wantHands, status, bar);
+      meta.scans = 2;
     }
     const N = grid.length;
     out.length = 0; out.push(...grid);
     if (frozen) console.log('smoothed over', frozen, 'frozen frames');
-    frames = out; meta = { W: cv.width, H: cv.height, fps: pfps, dur };
+    frames = out;
     const found = out.filter(f => f.pw).length, hf = out.filter(f => f.hl || f.hr).length;
     status(`Tracked ${found}/${N} frames with a person${wantHands ? ` · hands in ${hf}` : ''}. Solving…`);
     bar.style.width = '100%';
-    solve(true);
+    solve(true); updateRefineLabel();
     status(`Done · ${found}/${N} frames tracked${wantHands ? ` · fingers in ${Math.round(100 * hf / N)}%` : ''}. Tweak step 3 or export.`);
     toast('Motion generated and saved to your Library. Press ▶ to preview.');
-    saveTake(cv).catch(e => console.warn('library save failed', e));
+    saveTake(cv).catch(e => toast('Library save failed: ' + e.message, true));
   } catch (e) {
     if (e.message === 'cancelled') status('Cancelled.');
     else {
@@ -1557,6 +1644,127 @@ async function processVideo() {
   }
 }
 $('go').onclick = processVideo;
+// ---- text to motion ----
+const TTM_EXAMPLES = ['boxing stance then jab cross hook', 'walk for 4 seconds then wave', 'run fast then jump', '3 jabs then an uppercut', 'roundhouse kick', 'dance slowly', 'squat twice then spin'];
+$('ttmChips').innerHTML = TTM_EXAMPLES.map(e => `<button class="btn small" data-e="${e}">${e}</button>`).join('');
+$('ttmChips').onclick = e => { const b = e.target.closest('button'); if (b) $('ttmText').value = b.dataset.e; };
+$('ttmBtn').onclick = () => { $('ttmModal').style.display = 'grid'; setTimeout(() => $('ttmText').focus(), 50); };
+$('ttmClose').onclick = () => ($('ttmModal').style.display = 'none');
+$('ttmGo').onclick = () => { const txt = $('ttmText').value.trim(); if (!txt) { toast('Type what the character should do.', true); return; } runTextMotion(txt); };
+function runTextMotion(txt, existingId) {
+  let a; try { a = S.textToMotion(txt, 30); } catch (e) { toast(e.message, true, 9000); return; }
+  $('ttmModal').style.display = 'none'; pause();
+  if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; currentSource = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = [];
+  frames = null; meta = { fps: 30, dur: (a.n - 1) / 30, scans: 0 }; anim = a; videoName = txt.slice(0, 40).replace(/[^\w-]+/g, '_') || 'text_motion'; curTime = 0;
+  $('vEmpty').style.display = 'grid'; $('vEmpty').textContent = '✍️ ' + txt; $('bigPlay').style.display = 'none';
+  buildCharacter(a.rest); setReady(true); drawContacts(); applyAt(0); requestRender(); updateRefineLabel();
+  $('scrub').max = meta.dur; $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel();
+  $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); play();
+  if (a.unknown.length) toast(`Made: ${a.plan.join(', ')}. Skipped: "${a.unknown.join('", "')}"`, false, 7000); else toast(`Made: ${a.plan.join(', ')}`);
+  const id = existingId || Date.now(); currentTakeId = id;
+  if (!existingId) putTake({ id, name: videoName, date: new Date().toISOString(), dur: meta.dur, prompt: txt, frames: null, meta, settings: readSettings(), thumb: null, status: 'done' }).catch(e => toast('Library save failed: ' + e.message, true));
+}
+$('refineBtn').onclick = refineAgain;
+
+// zoomed re-scan of every frame, fused into the existing landmarks. prevScans = how many scans are already averaged in.
+async function zoomPass(grid, cv, pfps, iterate, zoom, prevScans, wantHands, status, bar) {
+  const W = cv.width, H = cv.height, M = Math.max(W, H), CS = 640;
+  let boxes = grid.map(g => {
+    if (!g.pi || !g.pw) return null; let x0 = 1, y0 = 1, x1 = 0, y1 = 0, n = 0;
+    for (const p of g.pi) if (p[2] > 0.3) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); n++; }
+    return n >= 5 ? [(x0 + x1) / 2 * W, (y0 + y1) / 2 * H, Math.max((x1 - x0) * W, (y1 - y0) * H)] : null;
+  });
+  boxes = S.fillGaps(boxes); if (!boxes) return 0;
+  const sm = boxes.map((_, k) => { const a = [0, 0, 0]; let c = 0; for (let q = k - 4; q <= k + 4; q++) if (boxes[q]) { a[0] += boxes[q][0]; a[1] += boxes[q][1]; a[2] = Math.max(a[2], boxes[q][2]); c++; } return [a[0] / c, a[1] / c, a[2]]; });
+  const crop = document.createElement('canvas'); crop.width = crop.height = CS; const cx = crop.getContext('2d');
+  let fused = 0, k2 = 0; const t1 = performance.now();
+  const one = t => {
+    const s = Math.min(grid.length - 1, Math.round(t * pfps)), g = grid[s]; if (!g || (!g.pw && g.pi)) return; // skip frozen frames
+    const [bx, by, bs] = sm[s], side = Math.min(M * 1.2, Math.max(M * 0.25, bs * zoom)), sx = bx - side / 2, sy = by - side / 2;
+    cx.fillStyle = '#000'; cx.fillRect(0, 0, CS, CS); cx.drawImage(cv, sx, sy, side, side, 0, 0, CS, CS);
+    tsClock += Math.max(1, Math.round(1000 / pfps));
+    const pr = poseLm.detectForVideo(crop, tsClock);
+    const mapP = p => [(sx + p.x * side) / W, (sy + p.y * side) / H, p.visibility ?? 1];
+    if (pr.landmarks && pr.landmarks.length) {
+      let best = 0, bd = 9; pr.landmarks.forEach((lm, i) => { const d = Math.hypot((lm[23].x + lm[24].x) / 2 - 0.5, (lm[23].y + lm[24].y) / 2 - 0.5); if (d < bd) { bd = d; best = i; } });
+      if (bd < 0.35) {
+        const pi2 = pr.landmarks[best].map(mapP), pw2 = pr.worldLandmarks[best].map(p => [p.x, p.y, p.z]);
+        if (g.pw) { // visibility-weighted running average; the zoomed view is trusted a bit more
+          const wA = i => Math.max(0.05, g.pi[i][2]) * prevScans, wB = i => Math.max(0.05, pi2[i][2]) * 1.4;
+          g.pw = g.pw.map((p, i) => { const a = wA(i), b = wB(i); return [0, 1, 2].map(c => (p[c] * a + pw2[i][c] * b) / (a + b)); });
+          g.pi = g.pi.map((p, i) => { const a = wA(i), b = wB(i); return [(p[0] * a + pi2[i][0] * b) / (a + b), (p[1] * a + pi2[i][1] * b) / (a + b), Math.max(p[2], pi2[i][2])]; });
+        } else { g.pw = pw2; g.pi = pi2; }
+        fused++;
+        if (wantHands && handLm) {
+          const hr = handLm.detectForVideo(crop, tsClock);
+          if (hr.landmarks && hr.landmarks.length) {
+            const tmp = { pi: g.pi, hl: null, hr: null, hil: null, hir: null };
+            assignHands(tmp, { landmarks: hr.landmarks.map(lm => lm.map(p => ({ x: (sx + p.x * side) / W, y: (sy + p.y * side) / H }))), worldLandmarks: hr.worldLandmarks }, W, H);
+            for (const key of ['hl', 'hr']) if (tmp[key]) {
+              if (g[key] && prevScans > 1) { const n = prevScans; g[key] = g[key].map((p, i) => [0, 1, 2].map(c => (p[c] * n + tmp[key][i][c] * 1.4) / (n + 1.4))); }
+              else g[key] = tmp[key];
+              g[key === 'hl' ? 'hil' : 'hir'] = tmp[key === 'hl' ? 'hil' : 'hir'];
+            }
+          }
+        }
+      }
+    }
+    k2++;
+    if (k2 % 2 === 0) { const p = Math.min(1, k2 / grid.length), el = (performance.now() - t1) / 1000; bar.style.width = (p * 100).toFixed(1) + '%'; status(`Refining (zoomed re-scan) ${k2}/${grid.length} · ~${Math.max(0, Math.ceil(el / p - el))}s left`); }
+  };
+  status('Refining (zoomed re-scan)…'); bar.style.width = '0%';
+  await iterate(one);
+  if (cancelFlag) throw new Error('cancelled');
+  cleanOutliers(grid);
+  return fused;
+}
+// temporal clean-up: a landmark that suddenly jumps away from its neighbours (a glitch) is replaced by the neighbours' median
+function cleanOutliers(grid) {
+  const n = grid.length; if (n < 5) return;
+  for (let i = 0; i < 33; i++) for (let k = 2; k < n - 2; k++) {
+    const g = grid[k]; if (!g.pw) continue;
+    const nb = [k - 2, k - 1, k + 1, k + 2].map(q => grid[q].pw && grid[q].pw[i]).filter(Boolean); if (nb.length < 3) continue;
+    const med = [0, 1, 2].map(c => nb.map(p => p[c]).sort((a, b) => a - b)[Math.floor(nb.length / 2)]);
+    const spread = Math.max(...nb.map(p => Math.hypot(p[0] - med[0], p[1] - med[1], p[2] - med[2])));
+    const d = Math.hypot(g.pw[i][0] - med[0], g.pw[i][1] - med[1], g.pw[i][2] - med[2]);
+    if (d > 0.06 && d > 3 * spread) g.pw[i] = med;
+  }
+}
+
+// ---------- Refine again: each press re-scans the video and averages it in, so the motion keeps getting closer to the video ----------
+async function refineAgain() {
+  if (busy) return; if (!frames || !meta) { toast('Generate a motion first.'); return; }
+  if (!videoURL && !codecSrc) { toast('Refining needs the original video. Open a take that was saved with its video.', true); return; }
+  busy = true; cancelFlag = false; pause();
+  const preVid = codecSrc ? null : hiddenVideoEl(videoURL); if (preVid) { const p = preVid.play(); if (p) p.catch(() => {}); }
+  const btn = $('refineBtn'), go = $('go'), prog = $('prog'), bar = prog.querySelector('i'), st = $('pstat'), status = m => (st.textContent = m);
+  btn.disabled = true; go.textContent = 'Cancel'; go.disabled = false; prog.style.display = 'block';
+  try {
+    await loadModels($('quality').value, $('hands').checked, status);
+    const W = meta.W, H = meta.H, pfps = meta.fps, dur = meta.dur, cv = document.createElement('canvas'); cv.width = W; cv.height = H; const ctx = cv.getContext('2d');
+    let iterate;
+    if (codecSrc) iterate = cb => codecIterate(codecSrc, 1 / pfps, (f, t) => { drawCodecFrame(ctx, f, codecSrc, W, H); cb(t); }, () => cancelFlag);
+    else {
+      preVid.pause(); const pv = await makeHiddenVideo(videoURL, preVid); if (!pv) throw new Error('Video could not be decoded'); procVideo = pv;
+      const seek = async t => { pv.currentTime = t; await waitEvent(pv, 'seeked', 5000); if ('requestVideoFrameCallback' in pv) await Promise.race([new Promise(r => pv.requestVideoFrameCallback(() => r())), sleep(60)]); };
+      iterate = async cb => { for (let k = 0; k < frames.length; k++) { if (cancelFlag) break; const t = Math.min(dur - 0.001, k / pfps); await seek(t); ctx.drawImage(pv, 0, 0, W, H); cb(t); if (k % 2 === 0) await sleep(0); } };
+    }
+    const scans = meta.scans || 1, zoom = [1.3, 1.6, 1.38, 1.52, 1.25, 1.7][(scans - 1) % 6];
+    await zoomPass(frames, cv, pfps, iterate, zoom, scans, $('hands').checked, status, bar);
+    meta.scans = scans + 1;
+    solve(); updateRefineLabel();
+    status(`Refined · ${meta.scans} scans averaged. Press Refine again to keep improving.`);
+    toast(`Refined (${meta.scans} scans). Each press makes it match the video more closely.`);
+    saveTake(cv).catch(e => toast('Library save failed: ' + e.message, true));
+  } catch (e) {
+    if (e.message === 'cancelled') status('Refine cancelled.'); else { console.error(e); status('Refine error: ' + e.message); toast('Refine failed: ' + e.message, true); }
+  } finally {
+    if (preVid && !procVideo && preVid.isConnected) preVid.remove();
+    if (procVideo) { procVideo.removeAttribute('src'); procVideo.load(); procVideo.remove(); procVideo = null; }
+    busy = false; go.textContent = 'Generate motion'; btn.disabled = !frames; setTimeout(() => (prog.style.display = 'none'), 800);
+  }
+}
+function updateRefineLabel() { const b = $('refineBtn'); b.disabled = !frames || busy; b.innerHTML = `🔁 Refine again${meta && meta.scans > 1 ? ` <span style="opacity:.7">· ${meta.scans} scans</span>` : ''}`; }
 
 function personBox(lm) {
   let x0 = 1, y0 = 1, x1 = 0, y1 = 0, n = 0;
@@ -1618,7 +1826,7 @@ function assignHands(fr, hr, W, H) {
 
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: $('rideDetect').checked, depthFix: $('depthFix').checked, headTilt: +$('headTilt').value, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
+  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: $('depthFix').checked, headTilt: +$('headTilt').value, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
 }
 let solveT;
 function solve(rebuild = false) {
@@ -1633,10 +1841,11 @@ function solve(rebuild = false) {
 }
 $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#fingerSeg button').forEach(x => x.classList.toggle('on', x === b)); solve(); };
 for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('input', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 120); });
-for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'rideDetect', 'depthFix']) $(id).addEventListener('change', () => solve(true));
+for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'depthFix']) $(id).addEventListener('change', () => solve(true));
 
 function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON']) $(id).disabled = !on; }
 function showStats() {
+  if (!frames) return;
   const M = anim.M, el = $('stats'); el.style.display = 'grid';
   const c = anim.contacts, n = anim.n; const pct = s => Math.round(100 * c.filter(x => x[s]).length / n);
   const travel = anim.rootPos.reduce((s, r, k) => k ? s + Math.hypot(r[0] - anim.rootPos[k - 1][0], r[2] - anim.rootPos[k - 1][2]) : 0, 0);
@@ -1848,22 +2057,39 @@ const LIB = {
   all() { return this.run('readonly', s => s.getAll()); }, del(id) { return this.run('readwrite', s => s.delete(id)); },
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
-const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'rideDetect', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'depthFix'];
+const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'depthFix'];
 const readSettings = () => { const s = {}; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; return s; };
 const writeSettings = s => { if (!s) return; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); };
-async function saveTake(cv) {
-  const thumb = await new Promise(r => { const c = document.createElement('canvas'), s = 128 / Math.max(cv.width, cv.height); c.width = Math.round(cv.width * s); c.height = Math.round(cv.height * s); c.getContext('2d').drawImage(cv, 0, 0, c.width, c.height); c.toBlob(r, 'image/jpeg', 0.7); });
-  const src = currentSource && currentSource.blob, keepVideo = src && src.size < 200e6;
-  const take = { id: Date.now(), name: videoName, date: new Date().toISOString(), dur: meta.dur, frames, meta, settings: readSettings(), thumb, video: keepVideo ? src : null, videoName: currentSource && currentSource.name };
-  try { await LIB.put(take); } catch (e) { take.video = null; await LIB.put(take); toast('Saved to Library (video too large to keep, motion saved).'); }
+async function videoBytes() {
+  const src = currentSource && currentSource.blob; if (!src || src.size > 250e6) return null;
+  return { buf: await src.arrayBuffer(), type: src.type || 'video/mp4' };
+}
+async function putTake(take) {
+  try { await LIB.put(take); }
+  catch (e) { if (take.videoBuf) { take.videoBuf = null; await LIB.put(take); toast('Saved to Library (the video was too big to keep, motion saved).'); } else throw e; }
   renderLibrary();
+}
+// saved the moment you tap Generate, then updated when the motion is ready
+async function saveTakeStart() {
+  const id = currentTakeId, vb = await videoBytes();
+  let thumb = null; try { const c = $('pcv').style.display === 'block' ? $('pcv') : null; const src = c || (vid.videoWidth ? vid : null); if (src) thumb = await makeThumb(src, src.videoWidth || src.width, src.videoHeight || src.height); } catch (e) {}
+  await putTake({ id, name: videoName, date: new Date().toISOString(), dur: dur(), frames: null, meta: null, settings: readSettings(), thumb, videoBuf: vb && vb.buf, videoType: vb && vb.type, videoName: currentSource && currentSource.name, status: 'processing' });
+}
+function makeThumb(src, w, h) { return new Promise(r => { const c = document.createElement('canvas'), s = 128 / Math.max(w, h); c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s)); c.getContext('2d').drawImage(src, 0, 0, c.width, c.height); c.toBlob(r, 'image/jpeg', 0.7); }); }
+async function saveTake(cv) {
+  const id = currentTakeId || Date.now(); currentTakeId = id;
+  let old = null; try { old = await LIB.get(id); } catch (e) {}
+  const thumb = cv ? await makeThumb(cv, cv.width, cv.height) : old && old.thumb;
+  const vb = old && old.videoBuf ? { buf: old.videoBuf, type: old.videoType } : await videoBytes();
+  await putTake({ id, name: videoName, date: old ? old.date : new Date().toISOString(), dur: meta.dur, frames, meta, settings: readSettings(), thumb, videoBuf: vb && vb.buf, videoType: vb && vb.type, videoName: currentSource && currentSource.name, status: 'done' });
+  toast('Saved to your Library.');
 }
 function takeAnim(take) { const s = take.settings || {}; const o = { ...opts(), fps: take.meta.fps, W: take.meta.W, H: take.meta.H }; return S.solveAll(take.frames, o); }
 async function renderLibrary() {
   let takes = []; try { takes = (await LIB.all()).sort((a, b) => b.id - a.id); } catch (e) { $('libList').innerHTML = '<div class="hint">Library is not available in this browser mode.</div>'; return; }
   $('libCount').textContent = takes.length ? `${takes.length} saved` : '';
   if (!takes.length) { $('libList').innerHTML = '<div class="hint">Nothing saved yet. Generate a motion and it appears here.</div>'; return; }
-  $('libList').innerHTML = takes.map(k => `<div class="take" data-id="${k.id}">${k.thumb ? `<img alt="" data-thumb="${k.id}">` : '<div class="ph"></div>'}<div><b>${(k.name || 'motion').replace(/[<>&]/g, '')}</b><small>${new Date(k.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} · ${(+k.dur || 0).toFixed(1)}s${k.video ? '' : ' · motion only'}</small>
+  $('libList').innerHTML = takes.map(k => `<div class="take" data-id="${k.id}">${k.thumb ? `<img alt="" data-thumb="${k.id}">` : '<div class="ph"></div>'}<div><b>${(k.name || 'motion').replace(/[<>&]/g, '')}</b><small>${new Date(k.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} · ${(+k.dur || 0).toFixed(1)}s${k.prompt ? ' · ✍️ text' : (k.videoBuf || k.video) ? '' : ' · motion only'}${k.status === 'processing' ? ' · <span style="color:var(--warn)">not finished</span>' : ''}</small>
     <div class="acts"><button class="btn" data-a="open">▶ Open</button><button class="btn" data-a="fbx">FBX</button><button class="btn" data-a="bvh">BVH</button><button class="btn" data-a="glb">GLB</button><button class="btn" data-a="del" title="Delete">🗑</button></div></div></div>`).join('');
   for (const k of takes) if (k.thumb) { const img = $('libList').querySelector(`[data-thumb="${k.id}"]`); if (img) { img.src = URL.createObjectURL(k.thumb); img.onload = () => URL.revokeObjectURL(img.src); } }
 }
@@ -1877,15 +2103,19 @@ $('libList').onclick = async e => {
     delArm = null; await LIB.del(id); toast('Deleted from Library.'); return renderLibrary();
   }
   if (b.dataset.a === 'bvh' || b.dataset.a === 'glb' || b.dataset.a === 'fbx') {
-    writeSettings(take.settings); const a = takeAnim(take);
+    if (!take.frames && !take.prompt) { toast('This take did not finish processing. Open it and tap Generate motion.', true); return; }
+    writeSettings(take.settings); const a = take.prompt ? S.textToMotion(take.prompt, 30) : takeAnim(take);
     return b.dataset.a === 'bvh' ? exportBVH(a, base) : b.dataset.a === 'fbx' ? exportFBX(a, base) : exportGLB(a, base);
   }
   if (b.dataset.a === 'open') {
-    if (take.video) await loadVideo(take.video, take.videoName || take.name);
+    if (take.prompt) { runTextMotion(take.prompt, take.id); return; }
+    const vblob = take.videoBuf ? new Blob([take.videoBuf], { type: take.videoType || 'video/mp4' }) : take.video;
+    if (vblob) await loadVideo(vblob, take.videoName || take.name);
     else { pause(); if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = []; }
-    writeSettings(take.settings);
+    writeSettings(take.settings); currentTakeId = take.id;
+    if (!take.frames) { toast('Video opened. This take was not finished: tap Generate motion.'); return; }
     frames = take.frames; meta = take.meta; videoName = take.name || 'motion'; curTime = 0;
-    solve(true); updateTimeLabel(); $('scrub').max = meta.dur; $('scrub').disabled = false; $('play').disabled = false;
+    solve(true); updateRefineLabel(); updateTimeLabel(); $('scrub').max = meta.dur; $('scrub').disabled = false; $('play').disabled = false;
     $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); toast('Opened from Library.');
   }
 };
