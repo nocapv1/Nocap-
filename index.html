@@ -749,7 +749,127 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     return { format: 'mocap-studio/1', units: 'meters', up: 'Y', forward: '+Z (faces camera)', fps: outFps, joints: J.map(j => ({ name: nm(j.name), parent: j.parent, offset: j.offset })), frames };
   }
 
-  g.Solver = { solveAll, solveFrame, buildRest, measure, fk, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
+  // ---- FBX 7.4 binary exporter (skeleton + animation; Unity / Blender / Maya / MotionBuilder) ----
+  function eulerXYZ(q) { // FBX default rotation order XYZ: R = Rz * Ry * Rx, degrees [x,y,z]
+    const m = quatToMat(q), D = 180 / Math.PI, y = Math.asin(-clamp(m[2][0], -1, 1)); let x, z;
+    if (Math.abs(m[2][0]) < 0.9999999) { x = Math.atan2(m[2][1], m[2][2]); z = Math.atan2(m[1][0], m[0][0]); } else { x = 0; z = Math.atan2(-m[0][1], m[1][1]); }
+    return [x * D, y * D, z * D];
+  }
+  function toFBX(anim, outFps, naming = 'unity') {
+    const nm = NAME_MAPS[naming] || NAME_MAPS.standard, J = anim.rest.joints, CM = 100, TICKS = 46186158000;
+    const dur = (anim.n - 1) / anim.fps, N = Math.max(2, Math.round(dur * outFps) + 1);
+    // ---- sample animation ----
+    const times = [], rot = J.map(() => [[], [], []]), rootT = [[], [], []];
+    let prev = null;
+    for (let k = 0; k < N; k++) {
+      const s = sample(anim, k / outFps); times.push(Math.round((k / outFps) * TICKS));
+      const e = s.locals.map(eulerXYZ);
+      if (prev) e.forEach((v, j) => v.forEach((a, c) => { let d = a - prev[j][c]; while (d > 180) { a -= 360; d -= 360; } while (d < -180) { a += 360; d += 360; } v[c] = a; }));
+      prev = e; e.forEach((v, j) => v.forEach((a, c) => rot[j][c].push(a)));
+      s.root.forEach((v, c) => rootT[c].push(v * CM));
+    }
+    // ---- binary node writer ----
+    const enc = new TextEncoder(); const chunks = []; let size = 0;
+    const out = { u8: [], push(b) { chunks.push(b); size += b.length; } };
+    const P = { // property encoders -> Uint8Array
+      S: s => { const b = typeof s === 'string' ? enc.encode(s) : s; const r = new Uint8Array(5 + b.length); r[0] = 83; new DataView(r.buffer).setUint32(1, b.length, true); r.set(b, 5); return r; },
+      R: b => { const r = new Uint8Array(5 + b.length); r[0] = 82; new DataView(r.buffer).setUint32(1, b.length, true); r.set(b, 5); return r; },
+      I: v => { const r = new Uint8Array(5); r[0] = 73; new DataView(r.buffer).setInt32(1, v, true); return r; },
+      D: v => { const r = new Uint8Array(9); r[0] = 68; new DataView(r.buffer).setFloat64(1, v, true); return r; },
+      L: v => { const r = new Uint8Array(9); r[0] = 76; new DataView(r.buffer).setBigInt64(1, BigInt(Math.round(v)), true); return r; },
+      C: v => new Uint8Array([67, v ? 1 : 0]),
+      arr: (code, list, bytes, setter) => { const r = new Uint8Array(13 + list.length * bytes), dv = new DataView(r.buffer); r[0] = code.charCodeAt(0); dv.setUint32(1, list.length, true); dv.setUint32(5, 0, true); dv.setUint32(9, list.length * bytes, true); list.forEach((v, i) => setter(dv, 13 + i * bytes, v)); return r; },
+      f: l => P.arr('f', l, 4, (dv, o, v) => dv.setFloat32(o, v, true)),
+      d: l => P.arr('d', l, 8, (dv, o, v) => dv.setFloat64(o, v, true)),
+      i: l => P.arr('i', l, 4, (dv, o, v) => dv.setInt32(o, v, true)),
+      l: l => P.arr('l', l, 8, (dv, o, v) => dv.setBigInt64(o, BigInt(Math.round(v)), true)),
+    };
+    // node: [name, props(Uint8Array[]), children[]]
+    const node = (name, props = [], kids = []) => ({ name, props, kids });
+    const SENT = new Uint8Array(13);
+    function write(n, isLast) {
+      const nameB = enc.encode(n.name), propLen = n.props.reduce((a, b) => a + b.length, 0);
+      const head = new Uint8Array(13 + nameB.length), dv = new DataView(head.buffer);
+      const startSize = size; out.push(head);
+      dv.setUint32(4, n.props.length, true); dv.setUint32(8, propLen, true); head[12] = nameB.length; head.set(nameB, 13);
+      n.props.forEach(p => out.push(p));
+      if (n.kids.length) { n.kids.forEach(k => write(k)); out.push(SENT); }
+      else if (!n.props.length) out.push(SENT);
+      dv.setUint32(0, size, true); // absolute end offset (file header counted below)
+      n._start = startSize;
+    }
+    const p70 = list => node('Properties70', [], list.map(a => node('P', a)));
+    const pvx = (name, type, sub, flags, ...vals) => [P.S(name), P.S(type), P.S(sub), P.S(flags), ...vals];
+    const pv = (name, type, sub, ...vals) => pvx(name, type, sub, '', ...vals);
+    const v3 = (n, x, y, z, t = 'Lcl Translation') => pvx(n, t, '', 'A', P.D(x), P.D(y), P.D(z));
+    let nextId = 1000000;
+    const id = () => nextId++;
+    const objects = [], conns = [];
+    const C = (type, a, b, prop) => conns.push(node('C', prop ? [P.S(type), P.L(a), P.L(b), P.S(prop)] : [P.S(type), P.L(a), P.L(b)]));
+    const modelIds = J.map(() => id());
+    J.forEach((j, i) => {
+      const na = id(), name = nm(j.name), o = j.offset;
+      objects.push(node('NodeAttribute', [P.L(na), P.S(name + '\x00\x01NodeAttribute'), P.S('LimbNode')], [p70([pv('Size', 'double', 'Number', P.D(1))]), node('TypeFlags', [P.S('Skeleton')])]));
+      objects.push(node('Model', [P.L(modelIds[i]), P.S(name + '\x00\x01Model'), P.S('LimbNode')], [node('Version', [P.I(232)]),
+        p70([pv('RotationActive', 'bool', '', P.I(1)), pv('InheritType', 'enum', '', P.I(1)), pv('ScalingMax', 'Vector3D', 'Vector', P.D(0), P.D(0), P.D(0)), pv('DefaultAttributeIndex', 'int', 'Integer', P.I(0)),
+          v3('Lcl Translation', o[0] * CM, o[1] * CM, o[2] * CM), v3('Lcl Rotation', 0, 0, 0, 'Lcl Rotation'), v3('Lcl Scaling', 1, 1, 1, 'Lcl Scaling')]),
+        node('Shading', [P.C(1)]), node('Culling', [P.S('CullingOff')])]));
+      C('OO', na, modelIds[i]); C('OO', modelIds[i], j.parent >= 0 ? modelIds[j.parent] : 0);
+    });
+    const stack = id(), layer = id(), stopT = times[times.length - 1];
+    objects.push(node('AnimationStack', [P.L(stack), P.S('Take 001\x00\x01AnimStack'), P.S('')], [p70([pv('LocalStop', 'KTime', 'Time', P.L(stopT)), pv('ReferenceStop', 'KTime', 'Time', P.L(stopT))])]));
+    objects.push(node('AnimationLayer', [P.L(layer), P.S('BaseLayer\x00\x01AnimLayer'), P.S('')]));
+    C('OO', layer, stack);
+    const keyData = P.f([0, 0, new Float32Array(new Uint32Array([218434821]).buffer)[0], 0]);
+    let nCN = 0, nCurve = 0;
+    const addChannel = (modelId, prop, short, xyz) => {
+      const cn = id(); nCN++;
+      objects.push(node('AnimationCurveNode', [P.L(cn), P.S(short + '\x00\x01AnimCurveNode'), P.S('')], [p70(['X', 'Y', 'Z'].map((a, c) => pvx('d|' + a, 'Number', '', 'A', P.D(xyz[c][0]))))]));
+      C('OO', cn, layer); C('OP', cn, modelId, prop);
+      ['X', 'Y', 'Z'].forEach((a, c) => {
+        const cv = id(); nCurve++;
+        objects.push(node('AnimationCurve', [P.L(cv), P.S('\x00\x01AnimCurve'), P.S('')], [node('Default', [P.D(xyz[c][0])]), node('KeyVer', [P.I(4008)]), node('KeyTime', [P.l(times)]), node('KeyValueFloat', [P.f(xyz[c])]), node('KeyAttrFlags', [P.i([24836])]), node('KeyAttrDataFloat', [keyData]), node('KeyAttrRefCount', [P.i([times.length])])]));
+        C('OP', cv, cn, 'd|' + a);
+      });
+    };
+    J.forEach((j, i) => { addChannel(modelIds[i], 'Lcl Rotation', 'R', rot[i]); if (i === 0) addChannel(modelIds[0], 'Lcl Translation', 'T', rootT); });
+    const tm = { 24: 11, 30: 6, 60: 3, 120: 1 }[outFps] ?? 14;
+    const top = [
+      node('FBXHeaderExtension', [], [node('FBXHeaderVersion', [P.I(1003)]), node('FBXVersion', [P.I(7400)]), node('EncryptionType', [P.I(0)]),
+        node('CreationTimeStamp', [], [node('Version', [P.I(1000)]), node('Year', [P.I(1970)]), node('Month', [P.I(1)]), node('Day', [P.I(1)]), node('Hour', [P.I(10)]), node('Minute', [P.I(0)]), node('Second', [P.I(0)]), node('Millisecond', [P.I(0)])]),
+        node('Creator', [P.S('NoCap MoCap')])]),
+      node('FileId', [P.R(new Uint8Array([0x28, 0xb3, 0x2a, 0xeb, 0xb6, 0x24, 0xcc, 0xc2, 0xbf, 0xc8, 0xb0, 0x2a, 0xa9, 0x2b, 0xfc, 0xf1]))]),
+      node('CreationTime', [P.S('1970-01-01 10:00:00:000')]),
+      node('Creator', [P.S('NoCap MoCap')]),
+      node('GlobalSettings', [], [node('Version', [P.I(1000)]), p70([
+        pv('UpAxis', 'int', 'Integer', P.I(1)), pv('UpAxisSign', 'int', 'Integer', P.I(1)), pv('FrontAxis', 'int', 'Integer', P.I(2)), pv('FrontAxisSign', 'int', 'Integer', P.I(1)),
+        pv('CoordAxis', 'int', 'Integer', P.I(0)), pv('CoordAxisSign', 'int', 'Integer', P.I(1)), pv('OriginalUpAxis', 'int', 'Integer', P.I(1)), pv('OriginalUpAxisSign', 'int', 'Integer', P.I(1)),
+        pv('UnitScaleFactor', 'double', 'Number', P.D(1)), pv('OriginalUnitScaleFactor', 'double', 'Number', P.D(1)),
+        pv('TimeMode', 'enum', '', P.I(tm)), pv('TimeSpanStart', 'KTime', 'Time', P.L(0)), pv('TimeSpanStop', 'KTime', 'Time', P.L(stopT)), pv('CustomFrameRate', 'double', 'Number', P.D(outFps))])]),
+      node('Documents', [], [node('Count', [P.I(1)]), node('Document', [P.L(id()), P.S('Scene'), P.S('Scene')], [p70([pv('ActiveAnimStackName', 'KString', '', P.S('Take 001'))]), node('RootNode', [P.L(0)])])]),
+      node('References', []),
+      node('Definitions', [], [node('Version', [P.I(100)]), node('Count', [P.I(6)]),
+        ...[['GlobalSettings', 1], ['NodeAttribute', J.length], ['Model', J.length], ['AnimationStack', 1], ['AnimationLayer', 1], ['AnimationCurveNode', nCN], ['AnimationCurve', nCurve]].map(([t, c]) => node('ObjectType', [P.S(t)], [node('Count', [P.I(c)])]))]),
+      node('Objects', [], objects),
+      node('Connections', [], conns),
+      node('Takes', [], [node('Current', [P.S('Take 001')]), node('Take', [P.S('Take 001')], [node('FileName', [P.S('Take_001.tak')]), node('LocalTime', [P.L(0), P.L(stopT)]), node('ReferenceTime', [P.L(0), P.L(stopT)])])]),
+    ];
+    // header
+    const header = new Uint8Array(27); header.set(enc.encode('Kaydara FBX Binary  '), 0); header[20] = 0; header[21] = 0x1a; header[22] = 0; new DataView(header.buffer).setUint32(23, 7400, true);
+    out.push(header);
+    top.forEach(n => write(n)); out.push(SENT);
+    // footer (as written by Blender / FBX SDK)
+    out.push(new Uint8Array([0xfa, 0xbc, 0xab, 0x09, 0xd0, 0xc8, 0xd4, 0x66, 0xb1, 0x76, 0xfb, 0x83, 0x1c, 0xf7, 0x26, 0x7e]));
+    out.push(new Uint8Array(4));
+    let pad = ((size + 15) & ~15) - size; if (pad === 0) pad = 16; out.push(new Uint8Array(pad));
+    const ver = new Uint8Array(4); new DataView(ver.buffer).setUint32(0, 7400, true); out.push(ver);
+    out.push(new Uint8Array(120));
+    out.push(new Uint8Array([0xf8, 0x5a, 0x8c, 0x6a, 0xde, 0xf5, 0xd9, 0x7e, 0xec, 0xe9, 0x0c, 0xe3, 0x75, 0x8f, 0x29, 0x0b]));
+    const res = new Uint8Array(size); let o = 0; for (const c of chunks) { res.set(c, o); o += c.length; }
+    return res;
+  }
+
+  g.Solver = { toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -821,8 +941,9 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <h2><span class="n">4</span>Export</h2>
     <div class="row"><label>Target rig naming</label><select id="naming"><option value="unity" selected>Unity (Humanoid)</option><option value="standard">Standard / Blender</option><option value="mixamo">Mixamo</option><option value="unreal">Unreal (UE mannequin)</option></select></div>
     <div class="row"><label>Frame rate</label><select id="outFps"><option>24</option><option selected>30</option><option>60</option><option>120</option></select></div>
-    <div class="grid3"><button class="btn" id="exBVH" disabled>BVH</button><button class="btn" id="exGLB" disabled>GLB</button><button class="btn" id="exJSON" disabled>JSON</button></div>
+    <div class="grid3" style="grid-template-columns:repeat(4,1fr)"><button class="btn" id="exFBX" disabled>FBX</button><button class="btn" id="exBVH" disabled>BVH</button><button class="btn" id="exGLB" disabled>GLB</button><button class="btn" id="exJSON" disabled>JSON</button></div>
     <div class="hint">
+      <b style="color:var(--dim)">FBX</b> → drag straight into Unity (set Rig → Humanoid), also Blender, Maya, MotionBuilder, Unreal.<br>
       <b style="color:var(--dim)">BVH</b> → Blender (File › Import › BVH), MotionBuilder, Cascadeur, MMD (via Blender + mmd_tools), Mixamo-rig retarget.<br>
       <b style="color:var(--dim)">GLB</b> → skinned T-pose rig + animation. Unity: install the free <i>glTFast</i> package, drop the GLB in, set Rig → Humanoid. Also Unreal, Godot, Roblox (via Blender → FBX).<br>
       <b style="color:var(--dim)">JSON</b> → per-frame 3D joint positions + rotations for robots / custom retargeting.
@@ -1416,7 +1537,7 @@ $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) re
 for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('input', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 120); });
 for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'rideDetect']) $(id).addEventListener('change', () => solve(true));
 
-function setReady(on) { for (const id of ['exBVH', 'exGLB', 'exJSON']) $(id).disabled = !on; }
+function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON']) $(id).disabled = !on; }
 function showStats() {
   const M = anim.M, el = $('stats'); el.style.display = 'grid';
   const c = anim.contacts, n = anim.n; const pct = s => Math.round(100 * c.filter(x => x[s]).length / n);
@@ -1645,7 +1766,7 @@ async function renderLibrary() {
   $('libCount').textContent = takes.length ? `${takes.length} saved` : '';
   if (!takes.length) { $('libList').innerHTML = '<div class="hint">Nothing saved yet. Generate a motion and it appears here.</div>'; return; }
   $('libList').innerHTML = takes.map(k => `<div class="take" data-id="${k.id}">${k.thumb ? `<img alt="" data-thumb="${k.id}">` : '<div class="ph"></div>'}<div><b>${(k.name || 'motion').replace(/[<>&]/g, '')}</b><small>${new Date(k.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} · ${(+k.dur || 0).toFixed(1)}s${k.video ? '' : ' · motion only'}</small>
-    <div class="acts"><button class="btn" data-a="open">▶ Open</button><button class="btn" data-a="bvh">BVH</button><button class="btn" data-a="glb">GLB</button><button class="btn" data-a="del" title="Delete">🗑</button></div></div></div>`).join('');
+    <div class="acts"><button class="btn" data-a="open">▶ Open</button><button class="btn" data-a="fbx">FBX</button><button class="btn" data-a="bvh">BVH</button><button class="btn" data-a="glb">GLB</button><button class="btn" data-a="del" title="Delete">🗑</button></div></div></div>`).join('');
   for (const k of takes) if (k.thumb) { const img = $('libList').querySelector(`[data-thumb="${k.id}"]`); if (img) { img.src = URL.createObjectURL(k.thumb); img.onload = () => URL.revokeObjectURL(img.src); } }
 }
 let delArm = null;
@@ -1657,9 +1778,9 @@ $('libList').onclick = async e => {
     if (delArm !== id) { delArm = id; b.textContent = 'Delete?'; setTimeout(() => { if (delArm === id) { delArm = null; renderLibrary(); } }, 3000); return; }
     delArm = null; await LIB.del(id); toast('Deleted from Library.'); return renderLibrary();
   }
-  if (b.dataset.a === 'bvh' || b.dataset.a === 'glb') {
+  if (b.dataset.a === 'bvh' || b.dataset.a === 'glb' || b.dataset.a === 'fbx') {
     writeSettings(take.settings); const a = takeAnim(take);
-    return b.dataset.a === 'bvh' ? exportBVH(a, base) : exportGLB(a, base);
+    return b.dataset.a === 'bvh' ? exportBVH(a, base) : b.dataset.a === 'fbx' ? exportFBX(a, base) : exportGLB(a, base);
   }
   if (b.dataset.a === 'open') {
     if (take.video) await loadVideo(take.video, take.videoName || take.name);
@@ -1676,6 +1797,8 @@ renderLibrary();
 const outName = (ext, base) => `${base || videoName}_${$('naming').value}_${$('outFps').value}fps.${ext}`;
 function exportBVH(a, base) { saveFile(S.toBVH(a, +$('outFps').value, $('naming').value), outName('bvh', base), 'text/plain'); toast('BVH exported.'); }
 $('exBVH').onclick = () => { if (anim) exportBVH(anim); };
+function exportFBX(a, base) { saveFile(new Blob([S.toFBX(a, +$('outFps').value, $('naming').value)], { type: 'application/octet-stream' }), outName('fbx', base)); toast('FBX exported.'); }
+$('exFBX').onclick = () => { if (anim) exportFBX(anim); };
 $('exJSON').onclick = () => { if (!anim) return; saveFile(JSON.stringify(S.toJSON(anim, +$('outFps').value, $('naming').value)), outName('json'), 'application/json'); toast('JSON exported.'); };
 $('exGLB').onclick = () => { if (anim) exportGLB(anim); };
 function exportGLB(anim, base) {
