@@ -88,13 +88,14 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   aside > section.card{order:3}
   aside > section.card:first-child{order:1}
   /* video + 3D side by side, pinned to the top while you scroll the settings */
-  .stage{order:2;grid-template-columns:1fr 1fr;gap:6px;padding:6px 10px;margin:0 -10px;position:sticky;top:0;z-index:30;background:var(--bg)}
-  #vview,.view.v3d{height:40vh;height:40svh}
+  .stage{order:2;grid-template-columns:1fr;gap:6px;padding:6px 10px;margin:0 -10px;position:sticky;top:0;z-index:30;background:var(--bg)}
+  #vview{height:26vh;height:26svh}
+  .view.v3d{height:38vh;height:38svh}
   .view .label{display:none}
   .vtools{right:4px;top:4px;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:96%}
   .vtools .btn{min-height:26px !important;padding:2px 7px !important;font-size:11px}
   .bigplay{width:54px;height:54px;font-size:20px}
-  .timeline{order:2;border:1px solid var(--line);border-radius:12px;margin:0 0 12px;padding:8px 10px;gap:8px;position:sticky;top:calc(40vh + 12px);top:calc(40svh + 12px);z-index:30;box-shadow:0 10px 20px #000c}
+  .timeline{order:2;border:1px solid var(--line);border-radius:12px;margin:0 0 12px;padding:8px 10px;gap:8px;position:sticky;top:calc(64vh + 18px);top:calc(64svh + 18px);z-index:30;box-shadow:0 10px 20px #000c}
   .time{min-width:0;font-size:11px}
   #play{width:42px;height:42px;font-size:15px;flex:none}
   #speed{min-width:0;width:64px}
@@ -516,7 +517,64 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const FL2 = FL;
       rootPos = rootPos.map((r, k) => { const low = Math.min(FL2[k].Left.low, FL2[k].Right.low) + r[1]; return low < -0.005 ? [r[0], r[1] - low, r[2]] : r; });
     }
+    if (opt.footIK !== false) locals = footCleanup(rest, locals, rootPos, C, M, fps);
     return { rest, fps, n, rootPos, locals, contacts: C, hasHands: { Left: !!HL, Right: !!HR }, M };
+  }
+
+  // ---- AI foot clean-up: planted feet are pinned flat to the floor with leg IK; feet never sink below it ----
+  function footCleanup(rest, locals, rootPos, C, M, fps) {
+    const n = locals.length, ix = rest.index, J = rest.joints;
+    const out = locals.map(l => l.slice());
+    const rad = Math.max(1, Math.round(0.08 * fps)); // blend in/out over ~80 ms
+    for (const S of ['Left', 'Right']) {
+      const iU = ix[S + 'UpLeg'], iL = ix[S + 'Leg'], iF = ix[S + 'Foot'], iT = ix[S + 'ToeBase'];
+      // smooth contact weight
+      const raw = C.map(c => (c[S] ? 1 : 0)), w = raw.map((_, k) => { let s = 0, c = 0; for (let q = k - rad; q <= k + rad; q++) if (q >= 0 && q < n) { s += raw[q]; c++; } return s / c; });
+      // anchors: average ankle position over each contact run
+      const base = locals.map((l, k) => fk(rest, l, rootPos[k]));
+      const anchor = new Array(n).fill(null);
+      for (let k = 0; k < n;) {
+        if (!raw[k]) { k++; continue; }
+        let e = k, sx = 0, sz = 0; while (e < n && raw[e]) { sx += base[e].pos[iF][0]; sz += base[e].pos[iF][2]; e++; }
+        const a = [sx / (e - k), M.ankleH, sz / (e - k)];
+        for (let q = Math.max(0, k - rad); q < Math.min(n, e + rad); q++) if (!anchor[q] || raw[q]) anchor[q] = a;
+        k = e;
+      }
+      for (let k = 0; k < n; k++) {
+        const { pos, rot } = fk(rest, out[k], rootPos[k]);
+        const H = pos[iU], K = pos[iL], A = pos[iF];
+        const toeTip = add(pos[iT], qrot(rot[iT], J[iT].end || [0, 0, 0.05]));
+        let T = A.slice(), wk = anchor[k] ? w[k] : 0;
+        if (wk > 0) T = lerp(A, anchor[k], wk);
+        // keep heel and toe above the floor
+        const low = Math.min(A[1] - M.ankleH, toeTip[1], pos[iT][1]);
+        if (low + (T[1] - A[1]) < 0) T[1] += -(low + (T[1] - A[1]));
+        if (len(sub(T, A)) < 1e-4 && wk === 0) continue;
+        // two-bone IK hip -> knee -> ankle
+        const a = len(sub(K, H)), b = len(sub(A, K));
+        let dv = sub(T, H); const d = clamp(len(dv), Math.abs(a - b) + 1e-4, a + b - 1e-4); const dir = norm(dv);
+        let pole = perp(sub(K, H), dir);
+        if (len(pole) < 1e-4) pole = perp(qrot(rot[iF], [0, 0, 1]), dir);
+        pole = norm(pole);
+        const x = (a * a - b * b + d * d) / (2 * d), h = Math.sqrt(Math.max(0, a * a - x * x));
+        const K2 = add(add(H, sc(dir, x)), sc(pole, h)), A2 = add(H, sc(dir, d));
+        const gU = qnorm(qmul(qFromTo(sub(K, H), sub(K2, H)), rot[iU]));
+        const shinAfter = qrot(qmul(gU, qconj(rot[iU])), sub(A, K));
+        const gL = qnorm(qmul(qFromTo(shinAfter, sub(A2, K2)), qmul(qmul(gU, qconj(rot[iU])), rot[iL])));
+        // foot: keep its world orientation, and lay it flat (yaw only) while planted
+        let gF = rot[iF];
+        if (wk > 0) {
+          const f = qrot(rot[iF], [0, 0, 1]); const yaw = Math.atan2(f[0], f[2]);
+          const flat = [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)];
+          gF = qslerp(rot[iF], flat, wk);
+        }
+        const pU = J[iU].parent;
+        out[k][iU] = qnorm(qmul(qconj(rot[pU]), gU));
+        out[k][iL] = qnorm(qmul(qconj(gU), gL));
+        out[k][iF] = qnorm(qmul(qconj(gL), gF));
+      }
+    }
+    return out;
   }
 
   // pose landmark left/right mirror map
@@ -629,6 +687,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>Foot locking (anti-slide)</label><input type="checkbox" id="footLock" checked></div>
     <div class="row"><label>Contact sensitivity</label><span><input type="range" id="contact" min="0.02" max="0.15" step="0.005" value="0.07"></span><span class="val" id="contactV">7cm</span></div>
     <div class="row"><label>Auto-upright (fix tilt)</label><input type="checkbox" id="autoLevel" checked></div>
+    <div class="row"><label>AI foot clean-up (plant &amp; flatten)</label><input type="checkbox" id="footIK" checked></div>
     <div class="row"><label>In-place (no root travel)</label><input type="checkbox" id="inPlace"></div>
     <div class="stats" id="stats" style="display:none"></div>
   </section>
@@ -1138,7 +1197,7 @@ function assignHands(fr, hr, W, H) {
 
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta.fps, W: meta.W, H: meta.H, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
+  return { fps: meta.fps, W: meta.W, H: meta.H, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
 }
 let solveT;
 function solve(rebuild = false) {
@@ -1152,7 +1211,7 @@ function solve(rebuild = false) {
   } catch (e) { console.error(e); toast(e.message, true); setReady(false); }
 }
 for (const id of ['smooth', 'contact', 'fov']) $(id).addEventListener('input', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 120); });
-for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored']) $(id).addEventListener('change', () => solve(true));
+for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK']) $(id).addEventListener('change', () => solve(true));
 
 function setReady(on) { for (const id of ['exBVH', 'exGLB', 'exJSON']) $(id).disabled = !on; }
 function showStats() {
@@ -1177,7 +1236,9 @@ host.appendChild(renderer.domElement);
 const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0a0c11); scene.fog = new THREE.Fog(0x0a0c11, 8, 22);
 const camera = new THREE.PerspectiveCamera(40, 1, 0.02, 100); camera.position.set(0.6, 1.35, 4.3);
 function requestRender() { needRender = true; }
-const controls = new OrbitControls(camera, renderer.domElement); controls.target.set(0, 0.95, 0); controls.enableDamping = true;
+const controls = new OrbitControls(camera, renderer.domElement); controls.target.set(0, 0.95, 0);
+Object.assign(controls, { enableDamping: true, dampingFactor: 0.12, rotateSpeed: 0.45, zoomSpeed: 0.6, panSpeed: 0.5, minDistance: 1.2, maxDistance: 12, minPolarAngle: 0.15, maxPolarAngle: Math.PI / 2 - 0.06, screenSpacePanning: true });
+controls.addEventListener('start', () => (userOrbiting = true)); controls.addEventListener('end', () => (userOrbiting = false));
 scene.add(new THREE.HemisphereLight(0xcfe7ff, 0x1a1f2a, 0.9));
 const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(3, 6, 4); key.castShadow = true; const isPhone = matchMedia('(pointer:coarse)').matches; key.shadow.mapSize.set(isPhone ? 1024 : 2048, isPhone ? 1024 : 2048);
 Object.assign(key.shadow.camera, { left: -4, right: 4, top: 4, bottom: -4, near: 0.5, far: 20 }); scene.add(key); scene.add(key.target);
@@ -1186,7 +1247,7 @@ const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStan
 const grid = new THREE.GridHelper(60, 120, 0x2a3346, 0x1a2030); grid.position.y = 0.001; scene.add(grid);
 const footMarks = ['Left', 'Right'].map((s, i) => { const m = new THREE.Mesh(new THREE.RingGeometry(0.06, 0.085, 32), new THREE.MeshBasicMaterial({ color: i ? 0x7f9cf5 : 0x4fd1c5, transparent: true, opacity: 0 })); m.rotation.x = -Math.PI / 2; m.position.y = 0.004; scene.add(m); return m; });
 
-let character = null; // {group, bones, mesh, helper}
+let character = null, userOrbiting = false; // {group, bones, mesh, helper}
 function clearCharacter() { if (!character) return; scene.remove(character.group); if (character.helper) scene.remove(character.helper); character.mesh.geometry.dispose(); character = null; }
 
 function makeRig(rest, nameMap = n => n) {
@@ -1258,7 +1319,7 @@ function applyAt(t) {
   ['Left', 'Right'].forEach((s, i) => { b[anim.rest.index[s + 'Foot']].getWorldPosition(_v); footMarks[i].position.x = _v.x; footMarks[i].position.z = _v.z; footMarks[i].material.opacity = anim.contacts[k][s] ? 0.9 : 0; });
   if ($('tFollow').classList.contains('on')) {
     b[0].getWorldPosition(_v); const tgt = new THREE.Vector3(_v.x, 0.95, _v.z), d = tgt.clone().sub(controls.target);
-    controls.target.add(d.multiplyScalar(0.15)); camera.position.add(d); key.position.set(controls.target.x + 3, 6, controls.target.z + 4); key.target.position.copy(controls.target);
+    if (!userOrbiting) { controls.target.add(d.multiplyScalar(0.08)); camera.position.add(d); } key.position.set(controls.target.x + 3, 6, controls.target.z + 4); key.target.position.copy(controls.target);
   }
 }
 function resize() {
