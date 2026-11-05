@@ -1284,7 +1284,6 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>Camera field of view</label><span><input type="range" id="fov" min="25" max="100" value="55"> </span><span class="val" id="fovV">55°</span></div>
     <button class="btn primary" id="go" disabled>Generate motion</button>
     <button class="btn" id="refineBtn" disabled style="width:100%;margin-top:8px">🔁 Refine again</button>
-    <button class="btn" id="undoBtn" style="width:100%;margin-top:6px;display:none">↩️ Undo last refine</button>
     <div class="mini" style="margin-top:4px">Each press re-scans the video zoomed in and cleans up glitches. Press as many times as you like.</div>
     <div class="progress" id="prog"><i></i></div>
     <div class="status" id="pstat"></div>
@@ -1358,7 +1357,9 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="tlwrap"><input type="range" id="scrub" min="0" max="1" step="0.0001" value="0" disabled><canvas id="ctl" height="10"></canvas></div>
     <select id="speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
     <div class="time" id="tlabel">0.00s / 0.00s</div>
+    <button class="btn" id="undoAll" title="Undo" disabled>↩️</button>
     <button class="btn" id="trimBtn" title="Trim">✂️</button>
+    <span id="savedTag" style="font-size:11px;color:var(--accent);opacity:0;transition:opacity .4s;white-space:nowrap"></span>
     <button class="btn" id="pinBtn" title="Keep the video and 3D view on screen while scrolling">📌 Pin</button>
   </div>
   <div class="trimbar" id="trimBar" style="display:none">
@@ -1620,7 +1621,7 @@ async function loadVideo(file, name) {
   name = name || file.name || 'video';
   const info = $('vinfo'), cp = $('cprog'), bar = cp.querySelector('i');
   $('go').disabled = true; info.textContent = 'Opening video…';
-  frames = null; anim = null; clearCharacter(); setReady(false); previews = []; firstPreview = null; pvShown = -2; undoStack = []; $('undoBtn').style.display = 'none';
+  frames = null; anim = null; clearCharacter(); setReady(false); previews = []; firstPreview = null; pvShown = -2;
   let blob = file, url = null, mode = null, csrc = null, converted = false;
   const tryNative = async b => { const u = URL.createObjectURL(b); if (await probeVideo(u)) return u; URL.revokeObjectURL(u); return null; };
   const tryCodec = async b => { info.textContent = 'Decoding video directly…'; try { return await openCodecSource(b, name); } catch (e) { console.warn(e); return null; } };
@@ -1861,7 +1862,7 @@ async function processVideo() {
     const found = out.filter(f => f.pw).length, hf = out.filter(f => f.hl || f.hr).length;
     status(`Tracked ${found}/${N} frames with a person${wantHands ? ` · hands in ${hf}` : ''}. Solving…`);
     bar.style.width = '100%';
-    solve(true); updateRefineLabel();
+    solve(true); updateRefineLabel(); resetHistory();
     const bridged = out.filter(f => !f.pw).length;
     if (bridged > N * 0.15) toast(`The person was lost in ${bridged} of ${N} frames, so those were bridged. Try Refine again, or film with the full body in frame.`, true, 9000);
     status(`Done · ${found}/${N} frames tracked${wantHands ? ` · fingers in ${Math.round(100 * hf / N)}%` : ''}. Tweak step 3 or export.`);
@@ -1904,10 +1905,10 @@ function runTextMotion(txt, existingId) {
   const sty = a.styles && a.styles.length ? ` (${a.styles.join(', ')} style)` : '';
   if (a.unknown.length) toast(`Made: ${a.plan.join(', ')}${sty}. Skipped: "${a.unknown.join('", "')}"`, false, 7000); else toast(`Made: ${a.plan.join(', ')}${sty}`);
   const id = existingId || Date.now(); currentTakeId = id;
+  if (!existingId) resetHistory();
   if (!existingId) putTake({ id, name: videoName, date: new Date().toISOString(), dur: meta.dur, prompt: txt, frames: null, meta, settings: readSettings(), thumb: null, status: 'done' }).catch(e => toast('Library save failed: ' + e.message, true));
 }
 $('refineBtn').onclick = refineAgain;
-$('undoBtn').onclick = () => { if (busy || !undoStack.length) return; const u = undoStack.pop(); frames = u.frames; meta.scans = u.scans; solve(); updateRefineLabel(); if (!undoStack.length) $('undoBtn').style.display = 'none'; toast('Undid the last refine.'); saveTake(null).catch(() => {}); };
 
 // zoomed re-scan of every frame, fused into the existing landmarks. prevScans = how many scans are already averaged in.
 async function zoomPass(grid, cv, pfps, iterate, zoom, prevScans, wantHands, status, bar, t0 = 0) {
@@ -2000,12 +2001,12 @@ async function refineAgain() {
       iterate = async cb => { for (let k = 0; k < frames.length; k++) { if (cancelFlag) break; const t = Math.min(dur - 0.001, (meta.t0 || 0) + k / pfps); await seek(t); ctx.drawImage(pv, 0, 0, W, H); cb(t); if (k % 2 === 0) await sleep(0); } };
     }
     const scans = meta.scans || 1, zoom = [1.3, 1.6, 1.38, 1.52, 1.25, 1.7][(scans - 1) % 6];
-    undoStack.push({ frames: JSON.parse(JSON.stringify(frames)), scans }); if (undoStack.length > 5) undoStack.shift();
+    const before = { frames: JSON.parse(JSON.stringify(frames)), scans };
     const res = await zoomPass(frames, cv, pfps, iterate, zoom, scans, $('hands').checked, status, bar, meta.t0 || 0);
-    if (res.fused === 0) { const u = undoStack.pop(); frames = u.frames; toast('Refine found nothing it could improve safely, so nothing was changed.'); return; }
+    if (res.fused === 0) { frames = before.frames; toast('Refine found nothing it could improve safely, so nothing was changed.'); return; }
     meta.scans = scans + 1;
-    solve();
-    status(`Refined · ${meta.scans} scans averaged (${res.rejected} doubtful frames ignored). Press again to keep improving, or Undo.`); $('undoBtn').style.display = 'block';
+    solve(); recordChange(before);
+    status(`Refined · ${meta.scans} scans averaged (${res.rejected} doubtful frames ignored). Press again to keep improving, or ↩️ Undo.`);
     toast(`Refined (${meta.scans} scans). Each press makes it match the video more closely.`);
     saveTake(cv).catch(e => toast('Library save failed: ' + e.message, true));
   } catch (e) {
@@ -2294,15 +2295,15 @@ function renderTrim() {
 }
 function setTrim(s, e) { const D = dur(); if (!D) return; trim.s = Math.max(0, Math.min(s, D - 0.1)); trim.e = Math.min(D, Math.max(e, trim.s + 0.1)); if (trim.e >= D - 0.001) trim.e = null; renderTrim(); }
 $('trimBtn').onclick = () => { const bar = $('trimBar'), open = bar.style.display === 'none'; bar.style.display = open ? 'block' : 'none'; if (open) renderTrim(); };
-$('trimSetA').onclick = () => { const [, e] = trimRange(); setTrim(curTime, e); };
-$('trimSetB').onclick = () => { const [s] = trimRange(); setTrim(s, curTime); };
-$('trimReset').onclick = () => { trim = { s: 0, e: null }; renderTrim(); };
+$('trimSetA').onclick = () => { const [, e] = trimRange(); setTrim(curTime, e); recordChange(); };
+$('trimSetB').onclick = () => { const [s] = trimRange(); setTrim(s, curTime); recordChange(); };
+$('trimReset').onclick = () => { trim = { s: 0, e: null }; renderTrim(); recordChange(); };
 { let drag = null;
   const pos = ev => { const r = $('trimTrack').getBoundingClientRect(); return Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * dur(); };
   $('trimTrack').addEventListener('pointerdown', ev => { if (!dur()) return; const t = pos(ev), [s, e] = trimRange(); drag = ev.target.dataset.h || (Math.abs(t - s) < Math.abs(t - e) ? 'a' : 'b'); $('trimTrack').setPointerCapture(ev.pointerId); move(ev); });
   const move = ev => { if (!drag) return; const t = pos(ev), [s, e] = trimRange(); pause(); if (drag === 'a') setTrim(t, e); else setTrim(s, t); curTime = drag === 'a' ? trimRange()[0] : trimRange()[1]; if (vid.src) seekDisplay(curTime); applyAt(curTime); drawOverlay(); updateTimeLabel(); requestRender(); };
   $('trimTrack').addEventListener('pointermove', move);
-  $('trimTrack').addEventListener('pointerup', () => (drag = null)); $('trimTrack').addEventListener('pointercancel', () => (drag = null));
+  $('trimTrack').addEventListener('pointerup', () => { if (drag) recordChange(); drag = null; }); $('trimTrack').addEventListener('pointercancel', () => (drag = null));
 }
 $('bigPlay').onclick = () => play();
 $('pinBtn').onclick = () => { const on = document.body.classList.toggle('pinned'); $('pinBtn').classList.toggle('on', on); $('pinBtn').textContent = on ? '📌 Unpin' : '📌 Pin'; if (on) $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); };
@@ -2346,9 +2347,13 @@ const LIB = {
   all() { return this.run('readonly', s => s.getAll()); }, del(id) { return this.run('readwrite', s => s.delete(id)); },
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
-const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard'];
+const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
 const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; return s; };
-const writeSettings = s => { if (!s) return; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); };
+const writeSettings = s => { if (!s) return; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); };
+const DEFAULT_SETTINGS = readSettings(); // the app's starting settings, used for anything a take never saved
+for (const id of settingIds) $(id).addEventListener('change', () => setTimeout(() => recordChange(), 0));
+$('fingerSeg').addEventListener('click', () => setTimeout(() => recordChange(), 0));
+$('undoAll').onclick = undoLast;
 async function videoBytes() {
   const src = currentSource && currentSource.blob; if (!src || src.size > 250e6) return null;
   return { buf: await src.arrayBuffer(), type: src.type || 'video/mp4' };
@@ -2359,6 +2364,43 @@ async function putTake(take) {
   renderLibrary();
 }
 // saved the moment you tap Generate, then updated when the motion is ready
+// ---------- every change is saved to the open take, with undo ----------
+let history = [], lastSnap = null, quiet = false, autosaveT = null;
+const snap = () => ({ settings: readSettings() });
+function resetHistory() { history = []; lastSnap = snap(); updateUndo(); }
+function updateUndo() { const b = $('undoAll'); if (b) { b.disabled = !history.length || busy; b.title = history.length ? `Undo (${history.length})` : 'Nothing to undo'; } }
+function recordChange(extra) { // call after something changed
+  if (quiet) return;
+  const now = snap();
+  if (lastSnap && JSON.stringify(now.settings) === JSON.stringify(lastSnap.settings) && !extra) return;
+  history.push(extra ? { ...lastSnap, ...extra } : lastSnap); if (history.length > 50) history.shift();
+  lastSnap = now; updateUndo(); autosave();
+}
+function autosave() {
+  clearTimeout(autosaveT);
+  autosaveT = setTimeout(async () => {
+    if (!currentTakeId) return;
+    try {
+      const take = await LIB.get(currentTakeId); if (!take) return;
+      take.settings = readSettings();
+      if (frames && take.frames !== undefined && !take.prompt) { take.frames = frames; take.meta = meta; }
+      await LIB.put(take); flashSaved();
+    } catch (e) { console.warn('autosave failed', e); }
+  }, 500);
+}
+function flashSaved() { const el = $('savedTag'); if (!el) return; el.textContent = '✓ saved'; el.style.opacity = 1; clearTimeout(el._t); el._t = setTimeout(() => (el.style.opacity = 0), 1400); }
+async function undoLast() {
+  if (busy || !history.length) return;
+  const h = history.pop(); quiet = true;
+  try {
+    writeSettings(h.settings);
+    if (h.frames) { frames = h.frames; meta.scans = h.scans; updateRefineLabel(); }
+    if (frames) solve(); else if (lastPrompt && anim) runTextMotion(lastPrompt, currentTakeId);
+    if ($('trimBar').style.display !== 'none') renderTrim(); else drawContacts();
+  } finally { quiet = false; }
+  lastSnap = snap(); updateUndo(); autosave(); toast('Undone.');
+}
+
 async function saveTakeStart() {
   const id = currentTakeId, vb = await videoBytes();
   let thumb = null; try { const c = $('pcv').style.display === 'block' ? $('pcv') : null; const src = c || (vid.videoWidth ? vid : null); if (src) thumb = await makeThumb(src, src.videoWidth || src.width, src.videoHeight || src.height); } catch (e) {}
@@ -2393,15 +2435,17 @@ $('libList').onclick = async e => {
   }
   if (b.dataset.a === 'bvh' || b.dataset.a === 'glb' || b.dataset.a === 'fbx') {
     if (!take.frames && !take.prompt) { toast('This take did not finish processing. Open it and tap Generate motion.', true); return; }
-    writeSettings(take.settings); const a = take.prompt ? S.textToMotion(take.prompt, 30) : takeAnim(take);
+    const mine = readSettings(); quiet = true; writeSettings(take.settings); let a; try { a = take.prompt ? S.textToMotion(take.prompt, 30) : takeAnim(take); } finally { writeSettings(mine); quiet = false; }
     return b.dataset.a === 'bvh' ? exportBVH(a, base) : b.dataset.a === 'fbx' ? exportFBX(a, base) : exportGLB(a, base);
   }
   if (b.dataset.a === 'open') {
-    if (take.prompt) { runTextMotion(take.prompt, take.id); return; }
+    clearTimeout(autosaveT);
+    if (take.prompt) { quiet = true; writeSettings(take.settings); quiet = false; runTextMotion(take.prompt, take.id); resetHistory(); return; }
     const vblob = take.videoBuf ? new Blob([take.videoBuf], { type: take.videoType || 'video/mp4' }) : take.video;
     if (vblob) await loadVideo(vblob, take.videoName || take.name);
     else { pause(); if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = []; }
-    writeSettings(take.settings); currentTakeId = take.id;
+    quiet = true; writeSettings(take.settings); quiet = false; currentTakeId = take.id; resetHistory();
+    if (take.settings && take.settings.trim) { trim = { ...take.settings.trim }; renderTrim(); }
     if (!take.frames) { toast('Video opened. This take was not finished: tap Generate motion.'); return; }
     frames = take.frames; meta = take.meta; videoName = take.name || 'motion'; curTime = 0;
     solve(true); updateRefineLabel(); updateTimeLabel(); $('scrub').max = meta.dur; $('scrub').disabled = false; $('play').disabled = false;
