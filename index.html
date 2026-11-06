@@ -725,6 +725,46 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     return { P, relax, travel, kind };
   }
 
+  // frames where a hand is over (or right next to) the face, padded a little either side
+  function faceCovered(frames, opt, fps) {
+    const W = opt.W || 1280, H = opt.H || 720, n = frames.length, hit = new Array(n).fill(false);
+    for (let k = 0; k < n; k++) {
+      const p = frames[k].pi; if (!p) continue;
+      const px = q => [q[0] * W, q[1] * H], ear = Math.hypot((p[7][0] - p[8][0]) * W, (p[7][1] - p[8][1]) * H), shw = Math.hypot((p[11][0] - p[12][0]) * W, (p[11][1] - p[12][1]) * H);
+      const r = Math.max(ear * 1.1, shw * 0.45, 8), c = [(p[0][0] + (p[7][0] + p[8][0]) / 2) / 2 * W, (p[0][1] + (p[7][1] + p[8][1]) / 2) / 2 * H];
+      const near = q => { const a = px(q); return Math.hypot(a[0] - c[0], a[1] - c[1]) < r; };
+      for (let i = 15; i <= 22 && !hit[k]; i++) if ((p[i][2] ?? 1) >= 0.3 && near(p[i])) hit[k] = true;
+      for (const h of [frames[k].hil, frames[k].hir]) if (h && !hit[k]) { let c2 = 0; for (const q of h) if (near(q)) c2++; if (c2 >= 4) hit[k] = true; }
+    }
+    const pad = Math.max(1, Math.round(fps * 0.1)), out = hit.slice();
+    for (let k = 0; k < n; k++) if (hit[k]) for (let q = k - pad; q <= k + pad; q++) if (q >= 0 && q < n) out[q] = true;
+    return out;
+  }
+  // rebuild the face points (0-10) of covered frames from the frames either side, kept relative to the shoulders
+  function bridgeFace(pw, pi, blocked) {
+    const n = pw.length; pw = pw.map(a => a && a.map(p => p.slice())); pi = pi.map(a => a && a.map(p => p.slice()));
+    const ok = k => k >= 0 && k < n && pw[k] && !blocked[k];
+    const ms = (a, k) => [(a[k][11][0] + a[k][12][0]) / 2, (a[k][11][1] + a[k][12][1]) / 2, (a[k][11][2] ?? 0) / 2 + (a[k][12][2] ?? 0) / 2];
+    for (let k = 0; k < n; k++) {
+      if (!blocked[k] || !pw[k]) continue;
+      let e = k; while (e < n && blocked[e]) e++;
+      let a = k - 1; while (a >= 0 && !ok(a)) a--; let b = e; while (b < n && !ok(b)) b++;
+      const hasA = a >= 0, hasB = b < n;
+      if (hasA || hasB) for (let q = k; q < e; q++) {
+        if (!pw[q]) continue;
+        const u = hasA && hasB ? (q - a) / (b - a) : hasA ? 0 : 1, s = u * u * (3 - 2 * u), mq = ms(pw, q), mqi = pi[q] && ms(pi, q);
+        for (let i = 0; i <= 10; i++) {
+          const off = f => f >= 0 && f < n && pw[f] ? sub(pw[f][i], ms(pw, f)) : null, oA = hasA ? off(a) : off(b), oB = hasB ? off(b) : oA;
+          pw[q][i] = add(mq, lerp(oA, oB, s));
+          if (mqi) { const io = f => [pi[f][i][0] - ms(pi, f)[0], pi[f][i][1] - ms(pi, f)[1]], iA = hasA && pi[a] ? io(a) : hasB && pi[b] ? io(b) : null, iB = hasB && pi[b] ? io(b) : iA;
+            if (iA) pi[q][i] = [mqi[0] + iA[0] + (iB[0] - iA[0]) * s, mqi[1] + iA[1] + (iB[1] - iA[1]) * s, 0.25]; }
+        }
+      }
+      k = e;
+    }
+    return { pw, pi };
+  }
+
   // ---- full pipeline ----
   // frames: [{pw:33x3 raw MP world | null, pi:33x3 [u,v,vis] | null, hl:21x3 | null, hr:21x3 | null}]
   function solveAll(frames, opt) {
@@ -761,6 +801,9 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     // track clean-up: remove one-frame spikes, and bridge short stretches where a hand/foot was hidden (low visibility)
     const mask0 = seenMask(pw, pi); // what the camera really saw, before any bridging
     if (opt.cleanTracks !== false) { const c = cleanTracks(pw, pi, fps); pw = c.pw; pi = c.pi; }
+    // a hand in front of the face confuses the face points; don't let them steer the head or move the body
+    const faceBlocked = opt.faceGuard === false ? pw.map(() => false) : faceCovered(frames, opt, fps);
+    if (faceBlocked.some(Boolean)) { const c = bridgeFace(pw, pi, faceBlocked); pw = c.pw; pi = c.pi; }
     // torso consistency (turns / pivots): shoulders and hips must face the same way. If one half flipped left/right, flip it back.
     if (opt.fixSwaps !== false) {
       const UP = [[11, 12], [13, 14], [15, 16], [17, 18], [19, 20], [21, 22], [7, 8], [1, 4], [2, 5], [3, 6], [9, 10]], LO = [[23, 24], [25, 26], [27, 28], [29, 30], [31, 32]];
@@ -802,7 +845,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const valid = pw.filter(Boolean).length;
     if (!valid) throw new Error('No person was detected in this video.');
     if (!(+opt.fov > 0)) opt = { ...opt, fov: estimateFov(pw, pi, opt.W, opt.H) }; // 'auto'
-    let roots = pw.map((w, k) => (w && pi[k] ? solveRoot(w, pi[k], opt.W, opt.H, opt.fov) : null));
+    let roots = pw.map((w, k) => (w && pi[k] && !faceBlocked[k] ? solveRoot(w, pi[k], opt.W, opt.H, opt.fov) : null)); // covered-face frames: body position bridged from either side
     pw = fillGaps(pw); roots = fillGaps(roots) || pw.map(() => [0, 0, 3]);
     const piF = fillGaps(pi.map(a => a && a.map(p => [p[0] * opt.W, p[1] * opt.H, p[2] ?? 1])));
     const footStill = { Left: new Array(pw.length).fill(false), Right: new Array(pw.length).fill(false) };
