@@ -234,6 +234,29 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
 .modelmenu button{display:block;width:100%;text-align:left;background:none;border:0;padding:9px 8px;border-radius:8px;cursor:pointer;color:inherit;font:inherit}
 .modelmenu button:hover{background:var(--panel)}
 .modelmenu small{display:block;color:var(--dim);padding:2px 8px 6px;word-break:break-all}
+#editModal{height:100dvh}
+#edView{min-height:150px}
+#editModal .etimebar{background:var(--e-panel);border-top:1px solid var(--e-line);padding:8px 10px 6px;display:flex;flex-direction:column;gap:4px;flex:none}
+#editModal .esheet{border-radius:0;margin-top:0;flex:none;max-height:46dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;border-top:1px solid var(--e-line);gap:8px;padding:8px 10px calc(10px + env(safe-area-inset-bottom))}
+#editModal .emodes{grid-template-columns:1fr 1fr}
+#editModal .emodes button{flex-direction:row;justify-content:center;gap:8px;font-size:14px;padding:10px 4px}
+#editModal .esel{color:var(--e-acc);font-weight:700}
+#edMovePanel{display:flex;gap:10px;align-items:flex-start}
+#edPad{display:grid;grid-template-columns:repeat(3,48px);grid-auto-rows:46px;gap:5px;flex:none;touch-action:none}
+#edPad button{background:var(--e-panel2);color:var(--e-text);border:1px solid var(--e-line);border-radius:12px;font-size:18px;cursor:pointer;touch-action:none}
+#edPad button:active{background:var(--e-acc);color:var(--e-acc-text)}
+#edPad button.wide{grid-column:span 1;font-size:12px}
+#edPad .epadc{display:flex;align-items:center;justify-content:center;color:var(--e-dim);font-size:20px}
+#editModal .epadside{flex:1;display:flex;flex-direction:column;gap:8px;min-width:0}
+#editModal .esteps{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+#editModal .esteps button{background:var(--e-panel2);color:var(--e-text);border:1px solid var(--e-line);border-radius:10px;padding:8px 2px;font-size:13px;cursor:pointer}
+#editModal .esteps button.on{border-color:var(--e-acc);color:var(--e-acc);font-weight:700}
+#editModal .eplant{font-size:13px;display:flex;gap:6px;align-items:center}
+#editModal .ehelp{font-size:11.5px;color:var(--e-dim);line-height:1.35}
+#edDialCv{width:132px;height:132px}
+#edDial[hidden],#edLook[hidden]{display:none !important}
+#edSpeed{width:58px !important;min-width:0 !important;flex:none}
+#edPad button.wide{font-size:12px}
 </style>
 <script type="importmap">
 { "imports": {
@@ -1665,12 +1688,12 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <div class="ehead">
     <button class="ebtn acc" id="edDone">✓ Done</button>
     <div class="etitle">Edit motion</div>
-    <button class="ebtn" id="edUndo" title="Undo" disabled>↶</button><button class="ebtn" id="edRedo" title="Redo" disabled>↷</button>
+    <button class="ebtn" id="edUndo" title="Undo" disabled>↶ Undo</button><button class="ebtn" id="edRedo" title="Redo" disabled>↷</button>
     <button class="ebtn" id="edLookBtn" title="Colours, sizes and themes">🎨</button>
   </div>
   <div id="edView">
     <div id="edJoint"></div>
-    <div id="edHint">Tap a dot to pick a joint · drag empty space to look around (even under the floor) · pinch to zoom</div>
+    <div id="edHint">Tap a joint or limb to pick it · drag to look around · pinch to zoom</div>
     <div class="eside"><button class="ebtn round" id="edZoom" title="Zoom in to the joint">🔍</button><button class="ebtn round" id="edFit" title="Whole body">⤢</button></div>
     <div id="edLook" hidden>
       <h4>Editor theme</h4><div id="edThemes"></div>
@@ -1684,27 +1707,41 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       <div class="lrow"><button class="ebtn" id="lkReset" style="flex:1">Reset look</button><button class="ebtn acc" id="lkClose" style="flex:1">Close</button></div>
     </div>
   </div>
+  <div class="etimebar">
+    <div class="etime">
+      <button class="ebtn acc" id="edPlay" title="Play / pause">▶</button>
+      <button class="ebtn" id="edPrev" title="Previous frame (hold to scan)">‹</button>
+      <div class="etl"><canvas id="edKeys"></canvas><input type="range" id="edScrub" min="0" max="1" step="1" value="0"></div>
+      <button class="ebtn" id="edNext" title="Next frame (hold to scan)">›</button>
+      <select id="edSpeed" title="Play speed"><option value="0.25">¼×</option><option value="0.5">½×</option><option value="1" selected>1×</option></select>
+    </div>
+    <div class="emeta"><span id="edTime">frame 1</span><span class="sp"></span><span id="edSel" class="esel">no joint picked</span></div>
+  </div>
   <div class="esheet">
-    <div class="emodes" id="edMode"><button data-m="ik" class="on"><b>🎯</b>Move IK</button><button data-m="bend"><b>🔄</b>Bend</button><button data-m="twist"><b>🌀</b>Twist</button><button data-m="dial"><b>🎛</b>Dial</button></div>
+    <div class="emodes" id="edMode"><button data-m="move" class="on"><b>✥</b>Move (IK)</button><button data-m="rotate"><b>🎛</b>Rotate</button></div>
+    <div id="edMovePanel">
+      <div class="epad" id="edPad">
+        <span></span><button data-d="up" title="Up">▲</button><span></span>
+        <button data-d="left" title="Left">◀</button><span class="epadc">✥</span><button data-d="right" title="Right">▶</button>
+        <span></span><button data-d="down" title="Down">▼</button><span></span>
+        <button data-d="near" class="wide" title="Toward you">Closer</button><button data-d="far" class="wide" title="Away from you">Further</button>
+      </div>
+      <div class="epadside">
+        <div class="esteps" id="edStep"><button data-s="0.01">1 cm</button><button data-s="0.03" class="on">3 cm</button><button data-s="0.1">10 cm</button></div>
+        <label class="eplant"><input type="checkbox" id="edPlant" checked> Feet stay planted</label>
+        <div class="ehelp">Hands &amp; feet: the arm / leg follows. Elbows &amp; knees: hand / foot stays put. Hips: whole body. Hold an arrow to keep moving.</div>
+      </div>
+    </div>
     <div id="edDial" hidden>
       <canvas id="edDialCv" width="300" height="300"></canvas>
       <div class="dside">
         <div id="edAxis"><button data-a="twist" class="on">↻ Twist left / right</button><button data-a="fb">⇅ Forward / back</button><button data-a="side">⇆ Out / in (side)</button></div>
         <div id="edDeg">0°</div>
-        <div class="drow"><button class="ebtn" id="edMinus">−5°</button><button class="ebtn" id="edPlus">+5°</button></div>
-        <div class="drow"><button class="ebtn" id="edDialZoom">🔍 Zoom</button><button class="ebtn" id="edDialReset">Reset</button></div>
+        <div class="drow"><button class="ebtn" id="edMinus">−5°</button><button class="ebtn" id="edPlus">+5°</button><button class="ebtn" id="edDialZoom">🔍</button></div>
       </div>
     </div>
-    <div class="emeta" id="edIkOpt"><label><input type="checkbox" id="edPlant" checked> Keep feet planted when moving the body</label></div>
-    <div class="etime">
-      <button class="ebtn acc" id="edPlay" title="Play / pause">▶</button>
-      <button class="ebtn" id="edPrev" title="Previous frame">‹</button>
-      <div class="etl"><canvas id="edKeys"></canvas><input type="range" id="edScrub" min="0" max="1" step="1" value="0"></div>
-      <button class="ebtn" id="edNext" title="Next frame">›</button>
-      <select id="edSpeed" title="Play speed"><option value="0.25">¼×</option><option value="0.5">½×</option><option value="1" selected>1×</option></select>
-    </div>
-    <div class="emeta"><span id="edTime">frame 1</span><span class="sp"></span><label>Blend <input type="range" id="edSpread" min="0.1" max="2" step="0.1" value="0.5"></label><span id="edSpreadV">0.5s</span></div>
-    <div class="erow2"><button class="ebtn" id="edClearKey" disabled>Remove change here</button><button class="ebtn" id="edClearAll">Clear all</button></div>
+    <div class="erow2"><button class="ebtn" id="edClearKey" disabled>↺ Reset limb here</button><button class="ebtn" id="edClearAll">Clear all</button></div>
+    <div class="emeta"><label>Blend changes over <input type="range" id="edSpread" min="0.1" max="2" step="0.1" value="0.5"></label><span id="edSpreadV">0.5s</span></div>
   </div>
 </div>
 <div class="modal" id="trimModal"><div class="box tbox">
@@ -2489,7 +2526,7 @@ const scene = new THREE.Scene(); scene.background = new THREE.Color(TV('--scene-
 const camera = new THREE.PerspectiveCamera(40, 1, 0.02, 100); camera.position.set(0.6, 1.35, 4.3);
 function requestRender() { needRender = true; }
 const controls = new OrbitControls(camera, renderer.domElement); controls.target.set(0, 0.95, 0);
-Object.assign(controls, { enableDamping: true, dampingFactor: 0.12, rotateSpeed: 0.45, zoomSpeed: 0.6, panSpeed: 0.5, minDistance: 1.2, maxDistance: 12, minPolarAngle: 0.05, maxPolarAngle: Math.PI - 0.05, screenSpacePanning: true });
+Object.assign(controls, { enableDamping: true, dampingFactor: 0.12, rotateSpeed: 0.45, zoomSpeed: 0.6, panSpeed: 0.5, minDistance: 1.2, maxDistance: 12, minPolarAngle: 0.15, maxPolarAngle: Math.PI / 2 - 0.06, screenSpacePanning: true });
 controls.addEventListener('start', () => (userOrbiting = true)); controls.addEventListener('end', () => (userOrbiting = false));
 scene.add(new THREE.HemisphereLight(0xcfe7ff, 0x1a1f2a, 0.9));
 const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(3, 6, 4); key.castShadow = true; const isPhone = matchMedia('(pointer:coarse)').matches; key.shadow.mapSize.set(isPhone ? 1024 : 2048, isPhone ? 1024 : 2048);
@@ -2771,7 +2808,6 @@ function loop(now) {
     applyAt(curTime); drawOverlay(); updateTimeLabel(); needRender = true;
   }
   if (controls.update()) needRender = true;
-  { const o = camera.position.y < 0 ? 0.25 : 1; if (floor.material.opacity !== o) { floor.material.opacity = o; needRender = true; } }
   if (needRender && !document.hidden) { renderer.render(scene, camera); needRender = false; }
   requestAnimationFrame(loop);
 }
@@ -2934,7 +2970,7 @@ function applyEdits(a, E) {
   return { ...a, locals, rootPos };
 }
 
-const ED = { renderer: null, scene: null, camera: null, controls: null, rig: null, dots: [], sel: -1, k: 0, mode: 'ik', axis: 'twist', undo: [], redo: [], playing: false, loopId: 0, drag: null, dial: null, camAnim: null, floor: null, grid: null, hemi: null };
+const ED = { renderer: null, scene: null, camera: null, controls: null, rig: null, dots: [], sel: -1, k: 0, mode: 'move', axis: 'twist', undo: [], redo: [], playing: false, loopId: 0, drag: null, dial: null, camAnim: null, floor: null, grid: null, hemi: null };
 const ED_NAMES = { Hips: 'Hips (whole body)', Spine1: 'Lower back', Spine2: 'Chest', Neck: 'Neck', Head: 'Head', LeftShoulder: 'Left collarbone', LeftArm: 'Left shoulder', LeftForeArm: 'Left elbow', LeftHand: 'Left hand', RightShoulder: 'Right collarbone', RightArm: 'Right shoulder', RightForeArm: 'Right elbow', RightHand: 'Right hand', LeftUpLeg: 'Left hip', LeftLeg: 'Left knee', LeftFoot: 'Left foot', LeftToeBase: 'Left toes', RightUpLeg: 'Right hip', RightLeg: 'Right knee', RightFoot: 'Right foot', RightToeBase: 'Right toes' };
 const ED_THEMES = [['studio', '#38d6c6', '#0e1420'], ['gold', '#e6b422', '#070707'], ['light', '#2f6bff', '#eef1f6'], ['neon', '#ff3ec8', '#0b0614'], ['forest', '#7be07f', '#0b120d']];
 const EV = n => getComputedStyle($('editModal')).getPropertyValue(n).trim() || '#38d6c6';
@@ -2988,9 +3024,9 @@ function initEditor() {
   const d = new THREE.DirectionalLight(0xffffff, 2.0); d.position.set(3, 6, 4); sc.add(d); const d2 = new THREE.DirectionalLight(0xffffff, 0.6); d2.position.set(-3, -2, -4); sc.add(d2);
   ED.floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ roughness: 0.95, side: THREE.DoubleSide, transparent: true })); ED.floor.rotation.x = -Math.PI / 2; sc.add(ED.floor);
   ED.camera = new THREE.PerspectiveCamera(40, 1, 0.02, 100);
-  r.domElement.addEventListener('pointerdown', edDown); // before the camera controls, so a touch on a dot edits instead of turning the view
+  r.domElement.addEventListener('pointerdown', edDown); r.domElement.addEventListener('pointerup', edTapUp); r.domElement.addEventListener('pointercancel', e => { ED_PTR.delete(e.pointerId); edTap = null; });
   ED.controls = new OrbitControls(ED.camera, r.domElement);
-  Object.assign(ED.controls, { enableDamping: true, dampingFactor: 0.12, rotateSpeed: 0.55, zoomSpeed: 0.8, panSpeed: 0.6, minDistance: 0.25, maxDistance: 14, screenSpacePanning: true, minPolarAngle: 0, maxPolarAngle: Math.PI });
+  Object.assign(ED.controls, { enableDamping: true, dampingFactor: 0.12, rotateSpeed: 0.55, zoomSpeed: 0.8, panSpeed: 0.6, minDistance: 0.25, maxDistance: 14, screenSpacePanning: true, minPolarAngle: 0.05, maxPolarAngle: Math.PI / 2 - 0.04 }); // never below the floor
   new ResizeObserver(edResize).observe(view);
 }
 function edApplyTheme(name) {
@@ -3046,11 +3082,12 @@ function edTimeline() {
   g.fillStyle = EV('--e-acc2'); for (const k of mine) g.fillRect(x(k) - 3, 0, 6, 24);
   $('edUndo').disabled = !ED.undo.length; $('edRedo').disabled = !ED.redo.length;
   const nm = edName(); $('edJoint').textContent = nm ? ED_NAMES[nm] || nm : ''; $('edJoint').style.display = nm ? 'block' : 'none';
-  $('edHint').style.opacity = nm && ED.mode !== 'dial' ? 0 : 1;
-  $('edHint').textContent = ED.mode === 'dial' ? (nm ? 'Turn the dial to rotate the ' + (ED_NAMES[nm] || nm).toLowerCase() : 'Tap a dot, then turn the dial') : 'Tap a dot to pick a joint · drag empty space to look around (even under the floor) · pinch to zoom';
+  $('edHint').style.opacity = nm ? 0 : 1;
+  $('edSel').textContent = nm ? (ED_NAMES[nm] || nm) : 'no joint picked';
   document.querySelectorAll('#edMode button').forEach(b => b.classList.toggle('on', b.dataset.m === ED.mode));
   document.querySelectorAll('#edAxis button').forEach(b => b.classList.toggle('on', b.dataset.a === ED.axis));
-  $('edDial').hidden = ED.mode !== 'dial'; $('edIkOpt').style.display = ED.mode === 'ik' ? 'flex' : 'none';
+  $('edDial').hidden = ED.mode !== 'rotate'; $('edMovePanel').style.display = ED.mode === 'move' ? 'flex' : 'none';
+  document.querySelectorAll('#edPad button, #edMinus, #edPlus, #edDialZoom').forEach(b => (b.disabled = !nm));
   $('edClearKey').disabled = !nm; $('edZoom').disabled = !nm; edDrawDial();
 }
 function edRefresh() { anim = applyEdits(baseAnim, EDITS); edPose(); edTimeline(); }
@@ -3068,72 +3105,82 @@ function edKeyChanged(st) { // key every bone this edit moved
 function edSnap() { const b = ED.rig.bones; return { locals: b.map(x => x.quaternion.clone()), root: b[0].position.clone() }; }
 function edRestore(st) { const b = ED.rig.bones; b.forEach((x, i) => x.quaternion.copy(st.locals[i])); b[0].position.copy(st.root); ED.rig.group.updateMatrixWorld(true); }
 
-// ----- touch -----
+// ----- touch: a quick tap on a dot OR on a limb picks it; dragging always turns the camera -----
 function edPick(e) {
   const rc = ED.renderer.domElement.getBoundingClientRect(), px = e.clientX - rc.left, py = e.clientY - rc.top;
-  let best = -1, bd = (matchMedia('(pointer:coarse)').matches ? 30 : 18) * Math.max(1, LOOK.dotSize || 1); const v = V3();
-  ED.camera.updateMatrixWorld();
-  for (const d of ED.dots) { v.copy(d.m.position).project(ED.camera); if (v.z > 1) continue; const sx = (v.x + 1) / 2 * rc.width, sy = (1 - v.y) / 2 * rc.height, dd = Math.hypot(sx - px, sy - py) - (d.j === ED.sel ? 6 : 0); if (dd < bd) { bd = dd; best = d.j; } }
+  ED.camera.updateMatrixWorld(); const v = V3(), S = {};
+  for (const d of ED.dots) { v.copy(d.m.position).project(ED.camera); S[d.j] = v.z > 1 ? null : [(v.x + 1) / 2 * rc.width, (1 - v.y) / 2 * rc.height]; }
+  const coarse = matchMedia('(pointer:coarse)').matches, dotR = (coarse ? 30 : 18) * Math.max(1, LOOK.dotSize || 1);
+  let best = -1, bd = dotR;
+  for (const d of ED.dots) { const s = S[d.j]; if (!s) continue; const dd = Math.hypot(s[0] - px, s[1] - py); if (dd < bd) { bd = dd; best = d.j; } }
+  // the middle of a limb belongs to the joint that moves it (shin -> knee, forearm -> elbow)
+  let seg = -1, bs = coarse ? 26 : 16; const J = anim.rest.joints;
+  for (const d of ED.dots) {
+    let p = J[d.j].parent; while (p >= 0 && !(p in S)) p = J[p].parent; if (p < 0) continue;
+    const a = S[p], b = S[d.j]; if (!a || !b) continue;
+    const ab = [b[0] - a[0], b[1] - a[1]], L2 = ab[0] * ab[0] + ab[1] * ab[1] || 1, u = Math.max(0, Math.min(1, ((px - a[0]) * ab[0] + (py - a[1]) * ab[1]) / L2));
+    const dd = Math.hypot(a[0] + ab[0] * u - px, a[1] + ab[1] * u - py); if (u > 0.2 && u < 0.8 && dd < bs) { bs = dd; seg = p; }
+  }
+  if (seg >= 0 && (best < 0 || bs + 6 < bd)) return seg;
   return best;
 }
-function edRay(e, point) {
-  const rc = ED.renderer.domElement.getBoundingClientRect(), ndc = new THREE.Vector2((e.clientX - rc.left) / rc.width * 2 - 1, -((e.clientY - rc.top) / rc.height) * 2 + 1);
-  const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, ED.camera);
-  const n = V3(); ED.camera.getWorldDirection(n); const out = V3(); return ray.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(n, point), out) ? out : null;
-}
-function edSelect(j) { ED.sel = j; edDots(); edTimeline(); }
-function edDown(e) {
-  if (!anim) return;
-  const hit = edPick(e); if (hit < 0) return; // empty space: camera
-  e.stopImmediatePropagation(); e.preventDefault();
+const ED_PTR = new Map(); let edTap = null;
+function edDown(e) { ED_PTR.set(e.pointerId, 1); edTap = ED_PTR.size === 1 ? { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId } : null; }
+function edTapUp(e) {
+  ED_PTR.delete(e.pointerId); const t = edTap; edTap = null;
+  if (!t || t.id !== e.pointerId || Math.hypot(e.clientX - t.x, e.clientY - t.y) > 9 || performance.now() - t.t > 600 || !anim) return;
+  const hit = edPick(e); if (hit < 0) return;
   if (ED.playing) edStop();
-  if (hit !== ED.sel) edSelect(hit);
-  if (ED.mode === 'dial') return; // dial mode: tapping only picks the joint
-  const j = ED.sel, nm = edName();
-  const st = { ...edSnap(), x: e.clientX, y: e.clientY, j, nm, wq: wquat(j), wp: wpos(j), pushed: false, id: e.pointerId };
-  st.hit0 = edRay(e, st.wp);
-  st.feet = ['Left', 'Right'].map(S => ({ S, p: wpos(edJ(S + 'Foot')), q: wquat(edJ(S + 'Foot')) }));
-  st.ends = {}; for (const nm2 of ['LeftHand', 'RightHand', 'LeftFoot', 'RightFoot', 'Head']) st.ends[nm2] = wquat(edJ(nm2));
-  ED.drag = st; try { ED.renderer.domElement.setPointerCapture(e.pointerId); } catch (er) {}
-  const el = ED.renderer.domElement; el.addEventListener('pointermove', edMove); el.addEventListener('pointerup', edUp); el.addEventListener('pointercancel', edUp);
+  edSelect(hit);
 }
-function edIK(st, e) {
-  const nm = st.nm, j = st.j, T0 = edRay(e, st.wp); if (!T0 || !st.hit0) return;
-  const T = T0.add(st.wp.clone().sub(st.hit0)); // where the joint should go
-  const side = nm.startsWith('Left') ? 'Left' : nm.startsWith('Right') ? 'Right' : '';
-  const base = nm.replace(/^(Left|Right)/, '');
+const ED_DEFAULT_AXIS = nm => /ForeArm|(Left|Right)Leg$/.test(nm) ? 'fb' : /Foot|ToeBase|UpLeg|Arm$|Shoulder/.test(nm) ? 'fb' : 'twist';
+function edSelect(j) {
+  ED.sel = j; ED.dial = null; ED.axis = ED_DEFAULT_AXIS(edName()); // a new joint starts fresh: its own dial, its own axis
+  edDots(); edTimeline();
+}
+function edIKTo(st, T) { // move the picked joint to T with the right kind of IK for that joint
+  const nm = st.nm, j = st.j, side = nm.startsWith('Left') ? 'Left' : nm.startsWith('Right') ? 'Right' : '', base = nm.replace(/^(Left|Right)/, '');
   if (nm === 'Hips' || base === 'UpLeg') { // move the whole body; planted feet stay where they are
     const b = ED.rig.bones, p = st.root.clone().add(T.clone().sub(st.wp)); p.y = Math.max(0.05, p.y); b[0].position.copy(p); ED.rig.group.updateMatrixWorld(true);
-    if ($('edPlant').checked) for (const f of st.feet) if (f.p.y < 0.2) twoBoneIK(edJ(f.S + 'UpLeg'), edJ(f.S + 'Leg'), edJ(f.S + 'Foot'), f.p, f.q);
+    if ($('edPlant').checked) for (const f of st.feet) if (f.p.y < 0.25) twoBoneIK(edJ(f.S + 'UpLeg'), edJ(f.S + 'Leg'), edJ(f.S + 'Foot'), f.p, f.q);
   } else if (base === 'Hand' || base === 'Foot') twoBoneIK(edJ(side + (base === 'Hand' ? 'Arm' : 'UpLeg')), edJ(side + (base === 'Hand' ? 'ForeArm' : 'Leg')), j, T, st.wq);
   else if (base === 'ForeArm') poleMove(edJ(side + 'Arm'), j, edJ(side + 'Hand'), T, st.ends[side + 'Hand']);
   else if (base === 'Leg') poleMove(edJ(side + 'UpLeg'), j, edJ(side + 'Foot'), T, st.ends[side + 'Foot']);
   else if (base === 'Arm') { aimBone(edJ(side + 'Shoulder'), wpos(j), T, 0.6); setWorldQ(edJ(side + 'Hand'), st.ends[side + 'Hand']); }
   else if (base === 'ToeBase') aimBone(edJ(side + 'Foot'), wpos(j), T, 0.8);
-  else { // spine, chest, neck, head, collarbones: bend the spine smoothly to reach
-    const chain = base === 'Shoulder' ? [edJ('Spine2'), edJ('Spine1'), edJ('Spine')].filter(i => i != null) : spineChain(j);
-    ccd(chain, j, T); if (nm !== 'Head' && st.ends.Head) setWorldQ(edJ('Head'), st.ends.Head.clone().slerp(wquat(edJ('Head')), 0.5));
-  }
+  else { const chain = base === 'Shoulder' ? [edJ('Spine2'), edJ('Spine1'), edJ('Spine')].filter(i => i != null) : spineChain(j); ccd(chain, j, T); }
 }
-function edMove(e) {
-  const st = ED.drag; if (!st || e.pointerId !== st.id) return;
-  const dx = e.clientX - st.x, dy = e.clientY - st.y; if (!st.pushed) { if (Math.hypot(dx, dy) < 3) return; edPush(); st.pushed = true; }
-  edRestore(st);
-  if (ED.mode === 'ik') edIK(st, e);
-  else if (ED.mode === 'twist') setWorldQ(st.j, Q4().setFromAxisAngle(edAxisVec(st.j, 'twist'), dx * 0.012).multiply(st.wq));
-  else { const up = new THREE.Vector3(0, 1, 0).applyQuaternion(ED.camera.quaternion), right = new THREE.Vector3(1, 0, 0).applyQuaternion(ED.camera.quaternion);
-    setWorldQ(st.j, Q4().setFromAxisAngle(up, dx * 0.01).premultiply(Q4().setFromAxisAngle(right, dy * 0.01)).multiply(st.wq)); }
-  ED.rig.group.updateMatrixWorld(true); edKeyChanged(st); edDots();
+function edMoveState() {
+  const j = ED.sel; return { ...edSnap(), j, nm: edName(), wq: wquat(j), wp: wpos(j),
+    feet: ['Left', 'Right'].map(S => ({ S, p: wpos(edJ(S + 'Foot')), q: wquat(edJ(S + 'Foot')) })),
+    ends: Object.fromEntries(['LeftHand', 'RightHand', 'LeftFoot', 'RightFoot'].map(n => [n, wquat(edJ(n))])) };
 }
-function edUp() {
-  const el = ED.renderer.domElement; el.removeEventListener('pointermove', edMove); el.removeEventListener('pointerup', edUp); el.removeEventListener('pointercancel', edUp);
-  const st = ED.drag; ED.drag = null; if (st && st.pushed) edRefresh();
+function edDirVec(d) { // arrows are relative to how you're looking at him
+  const f = V3(); ED.camera.getWorldDirection(f); f.y = 0; if (f.lengthSq() < 1e-6) f.set(0, 0, -1); f.normalize();
+  const r = new THREE.Vector3().crossVectors(f, new THREE.Vector3(0, 1, 0)).normalize();
+  return { up: new THREE.Vector3(0, 1, 0), down: new THREE.Vector3(0, -1, 0), left: r.clone().negate(), right: r, near: f.clone().negate(), far: f }[d];
 }
+function edNudge(d, pushed) { // one arrow step
+  if (ED.sel < 0) { toast('Tap a joint or limb first.'); return false; }
+  if (ED.playing) edStop(); if (!pushed) edPush();
+  const st = edMoveState(), T = st.wp.clone().add(edDirVec(d).multiplyScalar(+document.querySelector('#edStep .on').dataset.s));
+  edIKTo(st, T); ED.rig.group.updateMatrixWorld(true); edKeyChanged(st);
+  anim = applyEdits(baseAnim, EDITS); edPose(); edTimeline(); return true;
+}
+// press and hold an arrow to keep moving
+let edHold = null;
+$('edPad').addEventListener('pointerdown', e => {
+  const b = e.target.closest('button[data-d]'); if (!b) return; e.preventDefault();
+  if (!edNudge(b.dataset.d, false)) return;
+  const d = b.dataset.d; clearTimeout(edHold); edHold = setTimeout(function rep() { edNudge(d, true); edHold = setTimeout(rep, 90); }, 380);
+});
+for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) $('edPad').addEventListener(ev, () => { clearTimeout(edHold); edHold = null; });
+$('edStep').onclick = e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#edStep button').forEach(x => x.classList.toggle('on', x === b)); };
 
 // ----- dial -----
 function edDrawDial() {
   const c = $('edDialCv'); if ($('edDial').hidden) return; const g = c.getContext('2d'), W = c.width, R = W / 2 - 16, cx = W / 2, cy = W / 2;
-  g.clearRect(0, 0, W, W); const ang = ED.dial ? ED.dial.total : 0, on = ED.sel >= 0;
+  g.clearRect(0, 0, W, W); const ang = ED.dial && ED.dial.j === ED.sel ? ED.dial.total : 0, on = ED.sel >= 0;
   g.lineWidth = 22; g.strokeStyle = EV('--e-panel2'); g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.stroke();
   g.strokeStyle = EV('--e-line'); g.lineWidth = 2; for (let t = 0; t < 72; t++) { const a = t / 72 * Math.PI * 2, l = t % 6 ? 6 : 14; g.beginPath(); g.moveTo(cx + Math.sin(a) * (R - 11), cy - Math.cos(a) * (R - 11)); g.lineTo(cx + Math.sin(a) * (R - 11 + l), cy - Math.cos(a) * (R - 11 + l)); g.stroke(); }
   if (on && Math.abs(ang) > 1e-3) { g.strokeStyle = EV('--e-acc'); g.lineWidth = 8; g.beginPath(); g.arc(cx, cy, R, -Math.PI / 2, -Math.PI / 2 + ang, ang < 0); g.stroke(); }
@@ -3152,7 +3199,7 @@ function edDialApply() {
 const dialAngle = e => { const r = $('edDialCv').getBoundingClientRect(); return Math.atan2(e.clientX - (r.left + r.width / 2), -(e.clientY - (r.top + r.height / 2))); };
 $('edDialCv').addEventListener('pointerdown', e => {
   e.preventDefault(); if (ED.playing) edStop();
-  if (!ED.dial || ED.dial.j !== ED.sel || ED.dial.axis !== ED.axis || ED.dial.k !== ED.k) { if (!edDialStart()) { toast('Tap a joint dot first.'); return; } ED.dial.k = ED.k; } else edPush();
+  if (!ED.dial || ED.dial.j !== ED.sel || ED.dial.axis !== ED.axis || ED.dial.k !== ED.k) { if (!edDialStart()) { toast('Tap a joint or limb first.'); return; } ED.dial.k = ED.k; } else edPush();
   ED.dial.last = dialAngle(e); try { $('edDialCv').setPointerCapture(e.pointerId); } catch (er) {}
 });
 $('edDialCv').addEventListener('pointermove', e => {
@@ -3161,17 +3208,17 @@ $('edDialCv').addEventListener('pointermove', e => {
 });
 const dialEnd = () => { if (ED.dial && ED.dial.last != null) { ED.dial.last = null; anim = applyEdits(baseAnim, EDITS); edTimeline(); } };
 $('edDialCv').addEventListener('pointerup', dialEnd); $('edDialCv').addEventListener('pointercancel', dialEnd);
-const nudge = deg => { if (ED.sel < 0) { toast('Tap a joint dot first.'); return; } if (!ED.dial || ED.dial.j !== ED.sel || ED.dial.axis !== ED.axis || ED.dial.k !== ED.k) { edDialStart(); ED.dial.k = ED.k; } else edPush(); ED.dial.total += deg * Math.PI / 180; edDialApply(); anim = applyEdits(baseAnim, EDITS); edTimeline(); };
+const nudge = deg => { if (ED.sel < 0) { toast('Tap a joint or limb first.'); return; } if (!ED.dial || ED.dial.j !== ED.sel || ED.dial.axis !== ED.axis || ED.dial.k !== ED.k) { edDialStart(); ED.dial.k = ED.k; } else edPush(); ED.dial.total += deg * Math.PI / 180; edDialApply(); anim = applyEdits(baseAnim, EDITS); edTimeline(); };
 $('edMinus').onclick = () => nudge(-5); $('edPlus').onclick = () => nudge(5);
 $('edAxis').onclick = e => { const b = e.target.closest('button'); if (!b) return; ED.axis = b.dataset.a; ED.dial = null; edTimeline(); };
-$('edDialReset').onclick = () => $('edClearKey').click();
+
 
 // ----- camera -----
 function edCamTo(target, dist) {
   const off = ED.camera.position.clone().sub(ED.controls.target); if (off.lengthSq() < 1e-6) off.set(0, 0.3, 1);
   off.setLength(dist); ED.camAnim = { t0: null, ft: ED.controls.target.clone(), fp: ED.camera.position.clone(), tt: target.clone(), tp: target.clone().add(off) };
 }
-function edZoomJoint() { if (ED.sel < 0) { toast('Tap a joint dot first.'); return; } edCamTo(wpos(ED.sel), /Hand|Foot|Toe|Head|ForeArm/.test(edName()) ? 0.7 : 1.1); }
+function edZoomJoint() { if (ED.sel < 0) { toast('Tap a joint or limb first.'); return; } edCamTo(wpos(ED.sel), /Hand|Foot|Toe|Head|ForeArm/.test(edName()) ? 0.7 : 1.1); }
 function edFit() { const h = wpos(0); edCamTo(new THREE.Vector3(h.x, Math.max(0.7, h.y), h.z), 3.4); }
 $('edZoom').onclick = edZoomJoint; $('edDialZoom').onclick = edZoomJoint; $('edFit').onclick = edFit;
 
@@ -3186,7 +3233,6 @@ function edLoop(id) {
     if (ED.playing && !ED.drag) { const f = Math.max(0, Math.floor(((now - ED.t0) / 1000) * anim.fps * +$('edSpeed').value)); const k = (ED.k0 + f) % anim.n; if (k !== ED.k) { ED.k = k; edPose(); edTimeLabel(); } }
     if (ED.camAnim && ED.camAnim.t0 == null) ED.camAnim.t0 = now;
     if (ED.camAnim) { const a = ED.camAnim, u = Math.max(0, Math.min(1, (now - a.t0) / 450)), s = u * u * (3 - 2 * u); ED.controls.target.lerpVectors(a.ft, a.tt, s); ED.camera.position.lerpVectors(a.fp, a.tp, s); if (u >= 1) ED.camAnim = null; }
-    ED.floor.material.opacity = ED.camera.position.y < 0 ? 0.25 : 1; ED.grid.visible = true;
     ED.controls.update(); ED.renderer.render(ED.scene, ED.camera);
   };
   requestAnimationFrame(tick);
@@ -3220,17 +3266,28 @@ $('edUndo').onclick = () => { if (!ED.undo.length) return; ED.redo.push(JSON.str
 $('edRedo').onclick = () => { if (!ED.redo.length) return; ED.undo.push(JSON.stringify(EDITS)); EDITS = JSON.parse(ED.redo.pop()); ED.dial = null; edRefresh(); };
 $('edMode').onclick = e => { const b = e.target.closest('button'); if (!b) return; ED.mode = b.dataset.m; ED.dial = null; edTimeline(); };
 $('edScrub').addEventListener('input', () => { if (ED.playing) edStop(); edGo(+$('edScrub').value); });
-$('edPrev').onclick = () => { if (ED.playing) edStop(); edGo(ED.k - 1); };
-$('edNext').onclick = () => { if (ED.playing) edStop(); edGo(ED.k + 1); };
+let edScan = null;
+for (const [id, step] of [['edPrev', -1], ['edNext', 1]]) {
+  const b = $(id);
+  b.addEventListener('pointerdown', e => { e.preventDefault(); if (ED.playing) edStop(); edGo(ED.k + step); clearTimeout(edScan); edScan = setTimeout(function rep() { edGo(ED.k + step); edScan = setTimeout(rep, 60); }, 350); });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(ev, () => { clearTimeout(edScan); edScan = null; });
+}
 $('edPlay').onclick = () => (ED.playing ? edStop() : edStart());
 $('edSpeed').onchange = () => { if (ED.playing) edStart(); };
 $('edSpread').addEventListener('input', () => { $('edSpreadV').textContent = (+$('edSpread').value).toFixed(1) + 's'; });
 $('edSpread').addEventListener('change', () => { edPush(); EDITS.spread = +$('edSpread').value; edRefresh(); });
+function edGroup(nm) { // the joints one edit can move together
+  const side = nm.startsWith('Left') ? 'Left' : nm.startsWith('Right') ? 'Right' : '', base = nm.replace(/^(Left|Right)/, '');
+  if (nm === 'Hips' || base === 'UpLeg') return ['Hips', ...['Left', 'Right'].flatMap(S => [S + 'UpLeg', S + 'Leg', S + 'Foot', S + 'ToeBase'])];
+  if (/^(Shoulder|Arm|ForeArm|Hand)$/.test(base)) return [side + 'Shoulder', side + 'Arm', side + 'ForeArm', side + 'Hand'];
+  if (/^(Leg|Foot|ToeBase)$/.test(base)) return [side + 'UpLeg', side + 'Leg', side + 'Foot', side + 'ToeBase'];
+  return ['Spine', 'Spine1', 'Spine2', 'Neck', 'Head', 'LeftShoulder', 'RightShoulder'];
+}
 $('edClearKey').onclick = () => {
-  if (ED.sel < 0) return; edPush();
-  const drop = j => { if (EDITS.keys[j]) { delete EDITS.keys[j][ED.k]; if (!Object.keys(EDITS.keys[j]).length) delete EDITS.keys[j]; } };
-  drop(ED.sel); if (ED.sel === 0) delete EDITS.root[ED.k];
-  ED.dial = null; edRefresh(); toast('Change removed for this joint at this frame.');
+  if (ED.sel < 0) return; const nm = edName(); edPush();
+  for (const n2 of edGroup(nm)) { const j = edJ(n2); if (j == null || !EDITS.keys[j]) continue; delete EDITS.keys[j][ED.k]; if (!Object.keys(EDITS.keys[j]).length) delete EDITS.keys[j]; }
+  if (nm === 'Hips' || /UpLeg$/.test(nm)) delete EDITS.root[ED.k];
+  ED.dial = null; edRefresh(); toast('Reset at this frame. Undo brings it back.');
 };
 let edClearArm = 0;
 $('edClearAll').onclick = () => {
