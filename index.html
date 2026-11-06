@@ -82,10 +82,14 @@ input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
 .take .acts{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
 .take .acts .btn{padding:4px 8px;font-size:12px;min-height:0 !important}
 .trimbar{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:10px 12px;margin:0 10px 10px}
-.trimtrack{position:relative;height:34px;background:var(--panel2);border-radius:8px;touch-action:none;margin:4px 8px 10px}
+.trimtrack{position:relative;height:34px;background:var(--panel);border:1px solid var(--line);border-radius:8px;touch-action:none;margin:4px 8px 10px}
 .trimsel{position:absolute;top:0;bottom:0;background:color-mix(in srgb,var(--accent) 22%,transparent);border-top:2px solid var(--accent);border-bottom:2px solid var(--accent)}
 .trimh{position:absolute;top:-4px;bottom:-4px;width:18px;margin-left:-9px;background:var(--accent);border-radius:5px;cursor:ew-resize;box-shadow:0 2px 8px #000a}
 .trimh::after{content:'';position:absolute;left:7px;top:10px;bottom:10px;width:4px;border-left:2px solid var(--on-accent);border-right:2px solid var(--on-accent);opacity:.6}
+.tbox{width:min(760px,96vw) !important}
+.tview{position:relative;background:#000;border-radius:10px;overflow:hidden;height:min(56vh,480px);height:min(56dvh,480px)}
+.tview video,.tview canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.trimplay{position:absolute;top:-6px;bottom:-6px;width:3px;margin-left:-1.5px;background:#fff;border-radius:2px;z-index:3;pointer-events:none;box-shadow:0 0 6px #000}
 .trimrow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px}
 .trimtxt{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent)}
 #trimBtn.on{border-color:var(--accent);color:var(--accent)}
@@ -1497,6 +1501,14 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <div class="mini" style="margin-top:4px">Tap again for a fresh variation of the same prompt · Enter = create</div>
   <div class="hint">Moves: walk, run, jump, jab, cross, hook, uppercut, kick, roundhouse, squat, wave, dance, spin, stance, idle. Styles change the whole body: boxing / fighter, tired, sneaky, proud, happy, angry, drunk, old. Add numbers ("3 jabs"), speed ("fast", "slowly"), time ("walk for 5 seconds") and chain them with "then" or commas.</div>
 </div></div>
+<div class="modal" id="trimModal"><div class="box tbox">
+  <div style="display:flex;align-items:center;margin-bottom:8px"><b style="font-size:16px">✂️ Trim video</b><span class="mini" style="margin-left:10px;display:inline">pick the part to capture</span><button class="btn small" id="tClose" style="margin-left:auto">✕</button></div>
+  <div class="tview"><video id="tVid" muted playsinline webkit-playsinline preload="auto"></video><canvas id="tCv" style="display:none"></canvas></div>
+  <div class="trimrow" style="margin:8px 0 2px"><button class="btn" id="tPlay" style="min-width:56px">▶</button><span class="trimtxt" id="tNow">0.00s</span><span class="trimtxt" id="tSel" style="margin-left:auto">0.00s – 0.00s</span></div>
+  <div class="trimtrack" id="tTrack" style="height:44px"><div class="trimplay" id="tHead"></div><div class="trimsel" id="tSelBox"></div><div class="trimh" id="tA" data-h="a"></div><div class="trimh" id="tB" data-h="b"></div></div>
+  <div class="trimrow"><button class="btn small" id="tSetA">⇤ Start here</button><span class="mini" style="display:inline;text-align:center">drag the gold handles</span><button class="btn small" id="tSetB">End here ⇥</button></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px"><button class="btn" id="tAll">Use whole video</button><button class="btn primary" id="tUse" style="width:auto">Use this part</button></div>
+</div></div>
 <div class="modal" id="camModal"><div class="box">
   <video id="camVid" muted playsinline autoplay></video>
   <div id="camTimer"></div>
@@ -1796,10 +1808,10 @@ async function loadVideo(file, name) {
     } catch (e) { console.warn('playback frames failed', e); }
   }
   $('vEmpty').style.display = 'none';
-  info.innerHTML = `<span style="color:var(--accent);font-weight:600">✓ Video loaded</span> — ${name} · ${W}×${H} · ${D.toFixed(1)}s` + (converted ? ' · converted' : '') + '<br>✂️ Trim it below if you only want part of it, then tap <b>Generate motion</b>.';
+  info.innerHTML = `<span style="color:var(--accent);font-weight:600">✓ Video loaded</span> — ${name} · ${W}×${H} · ${D.toFixed(1)}s` + (converted ? ' · converted' : '') + '<br>Then tap <b>Generate motion</b> (✂️ on the play bar re-opens the trim window).';
   $('drop').innerHTML = '<b>✓ ' + name.replace(/[<>&]/g, '') + '</b><br>Tap to choose a different video';
-  toast('Video loaded. Trim it if you want, then tap Generate motion.');
-  if (D > 0.5) { $('trimBar').style.display = 'block'; renderTrim(); }
+  
+  if (D > 0.5) setTimeout(openTrimWindow, 300);
   $('go').disabled = false; drawOverlay(); $('bigPlay').style.display = 'block';
   $('scrub').max = D; $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel(); requestRender();
 }
@@ -2438,6 +2450,61 @@ function updateTimeLabel() { $('tlabel').textContent = `${fmt(curTime)} / ${fmt(
 function play() { if (!dur()) return; playing = true; $('play').textContent = '❚❚'; $('bigPlay').style.display = 'none'; vid.playbackRate = +$('speed').value; lastSync = performance.now(); const [s, e] = playRange(); if (curTime >= e - 0.05 || curTime < s) { curTime = s; if (vid.src) vid.currentTime = s; } vid.play().catch(() => {}); }
 function pause() { playing = false; $('play').textContent = '▶'; vid.pause(); vid.playbackRate = +$('speed').value; if (vid.src) { try { vid.currentTime = curTime; } catch (e) {} } if (dur()) $('bigPlay').style.display = 'block'; }
 $('play').onclick = () => (playing ? pause() : play());
+// ---------- trim window (opens on upload, and from ✂️) ----------
+const TM = { s: 0, e: 0, cur: 0, playing: false, raf: 0, last: 0 };
+function tmDur() { return dur() || 0; }
+function tmShow(t) { // show the frame at time t
+  TM.cur = Math.max(0, Math.min(tmDur(), t));
+  if (codecSrc) { const k = Math.round(Math.min(previews.length - 1, Math.max(0, TM.cur * previewFps))); const b = previews[k] || firstPreview; if (b) createImageBitmap(b).then(bmp => { const c = $('tCv'); c.width = bmp.width; c.height = bmp.height; c.getContext('2d').drawImage(bmp, 0, 0); bmp.close?.(); }).catch(() => {}); }
+  else if (!TM.playing) { try { $('tVid').currentTime = TM.cur; } catch (e) {} }
+  tmRender();
+}
+function tmRender() {
+  const D = tmDur() || 1, P = v => (v / D * 100) + '%';
+  $('tA').style.left = P(TM.s); $('tB').style.left = P(TM.e); $('tSelBox').style.left = P(TM.s); $('tSelBox').style.width = ((TM.e - TM.s) / D * 100) + '%'; $('tHead').style.left = P(TM.cur);
+  $('tNow').textContent = TM.cur.toFixed(2) + 's'; $('tSel').textContent = `${TM.s.toFixed(2)}s – ${TM.e.toFixed(2)}s (${(TM.e - TM.s).toFixed(2)}s)`;
+}
+function tmStop() { TM.playing = false; cancelAnimationFrame(TM.raf); $('tVid').pause(); $('tPlay').textContent = '▶'; }
+function tmPlay() {
+  if (TM.cur < TM.s || TM.cur >= TM.e - 0.03) TM.cur = TM.s;
+  TM.playing = true; $('tPlay').textContent = '❚❚'; TM.last = performance.now();
+  if (!codecSrc) { const v = $('tVid'); v.currentTime = TM.cur; v.play().catch(() => {}); }
+  const step = now => {
+    if (!TM.playing) return;
+    if (codecSrc) { TM.cur += (now - TM.last) / 1000; TM.last = now; tmShow(TM.cur); } else { TM.cur = $('tVid').currentTime; tmRender(); }
+    if (TM.cur >= TM.e) { TM.cur = TM.s; if (!codecSrc) $('tVid').currentTime = TM.s; } // loop the chosen part
+    TM.raf = requestAnimationFrame(step);
+  };
+  TM.raf = requestAnimationFrame(step);
+}
+function openTrimWindow() {
+  const D = tmDur(); if (!D) { toast('Load a video first.', true); return; }
+  pause();
+  const [s, e] = trimRange(); TM.s = s; TM.e = e; TM.cur = s;
+  const v = $('tVid'), c = $('tCv');
+  if (codecSrc) { v.style.display = 'none'; c.style.display = 'block'; v.removeAttribute('src'); }
+  else { c.style.display = 'none'; v.style.display = 'block'; if (v.src !== videoURL) { v.src = videoURL; v.load(); } }
+  $('trimModal').style.display = 'grid'; tmShow(s);
+}
+function closeTrimWindow() { tmStop(); $('trimModal').style.display = 'none'; }
+$('tClose').onclick = closeTrimWindow;
+$('tPlay').onclick = () => (TM.playing ? tmStop() : tmPlay());
+$('tSetA').onclick = () => { TM.s = Math.min(TM.cur, TM.e - 0.1); tmRender(); };
+$('tSetB').onclick = () => { TM.e = Math.max(TM.cur, TM.s + 0.1); tmRender(); };
+$('tAll').onclick = () => { trim = { s: 0, e: null }; closeTrimWindow(); renderTrim(); recordChange(); curTime = 0; if (vid.src) seekDisplay(0); applyAt(0); drawOverlay(); updateTimeLabel(); toast('Using the whole video.'); };
+$('tUse').onclick = () => { setTrim(TM.s, TM.e); closeTrimWindow(); recordChange(); const [s] = trimRange(); curTime = s; if (vid.src) seekDisplay(s); applyAt(s); drawOverlay(); updateTimeLabel(); toast(`Using ${TM.s.toFixed(2)}s – ${TM.e.toFixed(2)}s. Tap Generate motion.`); };
+{ let drag = null;
+  const pos = ev => { const r = $('tTrack').getBoundingClientRect(); return Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * tmDur(); };
+  $('tTrack').addEventListener('pointerdown', ev => { const t = pos(ev); drag = ev.target.dataset.h || (Math.abs(t - TM.s) < Math.abs(t - TM.e) ? 'a' : 'b');
+    // tapping the middle of the track just moves the playhead
+    if (!ev.target.dataset.h && t > TM.s + 0.05 && t < TM.e - 0.05 && Math.min(Math.abs(t - TM.s), Math.abs(t - TM.e)) > tmDur() * 0.06) drag = 'p';
+    $('tTrack').setPointerCapture(ev.pointerId); tmStop(); mv(ev); });
+  const mv = ev => { if (!drag) return; const t = pos(ev);
+    if (drag === 'a') { TM.s = Math.min(t, TM.e - 0.1); tmShow(TM.s); } else if (drag === 'b') { TM.e = Math.max(t, TM.s + 0.1); tmShow(TM.e); } else tmShow(t); };
+  $('tTrack').addEventListener('pointermove', mv);
+  $('tTrack').addEventListener('pointerup', () => (drag = null)); $('tTrack').addEventListener('pointercancel', () => (drag = null));
+}
+
 // ---------- trim tool ----------
 function renderTrim() {
   const D = dur() || 1, [s, e] = trimRange();
@@ -2450,7 +2517,7 @@ function renderTrim() {
   drawContacts();
 }
 function setTrim(s, e) { const D = dur(); if (!D) return; trim.s = Math.max(0, Math.min(s, D - 0.1)); trim.e = Math.min(D, Math.max(e, trim.s + 0.1)); if (trim.e >= D - 0.001) trim.e = null; renderTrim(); }
-$('trimBtn').onclick = () => { const bar = $('trimBar'), open = bar.style.display === 'none'; bar.style.display = open ? 'block' : 'none'; if (open) renderTrim(); };
+$('trimBtn').onclick = () => openTrimWindow();
 $('trimSetA').onclick = () => { const [, e] = trimRange(); setTrim(curTime, e); recordChange(); };
 $('trimSetB').onclick = () => { const [s] = trimRange(); setTrim(s, curTime); recordChange(); };
 $('trimReset').onclick = () => { trim = { s: 0, e: null }; renderTrim(); recordChange(); };
