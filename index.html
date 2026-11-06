@@ -1034,7 +1034,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
           }
           l[iF] = twistLimit(swingLimit(l[iF], X, () => 150), X, 80); }
         // wrist
-        l[ix[S + 'Hand']] = twistLimit(swingLimit(l[ix[S + 'Hand']], X, () => 75), X, 40);
+        l[ix[S + 'Hand']] = twistLimit(swingLimit(l[ix[S + 'Hand']], X, d => { const ay = Math.abs(d[1]), az = Math.abs(d[2]), f = az / (ay + az + 1e-9); return (d[1] < 0 ? 65 : 55) * (1 - f) + 25 * f; }), X, 30); // wrist: ~65° toward the palm, ~55° back, ~25° side to side, little twist
         // fingers: curl into the palm freely, only a little sideways or backwards
         for (const F of FINGERS) { const tp = HAND_TEMPLATE[F], fd = [sx * tp.dir[0], tp.dir[1], tp.dir[2]];
           for (let k = 1; k <= 3; k++) { const i = ix[`${S}Hand${F}${k}`]; l[i] = twistLimit(swingLimit(l[i], fd, d => { const b = sub(norm(d), fd); return F === 'Thumb' ? 70 : (b[1] < -0.05 ? 105 : 22); }), fd, F === 'Thumb' ? 35 : 12); } }
@@ -1204,7 +1204,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         if (fm === 'fist' || fm === 'relaxed') fingerCurl(rest, o, S, fm);
         else if (!(opt.hasHand && opt.hasHand[S])) fingerCurl(rest, o, S, 'relaxed'); // no finger data: natural relaxed hand
         if (hm === 'locked') { o[ix[S + 'Hand']] = [0, 0, 0, 1]; o[ix[S + 'ForeArm']] = limitSwingTwist(o[ix[S + 'ForeArm']], X, 25, 160); }
-        else if (hm === 'limited') { o[ix[S + 'Hand']] = limitSwingTwist(o[ix[S + 'Hand']], X, 35, 70); o[ix[S + 'ForeArm']] = limitSwingTwist(o[ix[S + 'ForeArm']], X, 70, 160); }
+        else if (hm === 'limited') { o[ix[S + 'Hand']] = limitSwingTwist(o[ix[S + 'Hand']], X, 30, 65); o[ix[S + 'ForeArm']] = limitSwingTwist(o[ix[S + 'ForeArm']], X, 70, 160); }
         if (opt.ankleLimit !== false) {
           o[ix[S + 'Foot']] = limitSwingTwist(o[ix[S + 'Foot']], FOOTDIR, 15, 50);
           o[ix[S + 'Leg']] = limitSwingTwist(o[ix[S + 'Leg']], [0, -1, 0], 10, 160);
@@ -2199,7 +2199,7 @@ async function loadVideo(file, name, opts = {}) {
   
   if (D > 0.5 && !opts.fromLibrary) setTimeout(openTrimWindow, 300);
   $('go').disabled = false; drawOverlay(); $('bigPlay').style.display = 'block';
-  $('scrub').max = D; $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel(); requestRender();
+  $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel(); requestRender();
 }
 $('drop').onclick = () => $('file').click();
 $('file').onchange = e => { const f = e.target.files[0]; if (f) loadVideo(f, f.name); e.target.value = ''; };
@@ -2442,7 +2442,7 @@ function runTextMotion(txt, existingId, seed) {
   frames = null; meta = { fps: 30, dur: (a.n - 1) / 30, scans: 0 }; if (!existingId) { EDITS = { keys: {}, root: {}, spread: 0.5 }; edSyncLocks(); } baseAnim = a; anim = applyEdits(a, EDITS); videoName = txt.slice(0, 40).replace(/[^\w-]+/g, '_') || 'text_motion'; curTime = 0;
   $('vEmpty').style.display = 'none'; ttmCaption = txt; $('bigPlay').style.display = 'none';
   buildCharacter(a.rest); setReady(true); drawContacts(); applyAt(0); requestRender(); updateRefineLabel();
-  $('scrub').max = meta.dur; $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel();
+  $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel();
   $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); play();
   const sty = a.styles && a.styles.length ? ` (${a.styles.join(', ')} style)` : '';
   if (a.unknown.length) toast(`Made: ${a.plan.join(', ')}${sty}. Skipped: "${a.unknown.join('", "')}"`, false, 7000); else toast(`Made: ${a.plan.join(', ')}${sty}`);
@@ -2683,9 +2683,9 @@ function showStats() {
 function drawContacts() {
   if (!uiReady) return;
   const cv = $('ctl'), r = cv.getBoundingClientRect(); cv.width = Math.max(100, r.width * devicePixelRatio | 0); const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
-  const D = dur(); if (!D) return; const X = tt => (tt / D) * cv.width;
+  const D = dur(); if (!D) return; const [vs, ve] = viewRange(), X = tt => ((tt - vs) / Math.max(1e-6, ve - vs)) * cv.width;
   if (anim) { const t0 = animT0(), w = Math.max(1, X(1 / anim.fps)); anim.contacts.forEach((c, k) => { const x = X(t0 + k / anim.fps); if (c.Left) { ctx.fillStyle = TV('--accent'); ctx.fillRect(x, 0, w, 5); } if (c.Right) { ctx.fillStyle = TV('--accent3'); ctx.fillRect(x, 5, w, 5); } }); }
-  const [s, e] = trimRange(); if (s > 0.001 || e < D - 0.001) { ctx.fillStyle = 'rgba(0,0,0,.7)'; ctx.fillRect(0, 0, X(s), cv.height); ctx.fillRect(X(e), 0, cv.width - X(e), cv.height); }
+  const [s, e] = trimRange(); if (!anim && (s > 0.001 || e < D - 0.001)) { ctx.fillStyle = 'rgba(0,0,0,.7)'; ctx.fillRect(0, 0, X(s), cv.height); ctx.fillRect(X(e), 0, cv.width - X(e), cv.height); }
 }
 
 // ---------- 3D viewer ----------
@@ -2866,7 +2866,9 @@ const playRange = () => { let [s, e] = trimRange(); if (anim) { const t0 = animT
 const animT0 = () => (meta && meta.t0) || 0;
 const dur = () => (codecSrc ? codecSrc.duration : vid.duration && isFinite(vid.duration) ? vid.duration : anim ? (anim.n - 1) / anim.fps : 0);
 uiReady = true;
-function updateTimeLabel() { $('tlabel').textContent = `${fmt(curTime)} / ${fmt(dur())}`; $('scrub').value = curTime; }
+// once a motion exists, the timeline is just that motion (the trimmed part), starting at 0
+const viewRange = () => (anim ? playRange() : [0, dur()]);
+function updateTimeLabel() { const [s, e] = viewRange(), sc = $('scrub'); if (+sc.min !== s) sc.min = s; if (+sc.max !== e) sc.max = e; $('tlabel').textContent = `${fmt(Math.max(0, curTime - s))} / ${fmt(e - s)}`; sc.value = curTime; }
 function play() { if (!dur()) return; playing = true; $('play').textContent = '❚❚'; $('bigPlay').style.display = 'none'; vid.playbackRate = +$('speed').value; lastSync = performance.now(); const [s, e] = playRange(); if (curTime >= e - 0.05 || curTime < s) { curTime = s; if (vid.src) vid.currentTime = s; } vid.play().catch(() => {}); }
 function pause() { playing = false; $('play').textContent = '▶'; vid.pause(); vid.playbackRate = +$('speed').value; if (vid.src) { try { vid.currentTime = curTime; } catch (e) {} } if (dur()) $('bigPlay').style.display = 'block'; }
 $('play').onclick = () => (playing ? pause() : play());
@@ -3103,7 +3105,7 @@ $('libList').onclick = async e => {
     if (take.settings && take.settings.trim) { trim = { ...take.settings.trim }; renderTrim(); }
     if (!take.frames) { toast('Video opened. This take was not finished: tap Generate motion.'); return; }
     frames = take.frames; meta = take.meta; videoName = take.name || 'motion'; curTime = 0;
-    solve(true); updateRefineLabel(); updateTimeLabel(); $('scrub').max = meta.dur; $('scrub').disabled = false; $('play').disabled = false;
+    solve(true); updateRefineLabel(); $('scrub').disabled = false; updateTimeLabel(); $('play').disabled = false;
     $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); toast('Opened from Library.');
     if (b.dataset.a === 'edit') openEditor();
   }
