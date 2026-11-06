@@ -799,6 +799,30 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       }
     }
 
+    // both feet well off the floor while the hips stay at standing height is impossible (he'd fall); it's the AI
+    // losing the legs (folding them up). Those moments get the legs bridged from the good frames around them.
+    if (opt.legSanity !== false && n > 4) {
+      const legsJ = ['Left', 'Right'].flatMap(S => [S + 'UpLeg', S + 'Leg', S + 'Foot', S + 'ToeBase']).map(nm => ix[nm]);
+      const lowW = FL.map((f, k) => [f.Left.low + rootPos[k][1], f.Right.low + rootPos[k][1]]);
+      const floorY = percentile(lowW.map(l => Math.min(l[0], l[1])), 0.15), standY = median(rootPos.map(r => r[1]));
+      const bad = lowW.map((l, k) => Math.min(l[0], l[1]) - floorY > 0.2 && rootPos[k][1] - standY < 0.12);
+      { const pad = Math.max(1, Math.round(fps * 0.07)), b0 = bad.slice(); for (let k = 0; k < n; k++) if (b0[k]) for (let q = k - pad; q <= k + pad; q++) if (q >= 0 && q < n && Math.min(lowW[q][0], lowW[q][1]) - floorY > 0.08 && rootPos[q][1] - standY < 0.12) bad[q] = true; } // include the ramp in/out
+      const maxRun = Math.round(fps * 1.5); let fixedLegs = 0;
+      for (let k = 0; k < n;) {
+        if (!bad[k]) { k++; continue; }
+        let e = k; while (e < n && bad[e]) e++;
+        if (e - k <= maxRun) {
+          const a = k - 1, b = e; // good frames either side
+          for (let q = k; q < e; q++) {
+            const u = a < 0 ? 1 : b >= n ? 0 : (q - a) / (b - a), A = locals[Math.max(0, a)], B = locals[Math.min(n - 1, b)];
+            for (const j of legsJ) locals[q][j] = a < 0 ? B[j].slice() : b >= n ? A[j].slice() : qslerp(A[j], B[j], u);
+          }
+          fixedLegs += e - k;
+        }
+        k = e;
+      }
+      if (fixedLegs) FL = feetLocal();
+    }
     const { C, floor } = contactsFrom(FL, rootPos);
     if (opt.footLock) {
       let c = [0, 0, 0]; const anchor = { Left: null, Right: null };
@@ -875,7 +899,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const pl = []; for (let k = 0; k < n; k++) ['Left', 'Right'].forEach((S, i) => { if (C[k] && C[k][S]) pl.push(lows[k][i]); });
       if (pl.length > Math.max(6, n * 0.1)) { const fl = percentile(pl, 0.3); if (Math.abs(fl) < 0.12) shift = -fl; }
     }
-    const pen = lows.map(l => Math.max(0, -(Math.min(l[0], l[1]) + shift)));
+    const pen = lows.map(l => Math.min(0.1, Math.max(0, -(Math.min(l[0], l[1]) + shift)))); // never more than 10cm: a foot that deep is a bad reading, not a reason to float him
     if (!pen.some(v => v > 1e-4) && !shift) return rootPos;
     const w = Math.max(1, Math.round(fps * 0.1)), lift = pen.map((_, k) => { let m = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) m = Math.max(m, pen[q] * (1 - Math.abs(q - k) / (w + 1))); return m; });
     const sm = lift.map((_, k) => { let s = 0, c = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) { s += lift[q]; c++; } return s / c; });
@@ -1050,22 +1074,23 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         const q = out[k][iF], d = q[0] * sx, t = qnorm([sx * d, 0, 0, q[3]]);
         th.push(2 * Math.atan2(d, q[3])); sw.push(qmul(q, qconj(t)));
       }
-      const u = [th[0]];
+      // each frame's reading is either right or flipped by half a turn. Pick, over the whole clip at once, the choice that makes
+      // the forearm turn the least overall (Viterbi). Real fast turns (a punch's corkscrew) stay; one-off flips go.
+      const FLIP_COST = 0.35, cost = [[0, FLIP_COST]], from = [[0, 0]], val = k => [th[k], wrap(th[k] + Math.PI)];
       for (let k = 1; k < n; k++) {
-        const ref = median(u.slice(Math.max(0, k - 5), k)); // compare with the last few frames, so one bad frame can't drag the rest
-        let d = wrap(th[k] - ref);
-        if (Math.abs(d) > Math.PI / 2) d = wrap(d + Math.PI); // flipped palm reading
-        u.push(ref + d);
+        const c = [0, 0], f = [0, 0], cur = val(k), prv = val(k - 1);
+        for (let s2 = 0; s2 < 2; s2++) { let best = Infinity, bi = 0; for (let s1 = 0; s1 < 2; s1++) { const v = cost[k - 1][s1] + Math.abs(wrap(cur[s2] - prv[s1])); if (v < best) { best = v; bi = s1; } } c[s2] = best + (s2 ? FLIP_COST : 0); f[s2] = bi; }
+        cost.push(c); from.push(f);
       }
-      // flips are the minority: if most raw readings sit half a turn away from this track, the track started on a flipped frame
-      let same = 0, opp = 0; for (let k = 0; k < n; k++) { const d = Math.abs(wrap(th[k] - u[k])); if (d < 0.8) same++; else if (d > Math.PI - 0.8) opp++; }
-      if (opp > same) for (let k = 0; k < n; k++) u[k] += Math.PI;
-      { const c0 = Math.round(median(u) / (2 * Math.PI)) * 2 * Math.PI; for (let k = 0; k < n; k++) u[k] -= c0; } // centre near zero turns
+      const st = new Array(n); st[n - 1] = cost[n - 1][0] <= cost[n - 1][1] ? 0 : 1; for (let k = n - 1; k > 0; k--) st[k - 1] = from[k][st[k]];
+      let flips = 0; for (const x of st) flips += x; if (flips > n / 2) for (let k = 0; k < n; k++) st[k] = 1 - st[k]; // flips are the minority
+      const u = [val(0)[st[0]]]; for (let k = 1; k < n; k++) u.push(u[k - 1] + wrap(val(k)[st[k]] - u[k - 1]));
+      { const c0 = Math.round(median(u) / (2 * Math.PI)) * 2 * Math.PI; for (let k = 0; k < n; k++) u[k] -= c0; }
       // median then weighted smoothing; frames without real hand landmarks count less
-      const w = Math.max(2, Math.round(fps * 0.12)), mf = u.map((_, k) => median(u.slice(Math.max(0, k - 2), k + 3)));
-      const conf = k => (Hs && Hs[k] ? 1 : 0.35);
+      const w = Math.max(1, Math.round(fps * 0.05)), mf = u.map((_, k) => median(u.slice(Math.max(0, k - 1), k + 2)));
+      const conf = k => (Hs && Hs[k] ? 1 : 0.6);
       const sm = mf.map((_, k) => { let a = 0, b = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) { const g = Math.exp(-((q - k) ** 2) / (2 * (w / 2) ** 2)) * conf(q); a += mf[q] * g; b += g; } return a / b; });
-      const c = median(sm), lim = 110 * Math.PI / 180;
+      const c = median(sm), lim = 150 * Math.PI / 180;
       for (let k = 0; k < n; k++) {
         const a = clamp(sm[k], c - lim, c + lim);
         out[k][iF] = qnorm(qmul(sw[k], [sx * Math.sin(a / 2), 0, 0, Math.cos(a / 2)]));
