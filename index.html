@@ -430,7 +430,10 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const f = (Math.max(W, H) / 2) / Math.tan(fovDeg * Math.PI / 360), cx = W / 2, cy = H / 2;
     const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], bv = [0, 0, 0];
     const addRow = (r, b, w) => { for (let i = 0; i < 3; i++) { bv[i] += w * r[i] * b; for (let j = 0; j < 3; j++) A[i][j] += w * r[i] * r[j]; } };
+    let usable = 0; for (let i = 0; i < 33; i++) if ((i < 13 || i > 22) && (img[i][2] ?? 1) >= 0.3) usable++;
+    const skipArms = usable >= 5;
     for (let i = 0; i < 33; i++) {
+      if (skipArms && i >= 13 && i <= 22) continue; // a waving arm must never drag the whole body
       const w = clamp(img[i][2] ?? 1, 0, 1); if (w < 0.3) continue;
       const u = img[i][0] * W - cx, v = img[i][1] * H - cy, [X, Y, Z] = world[i];
       addRow([f, 0, -u], u * Z - f * X, w);
@@ -704,10 +707,16 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       let v = 0;
       if (kind === 'walk' && R && n > 1) { const moved = Math.hypot(R[n - 1][0] - R[0][0], R[n - 1][2] - R[0][2]) / (n / fps); if (moved < 0.35) v = (M.thigh + M.shin) * A * om * 2 / Math.PI; } // the video itself isn't travelling: walk forward
       let tr = [0, 0, 0];
+      // the base of the body (hips) follows the shoulders only slowly: waving an arm lifts / turns the shoulder line a bit, and that
+      // must bend the spine, not swing the whole body. Sitting = steadiest.
+      const hw = Math.max(1, Math.round(fps * ({ sit: 1.0, idle: 0.6, walk: 0.25 }[kind])));
+      const msA = P.map(p => mid(p[11], p[12])), lrA = P.map(p => { const v = sub(p[11], p[12]); return [v[0], 0, v[2]]; });
+      const avg = (A, k) => { let s0 = [0, 0, 0], c = 0; for (let q = k - hw; q <= k + hw; q++) if (q >= 0 && q < n) { s0 = add(s0, A[q]); c++; } return sc(s0, 1 / c); };
+      const msS = msA.map((_, k) => avg(msA, k)), lrS = lrA.map((_, k) => avg(lrA, k));
       for (let k = 0; k < n; k++) {
         const p = P[k]; let lr;
         if (keepHips) lr = lrOf(p[23], p[24]);
-        else { lr = lrOf(p[11], p[12]); const hc = sub(mid(p[11], p[12]), [0, M.torso, 0]); p[23] = add(hc, sc(lr, M.hipW / 2)); p[24] = sub(hc, sc(lr, M.hipW / 2)); }
+        else { lr = lrOf(lrS[k], [0, 0, 0]); const hc = sub(msS[k], [0, M.torso, 0]); p[23] = add(hc, sc(lr, M.hipW / 2)); p[24] = sub(hc, sc(lr, M.hipW / 2)); }
         const fwd = cross(lr, Y);
         for (const [, sx, i] of SIDES) {
           let th, sh;
@@ -722,7 +731,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         if (k) tr = add(tr, sc(fwd, v / fps)); travel[k] = tr;
       }
     }
-    return { P, relax, travel, kind };
+    return { P, relax, travel, kind, steady: kind === 'sit' ? 1.2 : kind === 'idle' ? 0.7 : 0 };
   }
 
   // frames where a hand is over (or right next to) the face, padded a little either side
@@ -902,6 +911,10 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     }
     if (opt.fixSwaps !== false) locals = hipsSpikeFix(locals, fps);
     let rootPos = R.map((r, k) => add(add(r, mid(P[k][23], P[k][24])), off ? off.travel[k] : [0, 0, 0]));
+    if (synthLegs && off && off.steady) { // nobody slides about while sitting / standing still: keep only slow shifts of the body
+      const w = Math.max(1, Math.round(fps * off.steady)), rp = rootPos;
+      rootPos = rp.map((_, k) => { let s0 = [0, 0, 0], c = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) { const wt = 1 - Math.abs(q - k) / (w + 1); s0 = add(s0, sc(rp[q], wt)); c += wt; } return sc(s0, 1 / c); });
+    }
     const ix = rest.index;
     const feetLocal = () => locals.map(l => {
       const { pos, rot } = fk(rest, l);
