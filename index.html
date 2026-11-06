@@ -75,6 +75,10 @@ input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
 .seg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}
 .seg button{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:9px 4px;cursor:pointer;font-size:13px}
 .seg button.on{border-color:var(--accent);color:var(--accent);background:var(--panel2)}
+.legpick{margin-top:10px;padding:10px;border:1px solid var(--accent);border-radius:12px;background:var(--panel2)}
+.legpick .lp-title{font-weight:600;margin-bottom:3px}
+.legpick .seg button{position:relative}
+.legpick .seg button.guess::after{content:'best guess';position:absolute;top:-8px;left:50%;transform:translateX(-50%);font-size:9px;padding:1px 5px;border-radius:6px;background:var(--accent);color:var(--bg,#000);white-space:nowrap}
 .take{display:grid;grid-template-columns:64px 1fr;gap:10px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;margin-bottom:8px}
 .take img,.take .ph{width:64px;height:64px;object-fit:cover;border-radius:8px;background:var(--panel2);display:block}
 .take b{display:block;font-size:13px;word-break:break-word}
@@ -605,6 +609,122 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     return { pos, rot };
   }
 
+  // ---- body parts that are out of the picture ----
+  const smooth01 = x => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
+  // which landmarks were really seen (confident and inside the picture) in each frame
+  function seenMask(pw, pi) { return pi.map((a, k) => a && pw[k] ? a.map(p => (p[2] ?? 1) >= 0.35 && p[0] > -0.01 && p[0] < 1.01 && p[1] > -0.01 && p[1] < 1.01) : null); }
+  // seconds from each frame to the nearest frame where landmark i was really seen (Infinity if never)
+  function distToSeen(mask, i, fps) {
+    const n = mask.length, d = new Array(n).fill(Infinity); let last = -Infinity;
+    for (let k = 0; k < n; k++) { if (mask[k] && mask[k][i]) last = k; d[k] = (k - last) / fps; }
+    last = Infinity; for (let k = n - 1; k >= 0; k--) { if (mask[k] && mask[k][i]) last = k; d[k] = Math.min(d[k], (last - k) / fps); }
+    return d;
+  }
+  // how fast the shoulders bob up and down in the picture (steps per second)
+  function bobRate(ys, fps) {
+    const n = ys.length; if (n < fps * 1.5) return { rate: 0, corr: 0, amp: 0 };
+    const w = Math.max(2, Math.round(fps * 0.5));
+    const d = ys.map((y, k) => { let s = 0, c = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) { s += ys[q]; c++; } return y - s / c; });
+    const v0 = d.reduce((s, x) => s + x * x, 0) / n; if (!(v0 > 1e-12)) return { rate: 0, corr: 0, amp: 0 };
+    const ac = lag => { let s = 0; for (let k = 0; k + lag < n; k++) s += d[k] * d[k + lag]; return s / (n - lag) / v0; };
+    let best = 0, bl = 0;
+    for (let lag = Math.max(2, Math.round(fps / 2.6)); lag <= Math.round(fps / 1.3); lag++) { const c = ac(lag); if (c > best) { best = c; bl = lag; } }
+    if (bl && ac(Math.max(1, Math.round(bl / 2))) > 0) best *= 0.5; // a real rhythm swings negative half-way through
+    return { rate: bl ? fps / bl : 0, corr: best, amp: Math.sqrt(v0) };
+  }
+  // no full body in the video? guess whether the person is walking, sitting or standing
+  function guessLowerBody(frames, o = {}) {
+    const fps = o.fps || 30, pi = frames.map(f => f.pi), pw = frames.map(f => f.pw), mask = seenMask(pw, pi);
+    const ks = []; mask.forEach((m, k) => m && ks.push(k));
+    if (ks.length < 3) return { partial: false };
+    const legs = ks.filter(k => [25, 26, 27, 28].filter(i => mask[k][i]).length >= 3).length / ks.length;
+    if (legs >= 0.5) return { partial: false, legs };
+    const hips = ks.filter(k => mask[k][23] && mask[k][24]).length / ks.length;
+    const P = ks.map(k => pi[k]), shW = Math.max(0.02, median(P.map(p => Math.hypot(p[11][0] - p[12][0], p[11][1] - p[12][1]))));
+    const cx = P.map(p => (p[11][0] + p[12][0]) / 2), cy = P.map(p => (p[11][1] + p[12][1]) / 2), sw = P.map(p => Math.hypot(p[11][0] - p[12][0], p[11][1] - p[12][1]));
+    const m = Math.max(1, Math.round(P.length * 0.15)), first = a => median(a.slice(0, m)), last = a => median(a.slice(-m));
+    const dur = (ks[ks.length - 1] - ks[0]) / fps;
+    const moveX = Math.abs(last(cx) - first(cx)) / shW, scale = last(sw) / Math.max(1e-3, first(sw));
+    let yPrev = cy[0]; const ys = pi.map(p => (yPrev = p ? (p[11][1] + p[12][1]) / 2 : yPrev));
+    const bob = bobRate(ys, fps);
+    const sd = a => { const mu = a.reduce((s, x) => s + x, 0) / a.length; return Math.sqrt(a.reduce((s, x) => s + (x - mu) ** 2, 0) / a.length); };
+    const still = Math.hypot(sd(cx), sd(cy)) < 0.3 * shW;
+    // thighs: flat in the picture = sitting, hanging down = standing
+    let flat = 0, down = 0, seenT = 0;
+    for (const k of ks) for (const [h, kn] of [[23, 25], [24, 26]]) {
+      if (!mask[k][h] || !mask[k][kn]) continue; seenT++;
+      const p = pi[k], torso = Math.abs((p[23][1] + p[24][1]) / 2 - (p[11][1] + p[12][1]) / 2) || shW;
+      const r = (p[kn][1] - p[h][1]) / torso; if (r < 0.35) flat++; else if (r > 0.55) down++;
+    }
+    const fT = seenT ? flat / seenT : 0, dT = seenT ? down / seenT : 0, tW = Math.min(1, seenT / (ks.length * 0.5));
+    const score = {
+      walk: (moveX > 1.5 && dur > 1 ? 2 : 0) + (scale > 1.4 || scale < 0.7 ? 1.5 : 0) + (bob.corr > 0.45 && bob.amp / shW > 0.02 ? 1.5 : 0),
+      sit: (hips < 0.4 ? 1 : 0) + (shW > 0.28 ? 1 : 0) + (o.webcam ? 0.7 : 0) + (still ? 0.4 : 0) + 3 * fT * tW,
+      idle: 0.8 + (hips >= 0.6 ? 1 : 0) + (still ? 0.3 : 0) + 3 * dT * tW,
+    };
+    const kind = Object.keys(score).reduce((a, b) => (score[b] > score[a] ? b : a));
+    const why = { walk: 'you look like you\'re moving along', sit: hips < 0.4 ? 'your hips are out of shot and you\'re close to the camera, so probably sat down' : 'your thighs look level, so probably sat down', idle: 'upper body only and fairly still, so probably standing' }[kind];
+    return { partial: true, kind, why, legs, hips, score };
+  }
+  // replace what the camera never saw: arms out of the picture hang relaxed (or rest on the lap when sitting), and when the
+  // legs aren't in the video they get a chosen walking / sitting / standing pose built around the real upper body
+  function offscreenFill(P, mask, M, opt, fps, ys, R) {
+    const n = P.length, kind = ['walk', 'sit', 'idle'].includes(opt.lowerBody) ? opt.lowerBody : null, Y = [0, 1, 0];
+    P = P.map(a => a.map(p => p.slice()));
+    let lastLr = [1, 0, 0];
+    const lrOf = (a, b) => { const v = sub(a, b), l = Math.hypot(v[0], v[2]); if (l > 1e-4) lastLr = [v[0] / l, 0, v[2] / l]; return lastLr; };
+    let rate = 1.8; if (kind === 'walk') { const b = bobRate(ys, fps); if (b.corr > 0.45 && b.rate > 1.2 && b.rate < 2.8) rate = b.rate; }
+    const om = Math.PI * rate, A = 0.4; // one step = half a gait cycle
+    const legAng = (k, sx) => { const ps = om * k / fps + (sx > 0 ? 0 : Math.PI); return [A * Math.sin(ps), 0.12 + 0.95 * Math.pow(Math.max(0, Math.cos(ps + 0.5)), 1.5)]; };
+    const relax = {};
+    for (const [S, sx, i] of SIDES) {
+      const wE = distToSeen(mask, i.el, fps).map(d => smooth01((d - 0.6) / 0.6)), wW = distToSeen(mask, i.wr, fps).map(d => smooth01((d - 0.6) / 0.6));
+      relax[S] = wW;
+      for (let k = 0; k < n; k++) {
+        if (wE[k] <= 0 && wW[k] <= 0) continue;
+        const p = P[k], lr = lrOf(p[11], p[12]), fwd = cross(lr, Y);
+        const swing = kind === 'walk' ? -0.7 * legAng(k, sx)[0] : 0;
+        const ue = norm(add(add(sc(Y, -Math.cos(swing)), sc(fwd, Math.sin(swing))), sc(lr, sx * 0.12)));
+        const el = lerp(p[i.el], add(p[i.sh], sc(ue, M.upper)), wE[k]);
+        let fd;
+        if (kind === 'sit') fd = norm(add(add(sc(fwd, 0.85), sc(Y, -0.45)), sc(lr, -sx * 0.15)));
+        else { const s2 = swing * 1.2 + 0.15; fd = norm(add(add(sc(Y, -Math.cos(s2)), sc(fwd, Math.sin(s2))), sc(lr, sx * 0.04))); }
+        p[i.el] = el;
+        if (wW[k] <= 0) continue;
+        const wr = lerp(p[i.wr], add(el, sc(fd, M.fore)), wW[k]);
+        const d = norm(sub(wr, el)), sv = norm(perp(kind === 'sit' ? sc(lr, -sx) : fwd, d)), h = M.hand;
+        const want = { [i.ix]: add(add(wr, sc(d, 0.8 * h)), sc(sv, 0.025)), [i.pk]: sub(add(wr, sc(d, 0.75 * h)), sc(sv, 0.025)), [i.wr + 6]: add(add(wr, sc(d, 0.4 * h)), sc(sv, 0.035)) };
+        p[i.wr] = wr;
+        for (const j in want) p[j] = lerp(p[j], want[j], wW[k]);
+      }
+    }
+    const travel = P.map(() => [0, 0, 0]);
+    if (kind) {
+      const keepHips = mask.filter(m => m && m[23] && m[24]).length / Math.max(1, mask.filter(Boolean).length) > 0.6;
+      let v = 0;
+      if (kind === 'walk' && R && n > 1) { const moved = Math.hypot(R[n - 1][0] - R[0][0], R[n - 1][2] - R[0][2]) / (n / fps); if (moved < 0.35) v = (M.thigh + M.shin) * A * om * 2 / Math.PI; } // the video itself isn't travelling: walk forward
+      let tr = [0, 0, 0];
+      for (let k = 0; k < n; k++) {
+        const p = P[k]; let lr;
+        if (keepHips) lr = lrOf(p[23], p[24]);
+        else { lr = lrOf(p[11], p[12]); const hc = sub(mid(p[11], p[12]), [0, M.torso, 0]); p[23] = add(hc, sc(lr, M.hipW / 2)); p[24] = sub(hc, sc(lr, M.hipW / 2)); }
+        const fwd = cross(lr, Y);
+        for (const [, sx, i] of SIDES) {
+          let th, sh;
+          if (kind === 'walk') { const [a, kn] = legAng(k, sx); th = add(sc(Y, -Math.cos(a)), sc(fwd, Math.sin(a))); sh = add(sc(Y, -Math.cos(a - kn)), sc(fwd, Math.sin(a - kn))); }
+          else if (kind === 'sit') { th = norm(add(add(fwd, sc(Y, -0.08)), sc(lr, sx * 0.1))); sh = norm(add(sc(Y, -1), sc(fwd, 0.12))); }
+          else { const b = 0.04 + 0.025 * Math.sin(2 * Math.PI * k / fps / 5 + (sx > 0 ? 0 : Math.PI)); th = norm(add(add(sc(Y, -1), sc(fwd, b)), sc(lr, sx * 0.03))); sh = norm(add(sc(Y, -1), sc(fwd, -b * 0.6))); }
+          const kn = add(p[i.hip], sc(th, M.thigh)), an = add(kn, sc(sh, M.shin));
+          p[i.kn] = kn; p[i.an] = an;
+          p[i.he] = sub(add(an, sc(Y, -M.ankleH)), sc(fwd, 0.02));
+          p[i.to] = add(an, sc(norm(add(add(fwd, sc(lr, sx * 0.12)), sc(Y, -0.4))), M.foot));
+        }
+        if (k) tr = add(tr, sc(fwd, v / fps)); travel[k] = tr;
+      }
+    }
+    return { P, relax, travel, kind };
+  }
+
   // ---- full pipeline ----
   // frames: [{pw:33x3 raw MP world | null, pi:33x3 [u,v,vis] | null, hl:21x3 | null, hr:21x3 | null}]
   function solveAll(frames, opt) {
@@ -639,6 +759,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       }
     }
     // track clean-up: remove one-frame spikes, and bridge short stretches where a hand/foot was hidden (low visibility)
+    const mask0 = seenMask(pw, pi); // what the camera really saw, before any bridging
     if (opt.cleanTracks !== false) { const c = cleanTracks(pw, pi, fps); pw = c.pw; pi = c.pi; }
     // torso consistency (turns / pivots): shoulders and hips must face the same way. If one half flipped left/right, flip it back.
     if (opt.fixSwaps !== false) {
@@ -712,7 +833,16 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
 
     // ---- depth recovery: limbs pointing at / away from the camera look too short; restore true length along the camera axis ----
     if (opt.depthFix !== false) P = recoverDepth(P, dt);
-    const M = measure(pw.map(a => a.map(toY)), hlF && hlF.map(a => a.map(toY)), hrF && hrF.map(a => a.map(toY))), rest = buildRest(M);
+    const M = measure(pw.map(a => a.map(toY)), hlF && hlF.map(a => a.map(toY)), hrF && hrF.map(a => a.map(toY)));
+    const synthLegs = ['walk', 'sit', 'idle'].includes(opt.lowerBody);
+    if (synthLegs) { // legs never seen: normal proportions from the upper body
+      const T = clamp(M.torso, 1.25 * M.shoulderW, 1.75 * M.shoulderW);
+      Object.assign(M, { torso: T, thigh: 0.84 * T, shin: 0.8 * T, foot: 0.3 * T, ankleH: 0.14 * T, hipW: clamp(M.hipW, 0.45 * M.shoulderW, 0.75 * M.shoulderW) });
+    }
+    const off = opt.offscreen === false ? null : offscreenFill(P, mask0, M, opt, fps, piF ? piF.map(p => (p[11][1] + p[12][1]) / 2 / opt.H) : P.map(() => 0), R);
+    if (off) P = off.P;
+    if (synthLegs) for (const S of ['Left', 'Right']) footStill[S] = footStill[S].map(() => opt.lowerBody !== 'walk');
+    const rest = buildRest(M);
     { // calibrate the face's neutral direction: on average the head faces where the chest faces
       const pitches = P.map(p => {
         const ch = rotBetween(basis(BX, BY), basis(sub(p[11], p[12]), sub(mid(p[11], p[12]), mid(p[23], p[24]))));
@@ -721,14 +851,14 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const pm = clamp(median(pitches) || 0, -0.6, 0.35) + (opt.headTilt || 0) * Math.PI / 180;
       rest.headFwd = [0, Math.sin(pm), Math.cos(pm)];
     }
-    let locals = applyLimits(rest, forearmTwistFix(rest, P.map((p, k) => solveFrame(p, HL && HL[k], HR && HR[k], rest)), fps, HL, HR), { ...opt, hasHand: { Left: !!HL, Right: !!HR } });
+    let locals = applyLimits(rest, forearmTwistFix(rest, P.map((p, k) => solveFrame(p, HL && !(off && off.relax.Left[k] > 0.5) ? HL[k] : null, HR && !(off && off.relax.Right[k] > 0.5) ? HR[k] : null, rest)), fps, HL, HR), { ...opt, hasHand: { Left: !!HL, Right: !!HR } });
     // keep quaternion hemispheres continuous
     for (let k = 1; k < n; k++) for (let j = 0; j < locals[k].length; j++) {
       const a = locals[k - 1][j], b = locals[k][j];
       if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0) locals[k][j] = b.map(v => -v);
     }
     if (opt.fixSwaps !== false) locals = hipsSpikeFix(locals, fps);
-    let rootPos = R.map((r, k) => add(r, mid(P[k][23], P[k][24])));
+    let rootPos = R.map((r, k) => add(add(r, mid(P[k][23], P[k][24])), off ? off.travel[k] : [0, 0, 0]));
     const ix = rest.index;
     const feetLocal = () => locals.map(l => {
       const { pos, rot } = fk(rest, l);
@@ -780,7 +910,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     let FL = feetLocal();
     // auto-level the ground plane (removes camera tilt)
     let levelQ = [0, 0, 0, 1];
-    if (opt.autoLevel) {
+    if (opt.autoLevel && !synthLegs) {
       let acc = [0, 0, 0];
       for (let k = 0; k < n; k++) {
         const p = P[k], ms = mid(p[11], p[12]), ma = mid(p[27], p[28]), mh = mid(p[23], p[24]);
@@ -1654,7 +1784,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     return { ...anim, n: i1 - i0 + 1, rootPos: anim.rootPos.slice(i0, i1 + 1), locals: anim.locals.slice(i0, i1 + 1), contacts: anim.contacts.slice(i0, i1 + 1) };
   }
 
-  g.Solver = { sliceAnim, textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, floorFinder, estimateFov, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
+  g.Solver = { guessLowerBody, sliceAnim, textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, floorFinder, estimateFov, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -1704,6 +1834,12 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="mini" style="margin-top:4px">Quick: each press finds the trickiest frames, re-checks them zoomed in (plus a mirrored double-check) and cleans up glitches. Press as many times as you like.</div>
     <div class="progress" id="prog"><i></i></div>
     <div class="status" id="pstat"></div>
+    <div class="legpick" id="legPick" style="display:none">
+      <div class="lp-title">🦵 No full body in this video</div>
+      <div class="mini" id="legPickWhy"></div>
+      <div class="seg" id="legSeg"><button data-v="walk">🚶 Walking</button><button data-v="sit">🪑 Sitting</button><button data-v="idle">🧍 Standing</button></div>
+      <button class="btn small" id="legRaw" style="width:100%">Use the tracked legs anyway</button>
+    </div>
   </section>
 
   <section class="card">
@@ -1722,6 +1858,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <input type="checkbox" id="elbowGuard" checked hidden><input type="checkbox" id="proLimits" checked hidden>
     <div class="row"><label>Wrist rotation</label><select id="handMode"><option value="limited" selected>Natural limits</option><option value="locked">Locked to forearm</option><option value="free">Free (raw)</option></select></div>
     <div class="sub">Body</div>
+    <div class="row"><label>Legs <span class="mini">for videos without the full body</span></label><select id="lowerBody"><option value="ai" selected>Tracked from video</option><option value="walk">Walking</option><option value="sit">Sitting</option><option value="idle">Standing idle</option></select></div>
     <div class="row"><label>Auto-upright <span class="mini">fix tilt</span></label><input type="checkbox" id="autoLevel" checked></div>
     <input type="range" id="headTilt" min="-25" max="25" step="1" value="0" hidden><span id="headTiltV" hidden></span>
     <div class="row"><label>In-place <span class="mini">feet stay on one spot, body keeps moving</span></label><input type="checkbox" id="inPlace"></div>
@@ -2139,7 +2276,7 @@ async function loadVideo(file, name, opts = {}) {
   name = name || file.name || 'video';
   const info = $('vinfo'), cp = $('cprog'), bar = cp.querySelector('i');
   $('go').disabled = true; info.textContent = 'Opening video…';
-  frames = null; anim = null; clearCharacter(); setReady(false); previews = []; firstPreview = null; pvShown = -2;
+  frames = null; anim = null; clearCharacter(); setReady(false); LEG_GUESS = null; legPickUI(); previews = []; firstPreview = null; pvShown = -2;
   let blob = file, url = null, mode = null, csrc = null, converted = false;
   const tryNative = async b => { const u = URL.createObjectURL(b); if (await probeVideo(u)) return u; URL.revokeObjectURL(u); return null; };
   const tryCodec = async b => { info.textContent = 'Decoding video directly…'; try { return await openCodecSource(b, name); } catch (e) { console.warn(e); return null; } };
@@ -2402,7 +2539,9 @@ async function processVideo() {
     const found = out.filter(f => f.pw).length, hf = out.filter(f => f.hl || f.hr).length;
     status(`Tracked ${found}/${N} frames with a person${wantHands ? ` · hands in ${hf}` : ''}. Solving…`);
     bar.style.width = '100%';
+    const lg = legGuess(true);
     solve(true); updateRefineLabel(); resetHistory();
+    if (lg && lg.partial) toast(`No full body in shot, so I gave the legs a ${{ walk: 'walking', sit: 'sitting', idle: 'standing' }[lg.kind]} pose. Change it in step 2.`, false, 7000);
     const bridged = out.filter(f => !f.pw).length;
     if (bridged > N * 0.15) toast(`The person was lost in ${bridged} of ${N} frames, so those were bridged. Try Refine again, or film with the full body in frame.`, true, 9000);
     status(`Done · ${found}/${N} frames tracked${wantHands ? ` · fingers in ${Math.round(100 * hf / N)}%` : ''}. Tweak step 3 or export.`);
@@ -2439,7 +2578,7 @@ function runTextMotion(txt, existingId, seed) {
   lastPrompt = txt; if ($('inPlace').checked) a.rootPos = a.rootPos.map(r => [0, r[1], 0]);
   if ($('ttmModal').style.display !== 'none') { $('ttmModal').style.display = 'none'; unlockPage(); } pause();
   if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; currentSource = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = [];
-  frames = null; meta = { fps: 30, dur: (a.n - 1) / 30, scans: 0 }; if (!existingId) { EDITS = { keys: {}, root: {}, spread: 0.5 }; edSyncLocks(); } baseAnim = a; anim = applyEdits(a, EDITS); videoName = txt.slice(0, 40).replace(/[^\w-]+/g, '_') || 'text_motion'; curTime = 0;
+  frames = null; LEG_GUESS = null; legPickUI(); meta = { fps: 30, dur: (a.n - 1) / 30, scans: 0 }; if (!existingId) { EDITS = { keys: {}, root: {}, spread: 0.5 }; edSyncLocks(); } baseAnim = a; anim = applyEdits(a, EDITS); videoName = txt.slice(0, 40).replace(/[^\w-]+/g, '_') || 'text_motion'; curTime = 0;
   $('vEmpty').style.display = 'none'; ttmCaption = txt; $('bigPlay').style.display = 'none';
   buildCharacter(a.rest); setReady(true); drawContacts(); applyAt(0); requestRender(); updateRefineLabel();
   $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel();
@@ -2635,9 +2774,13 @@ async function choosePerson(cv, status) {
 
 function assignHands(fr, hr, W, H) {
   const wr = { hl: fr.pi[15], hr: fr.pi[16] };
+  // a wrist the body tracker can't really see (out of shot / hidden) never gets a hand: otherwise the one visible hand can be
+  // handed to the made-up position of the other arm
+  const usable = p => p && (p[2] ?? 1) >= 0.3 && p[0] > -0.03 && p[0] < 1.03 && p[1] > -0.03 && p[1] < 1.03;
   const pairs = [];
   hr.landmarks.forEach((lm, k) => {
     for (const side of ['hl', 'hr']) {
+      if (!usable(wr[side])) continue;
       const d = Math.hypot((lm[0].x - wr[side][0]) * W, (lm[0].y - wr[side][1]) * H) / Math.max(W, H);
       pairs.push({ k, side, d });
     }
@@ -2652,9 +2795,28 @@ function assignHands(fr, hr, W, H) {
   }
 }
 
+// ---------- legs for videos without the full body ----------
+let LEG_GUESS = null;
+function legGuess(apply) { // apply = set the Legs setting to the guess (fresh capture)
+  LEG_GUESS = frames ? S.guessLowerBody(frames, { fps: meta ? meta.fps : 30, webcam: /^webcam_take/.test(videoName || '') }) : null;
+  if (apply) $('lowerBody').value = LEG_GUESS && LEG_GUESS.partial ? LEG_GUESS.kind : 'ai';
+  legPickUI(); return LEG_GUESS;
+}
+function legPickUI() {
+  const g = LEG_GUESS, box = $('legPick'), v = $('lowerBody').value;
+  box.style.display = frames && (g && g.partial || v !== 'ai') ? 'block' : 'none';
+  if (box.style.display === 'none') return;
+  $('legPickWhy').textContent = g && g.partial ? `Pick what the legs should do. My guess: ${{ walk: 'walking', sit: 'sitting', idle: 'standing' }[g.kind]} (${g.why}).` : 'Pick what the legs should do.';
+  document.querySelectorAll('#legSeg button').forEach(b => { b.classList.toggle('on', b.dataset.v === v); b.classList.toggle('guess', !!(g && g.partial && g.kind === b.dataset.v)); });
+  $('legRaw').classList.toggle('primary', v === 'ai');
+}
+$('legSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; $('lowerBody').value = b.dataset.v; $('lowerBody').dispatchEvent(new Event('change')); };
+$('legRaw').onclick = () => { $('lowerBody').value = 'ai'; $('lowerBody').dispatchEvent(new Event('change')); };
+$('lowerBody').addEventListener('change', legPickUI);
+
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
+  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, lowerBody: $('lowerBody').value, contactHeight: +$('contact').value, contactSpeed: 0.6 };
 }
 let solveT;
 function solve(rebuild = false) {
@@ -2669,7 +2831,7 @@ function solve(rebuild = false) {
 }
 $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#fingerSeg button').forEach(x => x.classList.toggle('on', x === b)); solve(); };
 for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('change', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 30); }); // update once you let go (no stutter while dragging)
-for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
+for (const id of ['lowerBody', 'footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
 
 function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON', 'editBtn']) $(id).disabled = !on; if (on && !MODEL.obj) setTimeout(() => restoreModel(), 0); else if (on && MODEL.obj) { scene.add(MODEL.prep.wrap); } }
 function showStats() {
@@ -3000,7 +3162,7 @@ const LIB = {
   all() { return this.run('readonly', s => s.getAll()); }, del(id) { return this.run('readwrite', s => s.delete(id)); },
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
-const settingIds = ['smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
+const settingIds = ['lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
 const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; s.edits = JSON.parse(JSON.stringify(EDITS)); return s; };
 const writeSettings = s => { if (!s) return; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); EDITS = s.edits ? JSON.parse(JSON.stringify(s.edits)) : { keys: {}, root: {}, spread: 0.5 }; try { edSyncLocks(); } catch (e) {} };
 const DEFAULT_SETTINGS = readSettings(); // the app's starting settings, used for anything a take never saved
@@ -3105,7 +3267,7 @@ $('libList').onclick = async e => {
     if (take.settings && take.settings.trim) { trim = { ...take.settings.trim }; renderTrim(); }
     if (!take.frames) { toast('Video opened. This take was not finished: tap Generate motion.'); return; }
     frames = take.frames; meta = take.meta; videoName = take.name || 'motion'; curTime = 0;
-    solve(true); updateRefineLabel(); $('scrub').disabled = false; updateTimeLabel(); $('play').disabled = false;
+    legGuess(false); solve(true); updateRefineLabel(); $('scrub').disabled = false; updateTimeLabel(); $('play').disabled = false;
     $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); toast('Opened from Library.');
     if (b.dataset.a === 'edit') openEditor();
   }
