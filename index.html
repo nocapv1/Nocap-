@@ -983,7 +983,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       // 1) upper-arm twist: unwrap, limit, rate-limit, smooth
       const parts = out.map(l => { let q = l[iA]; if (q[3] < 0) q = q.map(v => -v); const p = sc(X, dot([q[0], q[1], q[2]], X)); let tw = [p[0], p[1], p[2], q[3]]; const tl = Math.hypot(...tw); tw = tl > 1e-9 ? tw.map(v => v / tl) : [0, 0, 0, 1]; const ang = 2 * Math.atan2(dot([tw[0], tw[1], tw[2]], X), tw[3]) * 180 / Math.PI; return { sw: qmul(q, qconj(tw)), ang }; });
       let prev = parts[0].ang; const angs = parts.map((p, k) => { let a = p.ang; if (k) { while (a - prev > 180) a -= 360; while (a - prev < -180) a += 360; } prev = a; return a; });
-      for (let k = 0; k < n; k++) angs[k] = clamp(angs[k], -95, 95);
+      for (let k = 0; k < n; k++) angs[k] = clamp(angs[k], -85, 85);
       for (let k = 1; k < n; k++) angs[k] = clamp(angs[k], angs[k - 1] - maxStep, angs[k - 1] + maxStep);
       for (let k = n - 2; k >= 0; k--) angs[k] = clamp(angs[k], angs[k + 1] - maxStep, angs[k + 1] + maxStep);
       const sm = loess(angs, Math.max(1, Math.round(0.05 * fps)));
@@ -993,7 +993,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         const d = qrot(out[k][iF], X);
         let nd = d.slice(); if (nd[2] < 0.02) nd[2] = 0.02 + Math.abs(nd[2]) * 0.3; // never backwards
         const flex = Math.acos(clamp(dot(norm(nd), X), -1, 1)) * 180 / Math.PI;
-        if (flex > 155) { const ax = norm(cross(X, nd)); nd = qrot(axqS(ax, 155), X); }
+        if (flex > 140) { const ax = norm(cross(X, nd)); nd = qrot(axqS(ax, 140), X); } // a real elbow closes to ~140°
         nd = norm(nd); if (len(sub(nd, norm(d))) > 1e-4) out[k][iF] = qnorm(qmul(qFromTo(d, nd), out[k][iF]));
       }
     }
@@ -1025,14 +1025,14 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         // elbow = hinge: line the hinge up by turning the upper arm, then keep the forearm in the hinge plane
         { const iA = ix[S + 'Arm'], iF = ix[S + 'ForeArm']; let d = qrot(l[iF], X);
           if (Math.hypot(d[1], d[2]) > 0.05) { // only when actually bent
-            const need = -sx * Math.atan2(d[1], d[2]) / D2R, curTw = twistOf(l[iA], X), room = clamp(curTw + need, -95, 95) - curTw;
+            const need = -sx * Math.atan2(d[1], d[2]) / D2R, curTw = twistOf(l[iA], X), room = clamp(curTw + need, -85, 85) - curTw;
             if (Math.abs(room) > 0.1) { l[iA] = qnorm(qmul(l[iA], axqS(X, room))); l[iF] = qnorm(qmul(axqS(X, -room), l[iF])); }
             d = qrot(l[iF], X);
-            const maxOut = Math.sin(12 * D2R); // natural carrying angle tolerance
+            const maxOut = Math.sin(10 * D2R); // natural carrying angle tolerance
             let nd = d.slice(); nd[1] = clamp(nd[1], -maxOut, maxOut); if (nd[2] < 0.02) nd[2] = 0.02; nd = norm(nd);
             if (len(sub(nd, d)) > 1e-4) l[iF] = qnorm(qmul(qFromTo(d, nd), l[iF]));
           }
-          l[iF] = twistLimit(swingLimit(l[iF], X, () => 150), X, 80); }
+          l[iF] = twistLimit(swingLimit(l[iF], X, () => 140), X, 80); }
         // wrist
         l[ix[S + 'Hand']] = twistLimit(swingLimit(l[ix[S + 'Hand']], X, d => { const ay = Math.abs(d[1]), az = Math.abs(d[2]), f = az / (ay + az + 1e-9); return (d[1] < 0 ? 65 : 55) * (1 - f) + 25 * f; }), X, 30); // wrist: ~65° toward the palm, ~55° back, ~25° side to side, little twist
         // fingers: curl into the palm freely, only a little sideways or backwards
