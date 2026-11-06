@@ -721,7 +721,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const pm = clamp(median(pitches) || 0, -0.6, 0.35) + (opt.headTilt || 0) * Math.PI / 180;
       rest.headFwd = [0, Math.sin(pm), Math.cos(pm)];
     }
-    let locals = applyLimits(rest, P.map((p, k) => solveFrame(p, HL && HL[k], HR && HR[k], rest)), { ...opt, hasHand: { Left: !!HL, Right: !!HR } });
+    let locals = applyLimits(rest, forearmTwistFix(rest, P.map((p, k) => solveFrame(p, HL && HL[k], HR && HR[k], rest)), fps, HL, HR), { ...opt, hasHand: { Left: !!HL, Right: !!HR } });
     // keep quaternion hemispheres continuous
     for (let k = 1; k < n; k++) for (let j = 0; j < locals[k].length; j++) {
       const a = locals[k - 1][j], b = locals[k][j];
@@ -1036,6 +1036,44 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   const axqS = (ax, deg) => { const h = deg * Math.PI / 360, s = Math.sin(h); return [ax[0] * s, ax[1] * s, ax[2] * s, Math.cos(h)]; };
 
   // whole-body flips: if the hips suddenly tip far over (or spin round) for a moment and then come back, rebuild those frames from the steady ones
+  // ---- forearm twist (palm turning over) ----
+  // The twist is read from the knuckle points, and on a fist or an edge-on hand the AI often mixes them up, so the palm
+  // reads upside-down for a frame and the forearm spins. A real forearm can't turn 90°+ in one frame, so those jumps are
+  // flips and are undone; then the twist is smoothed (it is a slow, steady movement) and kept inside a human range.
+  function forearmTwistFix(rest, locals, fps, HL, HR) {
+    const n = locals.length; if (n < 3) return locals;
+    const out = locals.map(l => l.slice()), wrap = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+    for (const [S, sx, Hs] of [['Left', 1, HL], ['Right', -1, HR]]) {
+      const iF = rest.index[S + 'ForeArm']; if (iF == null) continue;
+      const th = [], sw = [];
+      for (let k = 0; k < n; k++) {
+        const q = out[k][iF], d = q[0] * sx, t = qnorm([sx * d, 0, 0, q[3]]);
+        th.push(2 * Math.atan2(d, q[3])); sw.push(qmul(q, qconj(t)));
+      }
+      const u = [th[0]];
+      for (let k = 1; k < n; k++) {
+        const ref = median(u.slice(Math.max(0, k - 5), k)); // compare with the last few frames, so one bad frame can't drag the rest
+        let d = wrap(th[k] - ref);
+        if (Math.abs(d) > Math.PI / 2) d = wrap(d + Math.PI); // flipped palm reading
+        u.push(ref + d);
+      }
+      // flips are the minority: if most raw readings sit half a turn away from this track, the track started on a flipped frame
+      let same = 0, opp = 0; for (let k = 0; k < n; k++) { const d = Math.abs(wrap(th[k] - u[k])); if (d < 0.8) same++; else if (d > Math.PI - 0.8) opp++; }
+      if (opp > same) for (let k = 0; k < n; k++) u[k] += Math.PI;
+      { const c0 = Math.round(median(u) / (2 * Math.PI)) * 2 * Math.PI; for (let k = 0; k < n; k++) u[k] -= c0; } // centre near zero turns
+      // median then weighted smoothing; frames without real hand landmarks count less
+      const w = Math.max(2, Math.round(fps * 0.12)), mf = u.map((_, k) => median(u.slice(Math.max(0, k - 2), k + 3)));
+      const conf = k => (Hs && Hs[k] ? 1 : 0.35);
+      const sm = mf.map((_, k) => { let a = 0, b = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) { const g = Math.exp(-((q - k) ** 2) / (2 * (w / 2) ** 2)) * conf(q); a += mf[q] * g; b += g; } return a / b; });
+      const c = median(sm), lim = 110 * Math.PI / 180;
+      for (let k = 0; k < n; k++) {
+        const a = clamp(sm[k], c - lim, c + lim);
+        out[k][iF] = qnorm(qmul(sw[k], [sx * Math.sin(a / 2), 0, 0, Math.cos(a / 2)]));
+      }
+    }
+    return out;
+  }
+
   function hipsSpikeFix(locals, fps) {
     const n = locals.length; if (n < 5) return locals;
     const out = locals.map(l => l.slice()), win = Math.max(3, Math.round(0.15 * fps)), maxRun = Math.round(0.6 * fps);
