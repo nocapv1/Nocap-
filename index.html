@@ -452,7 +452,23 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const thSec = add(sc(norm(sc(kb, -1)), kw), sc(norm(perp(fv, th)), 1 - kw));
       G[S + 'UpLeg'] = rotBetween(basis(NY, BZ), basis(th, thSec));
       G[S + 'Leg'] = rotBetween(basis(NY, BZ), basis(sh, fv));
-      G[S + 'Foot'] = rotBetween(basis(FOOTDIR, BY), basis(sub(P[i.to], P[i.an]), sc(sh, -1)));
+      // foot direction: the AI's toe point is noisy (and pulled toward the camera), so read it relative to where the knee points,
+      // with a natural ~8° toe-out, and only trust it within a human range (tibia/foot can't twist far from the knee)
+      const toeV = sub(P[i.to], P[i.an]); let fdir = toeV;
+      {
+        const tl = Math.hypot(toeV[0], toeV[2]); let kf = [thSec[0], 0, thSec[2]]; const kfl = Math.hypot(kf[0], kf[2]);
+        if (kfl > 0.2 && tl > 1e-4) {
+          kf = sc(kf, 1 / kfl);
+          const ov = S === 'Left' ? sub(P[23], P[24]) : sub(P[24], P[23]); let out = [ov[0], 0, ov[2]]; const ol = Math.hypot(out[0], out[2]) || 1; out = sc(out, 1 / ol);
+          let ref = add(kf, sc(out, 0.14)); const rl = Math.hypot(ref[0], ref[2]) || 1; ref = sc(ref, 1 / rl);
+          const t = [toeV[0] / tl, 0, toeV[2] / tl];
+          const ang = Math.atan2(ref[2] * t[0] - ref[0] * t[2], ref[0] * t[0] + ref[2] * t[2]);
+          const a = clamp(ang, -0.44, 0.44) * 0.7, ca = Math.cos(a), sa = Math.sin(a);
+          const nf = [ref[0] * ca + ref[2] * sa, 0, -ref[0] * sa + ref[2] * ca];
+          fdir = [nf[0] * tl, toeV[1], nf[2] * tl];
+        }
+      }
+      G[S + 'Foot'] = rotBetween(basis(FOOTDIR, BY), basis(fdir, sc(sh, -1)));
     }
     const J = rest.joints, glob = new Array(J.length), loc = new Array(J.length);
     for (let j = 0; j < J.length; j++) {
@@ -619,7 +635,9 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
           const sp = len(sub(b, a)) / (dt * Math.max(1, Math.min(n - 1, k + 1) - Math.max(0, k - 1)));
           const h = FL[k][S].low + RP[k][1] - floor;
           // planted if the 3D says so, OR the foot is still in the video picture and not clearly raised (3D height is easily fooled by shiny floors / reflections)
-          C[k][S] = (h < opt.contactHeight && sp < opt.contactSpeed) || (footStill[S][k] && h < opt.contactHeight * 2.2);
+          // hysteresis: easy to stay planted, harder to become planted -> no flicker / popping at the edges of a step
+          const was = k > 0 && C[k - 1][S], hk = was ? 1.3 : 1, vk = 1;
+          C[k][S] = (h < opt.contactHeight * hk && sp < opt.contactSpeed * vk) || (footStill[S][k] && h < opt.contactHeight * 2.2 * hk);
         }
         C.forEach((c, k) => (c['_v' + S] = gp[Math.min(n - 1, k + 1)].map((v, q) => (v - gp[Math.max(0, k - 1)][q]) / (dt * Math.max(1, Math.min(n - 1, k + 1) - Math.max(0, k - 1))))));
         // debounce
@@ -1007,6 +1025,16 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         for (let q = Math.max(0, k - rad); q < Math.min(n, e + rad); q++) if (!anchor[q] || raw[q]) anchor[q] = a;
         k = e;
       }
+      // planted feet keep ONE facing for the whole contact (no spinning / popping while on the floor)
+      const yawOf = k => { const f = qrot(base[k].rot[iF], [0, 0, 1]); return [f[0], f[2]]; };
+      const plantYaw = new Array(n).fill(null);
+      for (let k = 0; k < n;) {
+        if (!raw[k]) { k++; continue; }
+        let e = k, cx = 0, cz = 0; while (e < n && raw[e]) { const [x, z] = yawOf(e), l = Math.hypot(x, z) || 1; cx += x / l; cz += z / l; e++; }
+        const y = Math.atan2(cx, cz);
+        for (let q = Math.max(0, k - rad); q < Math.min(n, e + rad); q++) if (plantYaw[q] === null || raw[q]) plantYaw[q] = y;
+        k = e;
+      }
       if (oneSpot) { // in-place: every planted moment uses the same spot for this foot
         const xs = [], zs = []; for (let k = 0; k < n; k++) if (raw[k]) { xs.push(base[k].pos[iF][0]); zs.push(base[k].pos[iF][2]); }
         if (xs.length) { const a = [median(xs), M.ankleH, median(zs)]; for (let k = 0; k < n; k++) if (anchor[k]) anchor[k] = a; }
@@ -1033,7 +1061,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         if (len(off) < 1e-4 && wk === 0) continue;
         // two-bone IK hip -> knee -> ankle
         const a = len(sub(K, H)), b = len(sub(A, K));
-        let dv = sub(T, H), dRaw = len(dv); const L = a + b, ds = L * 0.985; // soft IK: ease into full reach instead of locking the knee
+        let dv = sub(T, H), dRaw = len(dv); const L = a + b, ds = L * 0.97; // soft IK: ease into full reach instead of locking the knee
         if (dRaw > ds) dRaw = ds + (L * 0.998 - ds) * (1 - Math.exp(-(dRaw - ds) / (L * 0.998 - ds)));
         const d = clamp(dRaw, Math.abs(a - b) + 1e-4, L * 0.998); const dir = norm(dv);
         let pole = perp(sub(K, H), dir);
@@ -1047,7 +1075,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         // foot: keep its world orientation, and lay it flat (yaw only) while planted
         let gF = rot[iF];
         if (wk > 0) {
-          const f = qrot(rot[iF], [0, 0, 1]); const yaw = Math.atan2(f[0], f[2]);
+          const f = qrot(rot[iF], [0, 0, 1]); const yaw = plantYaw[k] !== null ? plantYaw[k] : Math.atan2(f[0], f[2]);
           const flat = [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)];
           gF = qslerp(rot[iF], flat, wk);
         }
@@ -2656,6 +2684,7 @@ async function videoBytes() {
   return { buf: await src.arrayBuffer(), type: src.type || 'video/mp4' };
 }
 async function putTake(take) {
+  take.mod = Date.now();
   try { await LIB.put(take); }
   catch (e) { if (take.videoBuf) { take.videoBuf = null; await LIB.put(take); toast('Saved to Library (the video was too big to keep, motion saved).'); } else throw e; }
   renderLibrary();
@@ -2679,9 +2708,12 @@ function autosave() {
     if (!currentTakeId) return;
     try {
       const take = await LIB.get(currentTakeId); if (!take) return;
-      take.settings = readSettings();
+      const ns = readSettings(), before = JSON.stringify(take.settings || null) + '|' + ((take.meta && take.meta.scans) || 0) + '|' + ((take.frames && take.frames.length) || 0);
+      take.settings = ns;
       if (frames && take.frames !== undefined && !take.prompt) { take.frames = frames; take.meta = meta; }
-      await LIB.put(take); flashSaved();
+      const after = JSON.stringify(ns) + '|' + ((take.meta && take.meta.scans) || 0) + '|' + ((take.frames && take.frames.length) || 0);
+      const changed = before !== after; if (changed) take.mod = Date.now(); // edited takes move to the top of the Library
+      await LIB.put(take); flashSaved(); if (changed) renderLibrary();
     } catch (e) { console.warn('autosave failed', e); }
   }, 500);
 }
@@ -2714,10 +2746,10 @@ async function saveTake(cv) {
 }
 function takeAnim(take) { const s = take.settings || {}; const o = { ...opts(), fps: take.meta.fps, W: take.meta.W, H: take.meta.H }; return S.solveAll(take.frames, o); }
 async function renderLibrary() {
-  let takes = []; try { takes = (await LIB.all()).sort((a, b) => b.id - a.id); } catch (e) { $('libList').innerHTML = '<div class="hint">Library is not available in this browser mode.</div>'; return; }
+  let takes = []; try { takes = (await LIB.all()).sort((a, b) => (+b.mod || +b.id || 0) - (+a.mod || +a.id || 0)); /* most recent first */ } catch (e) { $('libList').innerHTML = '<div class="hint">Library is not available in this browser mode.</div>'; return; }
   $('libCount').textContent = takes.length ? `${takes.length} saved` : '';
   if (!takes.length) { $('libList').innerHTML = '<div class="hint">Nothing saved yet. Generate a motion and it appears here.</div>'; return; }
-  $('libList').innerHTML = takes.map(k => `<div class="take" data-id="${k.id}">${k.thumb ? `<img alt="" data-thumb="${k.id}">` : '<div class="ph"></div>'}<div><b>${(k.name || 'motion').replace(/[<>&]/g, '')}</b><small>${new Date(k.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} · ${(+k.dur || 0).toFixed(1)}s${k.prompt ? ' · ✍️ text' : (k.videoBuf || k.video) ? '' : ' · motion only'}${k.status === 'processing' ? ' · <span style="color:var(--warn)">not finished</span>' : ''}</small>
+  $('libList').innerHTML = takes.map(k => `<div class="take" data-id="${k.id}">${k.thumb ? `<img alt="" data-thumb="${k.id}">` : '<div class="ph"></div>'}<div><b>${(k.name || 'motion').replace(/[<>&]/g, '')}</b><small>${new Date(k.mod || k.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} · ${(+k.dur || 0).toFixed(1)}s${k.prompt ? ' · ✍️ text' : (k.videoBuf || k.video) ? '' : ' · motion only'}${k.status === 'processing' ? ' · <span style="color:var(--warn)">not finished</span>' : ''}</small>
     <div class="acts"><button class="btn" data-a="open">▶ Open</button><button class="btn" data-a="fbx">FBX</button><button class="btn" data-a="bvh">BVH</button><button class="btn" data-a="glb">GLB</button><button class="btn" data-a="del" title="Delete">🗑</button></div></div></div>`).join('');
   for (const k of takes) if (k.thumb) { const img = $('libList').querySelector(`[data-thumb="${k.id}"]`); if (img) { img.src = URL.createObjectURL(k.thumb); img.onload = () => URL.revokeObjectURL(img.src); } }
 }
