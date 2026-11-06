@@ -257,6 +257,9 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
 #edDial[hidden],#edLook[hidden]{display:none !important}
 #edSpeed{width:58px !important;min-width:0 !important;flex:none}
 #edPad button.wide{font-size:12px}
+#editModal .elocks{display:flex;gap:8px}
+#editModal .elocks label{flex:1;display:flex;align-items:center;gap:7px;background:var(--e-panel2);border:1px solid var(--e-line);border-radius:12px;padding:9px 10px;font-size:13px;line-height:1.2}
+#editModal .elocks input{width:20px;height:20px;accent-color:var(--e-acc);flex:none}
 </style>
 <script type="importmap">
 { "imports": {
@@ -1718,6 +1721,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="emeta"><span id="edTime">frame 1</span><span class="sp"></span><span id="edSel" class="esel">no joint picked</span></div>
   </div>
   <div class="esheet">
+    <div class="elocks"><label><input type="checkbox" id="edLockFeet" checked> 🔒 Lock feet</label><label><input type="checkbox" id="edLockRot"> 🔒 Lock hand &amp; head rotation</label></div>
     <div class="emodes" id="edMode"><button data-m="move" class="on"><b>✥</b>Move (IK)</button><button data-m="rotate"><b>🎛</b>Rotate</button></div>
     <div id="edMovePanel">
       <div class="epad" id="edPad">
@@ -1728,8 +1732,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       </div>
       <div class="epadside">
         <div class="esteps" id="edStep"><button data-s="0.01">1 cm</button><button data-s="0.03" class="on">3 cm</button><button data-s="0.1">10 cm</button></div>
-        <label class="eplant"><input type="checkbox" id="edPlant" checked> Feet stay planted</label>
-        <div class="ehelp">Hands &amp; feet: the arm / leg follows. Elbows &amp; knees: hand / foot stays put. Hips: whole body. Hold an arrow to keep moving.</div>
+        <div class="ehelp">Hands &amp; feet: the arm / leg follows. Elbows &amp; knees: hand / foot stays put. Hips: whole body. Hold an arrow to keep moving. Locks keep the original animation and only hold feet / hands still against your changes.</div>
       </div>
     </div>
     <div id="edDial" hidden>
@@ -2958,16 +2961,54 @@ function applyEdits(a, E) {
     }
   };
   const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), qd = new THREE.Quaternion(), ql = new THREE.Quaternion();
+  const affected = new Array(n).fill(false), own = Array.from({ length: n }, () => new Set());
   for (const js of Object.keys(E.keys || {})) {
     const j = +js; if (!(j >= 0 && j < a.rest.joints.length)) continue;
     curve(E.keys[js], (k, A, B, u) => {
       A ? qa.set(A[0], A[1], A[2], A[3]) : qa.identity(); B ? qb.set(B[0], B[1], B[2], B[3]) : qb.identity();
-      qd.slerpQuaternions(qa, qb, u); const L = locals[k][j]; ql.set(L[0], L[1], L[2], L[3]).premultiply(qd).normalize();
+      qd.slerpQuaternions(qa, qb, u); if (Math.abs(qd.w) > 0.999999) return;
+      affected[k] = true; own[k].add(j);
+      const L = locals[k][j]; ql.set(L[0], L[1], L[2], L[3]).premultiply(qd).normalize();
       locals[k][j] = [ql.x, ql.y, ql.z, ql.w];
     });
   }
-  curve(E.root || {}, (k, A, B, u) => { const a0 = A || [0, 0, 0], b0 = B || [0, 0, 0]; for (let c = 0; c < 3; c++) rootPos[k][c] += a0[c] + (b0[c] - a0[c]) * u; });
+  curve(E.root || {}, (k, A, B, u) => { const a0 = A || [0, 0, 0], b0 = B || [0, 0, 0]; let m = 0; for (let c = 0; c < 3; c++) { const d = a0[c] + (b0[c] - a0[c]) * u; rootPos[k][c] += d; m += Math.abs(d); } if (m > 1e-6) affected[k] = true; });
+  lockPass(a, locals, rootPos, E, affected, own);
   return { ...a, locals, rootPos };
+}
+// 🔒 locks: on every frame an edit touches, feet stay exactly where the original animation had them, and/or
+// hands + head keep their original facing. Joints you edited yourself are left alone.
+function lockPass(a, locals, rootPos, E, affected, own) {
+  const lockFeet = E.lockFeet !== false, lockRot = !!E.lockRot; if (!lockFeet && !lockRot) return;
+  const rest = a.rest, ix = rest.index, J = rest.joints, Q = v => new THREE.Quaternion(v[0], v[1], v[2], v[3]), V = v => new THREE.Vector3(v[0], v[1], v[2]);
+  const toArr = q => [q.x, q.y, q.z, q.w];
+  for (let k = 0; k < a.n; k++) {
+    if (!affected[k]) continue;
+    const base = S.fk(rest, a.locals[k], a.rootPos[k]); let cur = S.fk(rest, locals[k], rootPos[k]);
+    if (lockFeet) for (const Sd of ['Left', 'Right']) {
+      const iU = ix[Sd + 'UpLeg'], iL = ix[Sd + 'Leg'], iF = ix[Sd + 'Foot'], iT = ix[Sd + 'ToeBase'];
+      if ([iU, iL, iF, iT].some(j => own[k].has(j))) continue; // you moved this leg yourself
+      const H = V(cur.pos[iU]), K = V(cur.pos[iL]), A = V(cur.pos[iF]), T = V(base.pos[iF]);
+      const la = H.distanceTo(K), lb = K.distanceTo(A), dir = T.clone().sub(H), d = THREE.MathUtils.clamp(dir.length(), Math.abs(la - lb) + 1e-4, (la + lb) * 0.999); dir.normalize();
+      let pole = K.clone().sub(H); pole.sub(dir.clone().multiplyScalar(pole.dot(dir))); if (pole.lengthSq() < 1e-10) pole = new THREE.Vector3(0, 0, 1); pole.normalize();
+      const x = (la * la - lb * lb + d * d) / (2 * d), h = Math.sqrt(Math.max(0, la * la - x * x));
+      const K2 = H.clone().add(dir.clone().multiplyScalar(x)).add(pole.multiplyScalar(h)), A2 = H.clone().add(dir.clone().multiplyScalar(d));
+      const rU = new THREE.Quaternion().setFromUnitVectors(K.clone().sub(H).normalize(), K2.clone().sub(H).normalize());
+      const gU = rU.clone().multiply(Q(cur.rot[iU])), shin = A.clone().sub(K).applyQuaternion(rU);
+      const gL = new THREE.Quaternion().setFromUnitVectors(shin.normalize(), A2.clone().sub(K2).normalize()).multiply(rU.clone().multiply(Q(cur.rot[iL])));
+      const pU = J[iU].parent;
+      locals[k][iU] = toArr(Q(cur.rot[pU]).invert().multiply(gU).normalize());
+      locals[k][iL] = toArr(gU.clone().invert().multiply(gL).normalize());
+      locals[k][iF] = toArr(gL.clone().invert().multiply(Q(base.rot[iF])).normalize()); // and the foot keeps its original angle
+    }
+    if (lockRot) {
+      cur = S.fk(rest, locals[k], rootPos[k]);
+      for (const nm of ['LeftHand', 'RightHand', 'Head', ...(lockFeet ? [] : ['LeftFoot', 'RightFoot'])]) {
+        const j = ix[nm]; if (j == null || own[k].has(j)) continue;
+        locals[k][j] = toArr(Q(cur.rot[J[j].parent]).invert().multiply(Q(base.rot[j])).normalize());
+      }
+    }
+  }
 }
 
 const ED = { renderer: null, scene: null, camera: null, controls: null, rig: null, dots: [], sel: -1, k: 0, mode: 'move', axis: 'twist', undo: [], redo: [], playing: false, loopId: 0, drag: null, dial: null, camAnim: null, floor: null, grid: null, hemi: null };
@@ -3091,7 +3132,7 @@ function edTimeline() {
   $('edClearKey').disabled = !nm; $('edZoom').disabled = !nm; edDrawDial();
 }
 function edRefresh() { anim = applyEdits(baseAnim, EDITS); edPose(); edTimeline(); }
-function edPush() { ED.undo.push(JSON.stringify(EDITS)); if (ED.undo.length > 100) ED.undo.shift(); ED.redo = []; }
+function edPush() { ED.undo.push({ e: JSON.stringify(EDITS), k: ED.k, sel: ED.sel }); if (ED.undo.length > 100) ED.undo.shift(); ED.redo = []; }
 const r4 = v => Math.round(v * 1e4) / 1e4;
 function edSetKey(j, k, local) { // stored as an offset from the AI's own pose, so it blends smoothly over nearby frames
   const b = baseAnim.locals[k][j], d = local.clone().multiply(new THREE.Quaternion(b[0], b[1], b[2], b[3]).invert()).normalize();
@@ -3142,7 +3183,6 @@ function edIKTo(st, T) { // move the picked joint to T with the right kind of IK
   const nm = st.nm, j = st.j, side = nm.startsWith('Left') ? 'Left' : nm.startsWith('Right') ? 'Right' : '', base = nm.replace(/^(Left|Right)/, '');
   if (nm === 'Hips' || base === 'UpLeg') { // move the whole body; planted feet stay where they are
     const b = ED.rig.bones, p = st.root.clone().add(T.clone().sub(st.wp)); p.y = Math.max(0.05, p.y); b[0].position.copy(p); ED.rig.group.updateMatrixWorld(true);
-    if ($('edPlant').checked) for (const f of st.feet) if (f.p.y < 0.25) twoBoneIK(edJ(f.S + 'UpLeg'), edJ(f.S + 'Leg'), edJ(f.S + 'Foot'), f.p, f.q);
   } else if (base === 'Hand' || base === 'Foot') twoBoneIK(edJ(side + (base === 'Hand' ? 'Arm' : 'UpLeg')), edJ(side + (base === 'Hand' ? 'ForeArm' : 'Leg')), j, T, st.wq);
   else if (base === 'ForeArm') poleMove(edJ(side + 'Arm'), j, edJ(side + 'Hand'), T, st.ends[side + 'Hand']);
   else if (base === 'Leg') poleMove(edJ(side + 'UpLeg'), j, edJ(side + 'Foot'), T, st.ends[side + 'Foot']);
@@ -3194,7 +3234,7 @@ function edDialStart() { if (ED.sel < 0) return false; edPush(); ED.dial = { ...
 function edDialApply() {
   const d = ED.dial; if (!d) return; edRestore(d);
   setWorldQ(d.j, Q4().setFromAxisAngle(edAxisVec(d.j, d.axis), d.total).multiply(d.wq));
-  edKeyChanged(d); edDots(); edDrawDial();
+  edKeyChanged(d); anim = applyEdits(baseAnim, EDITS); edPose(); edDrawDial(); // shows the locks live too
 }
 const dialAngle = e => { const r = $('edDialCv').getBoundingClientRect(); return Math.atan2(e.clientX - (r.left + r.width / 2), -(e.clientY - (r.top + r.height / 2))); };
 $('edDialCv').addEventListener('pointerdown', e => {
@@ -3206,7 +3246,7 @@ $('edDialCv').addEventListener('pointermove', e => {
   const d = ED.dial; if (!d || d.last == null) return; const a = dialAngle(e); let da = a - d.last; if (da > Math.PI) da -= 2 * Math.PI; if (da < -Math.PI) da += 2 * Math.PI;
   d.last = a; d.total += da; edDialApply();
 });
-const dialEnd = () => { if (ED.dial && ED.dial.last != null) { ED.dial.last = null; anim = applyEdits(baseAnim, EDITS); edTimeline(); } };
+const dialEnd = () => { if (ED.dial && ED.dial.last != null) { ED.dial.last = null; anim = applyEdits(baseAnim, EDITS); edPose(); edTimeline(); } };
 $('edDialCv').addEventListener('pointerup', dialEnd); $('edDialCv').addEventListener('pointercancel', dialEnd);
 const nudge = deg => { if (ED.sel < 0) { toast('Tap a joint or limb first.'); return; } if (!ED.dial || ED.dial.j !== ED.sel || ED.dial.axis !== ED.axis || ED.dial.k !== ED.k) { edDialStart(); ED.dial.k = ED.k; } else edPush(); ED.dial.total += deg * Math.PI / 180; edDialApply(); anim = applyEdits(baseAnim, EDITS); edTimeline(); };
 $('edMinus').onclick = () => nudge(-5); $('edPlus').onclick = () => nudge(5);
@@ -3248,7 +3288,7 @@ function openEditor() {
   edApplyTheme($('editModal').dataset.et || 'studio');
   edBuild(); edResize();
   ED.k = Math.max(0, Math.min(anim.n - 1, Math.round((curTime - animT0()) * anim.fps)));
-  $('edSpread').value = EDITS.spread || 0.5; $('edSpreadV').textContent = (+$('edSpread').value).toFixed(1) + 's';
+  edSyncLocks(); $('edSpread').value = EDITS.spread || 0.5; $('edSpreadV').textContent = (+$('edSpread').value).toFixed(1) + 's';
   edPose();
   const hp = wpos(0); ED.controls.target.set(hp.x, Math.max(0.7, hp.y), hp.z); ED.camera.position.copy(camera.position).sub(controls.target).add(ED.controls.target);
   edTimeline(); edLoop(++ED.loopId);
@@ -3259,11 +3299,20 @@ function closeEditor() {
   if (JSON.stringify(EDITS) !== ED.startEdits) { recordChange(); toast(hasEdits(EDITS) ? 'Edits applied. Exports include them.' : 'Edits cleared.'); }
   curTime = animT0() + ED.k / anim.fps; $('scrub').value = curTime; applyAt(curTime); drawContacts(); updateTimeLabel(); requestRender();
 }
-const edOpen = () => $('editModal').style.display !== 'none';
+const edOpen = () => $('editModal').style.display === 'flex';
 $('editBtn').onclick = openEditor;
 $('edDone').onclick = closeEditor;
-$('edUndo').onclick = () => { if (!ED.undo.length) return; ED.redo.push(JSON.stringify(EDITS)); EDITS = JSON.parse(ED.undo.pop()); ED.dial = null; edRefresh(); };
-$('edRedo').onclick = () => { if (!ED.redo.length) return; ED.undo.push(JSON.stringify(EDITS)); EDITS = JSON.parse(ED.redo.pop()); ED.dial = null; edRefresh(); };
+function edJump(h, label) { // undo / redo go back to where that change was made, so you can see it
+  EDITS = JSON.parse(h.e); ED.dial = null;
+  if (h.k != null && h.k < anim.n) ED.k = h.k; if (h.sel != null) ED.sel = h.sel;
+  if (ED.playing) edStop(); edSyncLocks(); edRefresh();
+  toast(`${label}${h.sel != null && h.sel >= 0 ? ': ' + (ED_NAMES[anim.rest.joints[h.sel].name] || '') : ''} · frame ${ED.k + 1}`);
+}
+$('edUndo').onclick = () => { if (!ED.undo.length) return; const h = ED.undo.pop(); ED.redo.push({ e: JSON.stringify(EDITS), k: h.k, sel: h.sel }); edJump(h, 'Undone'); };
+$('edRedo').onclick = () => { if (!ED.redo.length) return; const h = ED.redo.pop(); ED.undo.push({ e: JSON.stringify(EDITS), k: h.k, sel: h.sel }); edJump(h, 'Redone'); };
+function edSyncLocks() { $('edLockFeet').checked = EDITS.lockFeet !== false; $('edLockRot').checked = !!EDITS.lockRot; }
+$('edLockFeet').onchange = () => { edPush(); EDITS.lockFeet = $('edLockFeet').checked; edRefresh(); toast(EDITS.lockFeet ? 'Feet locked: your changes can\'t move them.' : 'Feet unlocked.'); };
+$('edLockRot').onchange = () => { edPush(); EDITS.lockRot = $('edLockRot').checked; edRefresh(); toast(EDITS.lockRot ? 'Hands & head keep their original rotation.' : 'Rotation lock off.'); };
 $('edMode').onclick = e => { const b = e.target.closest('button'); if (!b) return; ED.mode = b.dataset.m; ED.dial = null; edTimeline(); };
 $('edScrub').addEventListener('input', () => { if (ED.playing) edStop(); edGo(+$('edScrub').value); });
 let edScan = null;
@@ -3293,10 +3342,11 @@ let edClearArm = 0;
 $('edClearAll').onclick = () => {
   if (!hasEdits(EDITS)) return;
   if (Date.now() - edClearArm > 3000) { edClearArm = Date.now(); $('edClearAll').textContent = 'Tap again to clear'; setTimeout(() => ($('edClearAll').textContent = 'Clear all'), 3000); return; }
-  edPush(); EDITS = { keys: {}, root: {}, spread: EDITS.spread || 0.5 }; $('edClearAll').textContent = 'Clear all'; ED.dial = null; edRefresh();
+  edPush(); EDITS = { keys: {}, root: {}, spread: EDITS.spread || 0.5, lockFeet: EDITS.lockFeet, lockRot: EDITS.lockRot }; $('edClearAll').textContent = 'Clear all'; ED.dial = null; edRefresh();
 };
 document.addEventListener('keydown', e => {
-  if (!edOpen()) return; if (e.code === 'Space') { e.preventDefault(); e.stopImmediatePropagation(); ED.playing ? edStop() : edStart(); }
+  if (!edOpen()) return; const tg = e.target; if (tg && (tg.tagName === 'INPUT' && tg.type !== 'range' && tg.type !== 'checkbox' || tg.tagName === 'TEXTAREA' || tg.isContentEditable)) return;
+  if (e.code === 'Space') { e.preventDefault(); e.stopImmediatePropagation(); ED.playing ? edStop() : edStart(); }
   else if (e.key === 'ArrowLeft') $('edPrev').click(); else if (e.key === 'ArrowRight') $('edNext').click();
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); (e.shiftKey ? $('edRedo') : $('edUndo')).click(); }
 }, true);
