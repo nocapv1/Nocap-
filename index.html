@@ -618,7 +618,9 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   function seenMask(pw, pi, minVis = 0.35, m = -0.01) { return pi.map((a, k) => a && pw[k] ? a.map(p => (p[2] ?? 1) >= minVis && p[0] > m && p[0] < 1 - m && p[1] > m && p[1] < 1 - m) : null); }
   // an arm only counts as in shot when its wrist is clearly visible inside the picture for a moment (not a split-second blip)
   function armMask(pw, pi, fps, hands) {
-    const mask = seenMask(pw, pi, 0.6, 0.015), n = mask.length, minRun = Math.max(2, Math.round(fps * 0.25));
+    const mask = seenMask(pw, pi, 0.35, -0.01), n = mask.length, minRun = Math.max(2, Math.round(fps * 0.2));
+    // a hidden arm hanging below the picture gets weak guesses along the bottom edge: those don't count
+    for (let k = 0; k < n; k++) if (mask[k]) for (const i of [15, 16]) { const w = pi[k][i]; if (w[1] > 0.88 && (w[2] ?? 1) < 0.75) mask[k][i] = false; }
     // still in shot if the hand tracker found that hand, or the elbow is clearly in view (e.g. hand raised past the top edge)
     for (let k = 0; k < n; k++) if (mask[k]) for (const [i, el, S] of [[15, 13, 'Left'], [16, 14, 'Right']]) {
       const e = pi[k][el];
@@ -699,7 +701,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const relax = {}, am = armMask(P.map(() => 1), opt._pi0 || [], fps, opt._hands);
     for (const [S, sx, i] of SIDES) {
       // out of shot = the whole arm goes down by the side and stays still (the AI's guesses for it are ignored)
-      const wW = distToSeen(am.length ? am : mask, i.wr, fps).map(d => smooth01((d - 0.3) / 0.5)), wE = wW;
+      const wW = distToSeen(am.length ? am : mask, i.wr, fps).map(d => smooth01((d - 0.5) / 0.5)), wE = wW; // short gaps (blur, hand passing the face) keep the real arm
       relax[S] = wW;
       for (let k = 0; k < n; k++) {
         if (wE[k] <= 0 && wW[k] <= 0) continue;
