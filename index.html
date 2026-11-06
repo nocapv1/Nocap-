@@ -260,6 +260,10 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
 #editModal .elocks{display:flex;gap:8px}
 #editModal .elocks label{flex:1;display:flex;align-items:center;gap:7px;background:var(--e-panel2);border:1px solid var(--e-line);border-radius:12px;padding:9px 10px;font-size:13px;line-height:1.2}
 #editModal .elocks input{width:20px;height:20px;accent-color:var(--e-acc);flex:none}
+#editModal .eapply{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--e-dim)}
+#editModal .eapply span{flex:none}
+#editModal .eapply button{flex:1;background:var(--e-panel2);color:var(--e-text);border:1px solid var(--e-line);border-radius:10px;padding:8px 4px;font-size:12.5px;cursor:pointer}
+#editModal .eapply button.on{border-color:var(--e-acc2);color:var(--e-acc2);font-weight:700}
 </style>
 <script type="importmap">
 { "imports": {
@@ -433,6 +437,30 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const t = [0, 1, 2].map(c => det(A.map((row, r) => row.map((v, k) => (k === c ? bv[r] : v)))) / D);
     if (!(t[2] > 0.2) || !t.every(Number.isFinite)) return null;
     return t;
+  }
+
+  // ---- camera field of view, found automatically ----
+  // A wrong FOV mostly shows up as feet that slide toward / away from the camera and a worse fit of the 3D pose to the picture,
+  // so try a range and keep the one where (a) the pose projects best and (b) the planted foot moves least. Falls back to a phone default.
+  function estimateFov(pw, pi, W, H) {
+    const ks = []; for (let k = 0; k < pw.length; k++) if (pw[k] && pi[k]) ks.push(k);
+    if (ks.length < 12) return 62;
+    const step = Math.max(1, Math.floor(ks.length / 120)), use = ks.filter((_, i) => i % step === 0);
+    const score = fov => {
+      const f = (Math.max(W, H) / 2) / Math.tan(fov * Math.PI / 360), cx = W / 2, cy = H / 2; let rep = 0, rc = 0, slide = 0, sc = 0, prev = null, pk = -9;
+      for (const k of use) {
+        const t = solveRoot(pw[k], pi[k], W, H, fov); if (!t) { prev = null; continue; }
+        for (const i of [0, 11, 12, 23, 24, 25, 26, 27, 28, 15, 16]) { const w = pi[k][i][2] ?? 1; if (w < 0.5) continue; const X = pw[k][i][0] + t[0], Y = pw[k][i][1] + t[1], Z = pw[k][i][2] + t[2]; if (Z < 0.1) continue;
+          rep += w * (Math.hypot(f * X / Z + cx - pi[k][i][0] * W, f * Y / Z + cy - pi[k][i][1] * H) / Math.max(W, H)); rc += w; }
+        const a = [27, 28].map(i => add(pw[k][i], t));
+        if (prev && k - pk <= 2 * step) { slide += Math.min(len(sub(a[0], prev[0])), len(sub(a[1], prev[1]))); sc++; }
+        prev = a; pk = k;
+      }
+      return (rc ? rep / rc : 1) * 40 + (sc ? slide / sc : 0) + 0.004 * ((fov - 62) / 20) ** 2;
+    };
+    let best = 62, bs = Infinity; for (let fv = 30; fv <= 100; fv += 5) { const v = score(fv); if (v < bs) { bs = v; best = fv; } }
+    for (let fv = best - 4; fv <= best + 4; fv += 1) { if (fv < 25 || fv > 105) continue; const v = score(fv); if (v < bs) { bs = v; best = fv; } }
+    return best;
   }
 
   // ---- skeleton definition ----
@@ -652,6 +680,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     }
     const valid = pw.filter(Boolean).length;
     if (!valid) throw new Error('No person was detected in this video.');
+    if (!(+opt.fov > 0)) opt = { ...opt, fov: estimateFov(pw, pi, opt.W, opt.H) }; // 'auto'
     let roots = pw.map((w, k) => (w && pi[k] ? solveRoot(w, pi[k], opt.W, opt.H, opt.fov) : null));
     pw = fillGaps(pw); roots = fillGaps(roots) || pw.map(() => [0, 0, 3]);
     const piF = fillGaps(pi.map(a => a && a.map(p => [p[0] * opt.W, p[1] * opt.H, p[2] ?? 1])));
@@ -822,7 +851,35 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       locals = locals.map((l, k) => { const c = l.slice(); for (const j of legs) c[j] = sm[k][j]; return c; });
     }
     if (opt.proLimits !== false) locals = proLimits(rest, locals, true); // final say: nothing leaves a human range of motion
-    return { rest, fps, n, rootPos, locals, contacts: C, hasHands: { Left: !!HL, Right: !!HR }, M };
+    rootPos = floorFinder(rest, locals, rootPos, C, M, fps, true);
+    return { rest, fps, n, rootPos, locals, contacts: C, hasHands: { Left: !!HL, Right: !!HR }, M, fov: opt.fov };
+  }
+
+  // ---- intelligent floor finder ----
+  // finds the real floor from the moments the feet are planted (so he never floats), then lifts the body just enough, smoothly,
+  // wherever any part of a foot (heel, ball or toe tip) would go below it. Nothing ever ends up under the floor.
+  function footLows(rest, loc, root, M) {
+    const { pos, rot } = fk(rest, loc, root), ix = rest.index, out = [];
+    for (const S of ['Left', 'Right']) {
+      const an = pos[ix[S + 'Foot']], toe = pos[ix[S + 'ToeBase']], tip = add(toe, qrot(rot[ix[S + 'ToeBase']], [0, 0, 0.05]));
+      const heel = add(an, qrot(rot[ix[S + 'Foot']], [0, -(M.ankleH || 0.07), -0.02]));
+      out.push(Math.min(heel[1], toe[1] - 0.012, tip[1] - 0.008));
+    }
+    return out;
+  }
+  function floorFinder(rest, locals, rootPos, C, M, fps, refit) {
+    const n = locals.length; if (!n) return rootPos;
+    const lows = locals.map((l, k) => footLows(rest, l, rootPos[k], M));
+    let shift = 0;
+    if (refit && C) { // planted feet should sit ON the floor: use them to find where the floor really is
+      const pl = []; for (let k = 0; k < n; k++) ['Left', 'Right'].forEach((S, i) => { if (C[k] && C[k][S]) pl.push(lows[k][i]); });
+      if (pl.length > Math.max(6, n * 0.1)) { const fl = percentile(pl, 0.3); if (Math.abs(fl) < 0.12) shift = -fl; }
+    }
+    const pen = lows.map(l => Math.max(0, -(Math.min(l[0], l[1]) + shift)));
+    if (!pen.some(v => v > 1e-4) && !shift) return rootPos;
+    const w = Math.max(1, Math.round(fps * 0.1)), lift = pen.map((_, k) => { let m = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) m = Math.max(m, pen[q] * (1 - Math.abs(q - k) / (w + 1))); return m; });
+    const sm = lift.map((_, k) => { let s = 0, c = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) { s += lift[q]; c++; } return s / c; });
+    return rootPos.map((r, k) => [r[0], r[1] + shift + Math.max(sm[k], pen[k]), r[2]]);
   }
 
   function recoverDepth(P, dt) {
@@ -1534,7 +1591,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     return { ...anim, n: i1 - i0 + 1, rootPos: anim.rootPos.slice(i0, i1 + 1), locals: anim.locals.slice(i0, i1 + 1), contacts: anim.contacts.slice(i0, i1 + 1) };
   }
 
-  g.Solver = { sliceAnim, textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
+  g.Solver = { sliceAnim, textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, floorFinder, estimateFov, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -1577,11 +1634,11 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>Analysis rate</label><select id="procFps"><option>15</option><option>24</option><option selected>30</option><option>60</option></select></div>
     <input type="checkbox" id="hands" checked hidden>
     <div class="row"><label>Mirrored (selfie) video</label><input type="checkbox" id="mirrored"></div>
-    <div class="row"><label>Camera field of view</label><span><input type="range" id="fov" min="25" max="100" value="55"> </span><span class="val" id="fovV">55°</span></div>
+    <input type="range" id="fov" min="25" max="100" value="55" hidden><span id="fovV" hidden></span>
     <button class="btn primary" id="go" disabled>Generate motion</button>
     <button class="btn" id="refineBtn" disabled style="width:100%;margin-top:8px">🔁 Refine again</button>
     <button class="btn" id="undoRefine" disabled style="width:100%;margin-top:6px">↩️ Undo</button>
-    <div class="mini" style="margin-top:4px">Each press re-scans the video zoomed in and cleans up glitches. Press as many times as you like.</div>
+    <div class="mini" style="margin-top:4px">Quick: each press finds the trickiest frames, re-checks them zoomed in (plus a mirrored double-check) and cleans up glitches. Press as many times as you like.</div>
     <div class="progress" id="prog"><i></i></div>
     <div class="status" id="pstat"></div>
   </section>
@@ -1599,13 +1656,15 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="sub">Hands options</div>
     <div class="seg" id="fingerSeg"><button data-v="ai" class="on">🤖 AI tracked</button><button data-v="fist">✊ Closed</button><button data-v="relaxed">🖐 Open</button></div>
     <div class="mini" style="margin:-2px 0 6px">AI tracked follows the real fingers from the video; Closed / Open sets a fixed hand shape.</div>
-    <div class="row"><label>Elbow guard <span class="mini">bends naturally, never spins or breaks</span></label><input type="checkbox" id="elbowGuard" checked></div>
-    <div class="row"><label>Human joint limits <span class="mini">every joint kept in a real range of motion</span></label><input type="checkbox" id="proLimits" checked></div>
+    <input type="checkbox" id="elbowGuard" checked hidden><input type="checkbox" id="proLimits" checked hidden>
     <div class="row"><label>Wrist rotation</label><select id="handMode"><option value="limited" selected>Natural limits</option><option value="locked">Locked to forearm</option><option value="free">Free (raw)</option></select></div>
     <div class="sub">Body</div>
     <div class="row"><label>Auto-upright <span class="mini">fix tilt</span></label><input type="checkbox" id="autoLevel" checked></div>
     <input type="range" id="headTilt" min="-25" max="25" step="1" value="0" hidden><span id="headTiltV" hidden></span>
     <div class="row"><label>In-place <span class="mini">feet stay on one spot, body keeps moving</span></label><input type="checkbox" id="inPlace"></div>
+    <div class="sub">Locks</div>
+    <div class="row"><label>🔒 Lock feet <span class="mini">feet frozen exactly where they are at the current frame, for the whole animation</span></label><input type="checkbox" id="mainPinFeet"></div>
+    <div class="row"><label>🔒 Lock hand &amp; head rotation <span class="mini">your edits never turn the hands or head</span></label><input type="checkbox" id="mainLockRot"></div>
     <div class="stats" id="stats" style="display:none"></div>
   </section>
 
@@ -1685,6 +1744,19 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <div id="ttmChips" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0"></div>
   <button class="btn primary" id="ttmGo">Create motion</button>
   <div class="mini" style="margin-top:4px">Tap again for a fresh variation of the same prompt · Enter = create</div>
+  <div style="display:flex;gap:6px;margin-top:8px"><button class="btn" id="ttmTeachBtn" style="flex:1">🧠 Teach my AI</button></div>
+  <div id="ttmKnown" class="mini" style="margin-top:6px"></div>
+  <div id="teachBox" hidden style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+    <b>🧠 Teach your AI</b>
+    <div class="mini" style="margin:4px 0 8px">Show it a real move once (from a video you captured, or any motion you made) and give it words. Whenever a prompt uses those words, it performs <i>your</i> move, mixes it with others ("then"), and varies it each time you regenerate. Everything stays on this device.</div>
+    <div class="row"><label>Move from</label><select id="tchSrc" style="max-width:60%"></select></div>
+    <div class="row"><label>Part</label><span style="display:flex;gap:6px;align-items:center"><input type="number" id="tchA" step="0.1" min="0" value="0" style="width:72px"> to <input type="number" id="tchB" step="0.1" min="0" value="0" style="width:72px"> s</span></div>
+    <input id="tchWords" placeholder="words for it, e.g. jab, quick punch, boxing" style="width:100%;margin:6px 0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px">
+    <button class="btn primary" id="tchSave" style="width:100%">Teach this move</button>
+    <div class="sub" style="margin-top:10px">Word links <span class="mini">teach it your own words for things it already knows</span></div>
+    <div style="display:flex;gap:6px;align-items:center"><input id="wmFrom" placeholder="when I say… (scrap)" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:9px;font-size:16px"><input id="wmTo" placeholder="it means… (boxing)" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:9px;font-size:16px"><button class="btn" id="wmAdd">Add</button></div>
+    <div id="tchList" style="margin-top:10px"></div>
+  </div>
   <div class="hint">Moves: walk, run, jump, jab, cross, hook, uppercut, kick, roundhouse, squat, wave, dance, spin, stance, idle. Styles change the whole body: boxing / fighter, tired, sneaky, proud, happy, angry, drunk, old. Add numbers ("3 jabs"), speed ("fast", "slowly"), time ("walk for 5 seconds") and chain them with "then" or commas.</div>
 </div></div>
 <div id="editModal" data-et="studio">
@@ -1721,7 +1793,8 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="emeta"><span id="edTime">frame 1</span><span class="sp"></span><span id="edSel" class="esel">no joint picked</span></div>
   </div>
   <div class="esheet">
-    <div class="elocks"><label><input type="checkbox" id="edLockFeet" checked> 🔒 Lock feet</label><label><input type="checkbox" id="edLockRot"> 🔒 Lock hand &amp; head rotation</label></div>
+    <div class="elocks"><label><input type="checkbox" id="edLockFeet"> 🔒 Lock feet</label><label><input type="checkbox" id="edLockRot"> 🔒 Lock hand &amp; head rotation</label></div>
+    <div class="eapply" id="edApply"><span>Change applies to</span><button data-v="moment" class="on">⏱ This moment</button><button data-v="layer">🎞 Whole animation</button></div>
     <div class="emodes" id="edMode"><button data-m="move" class="on"><b>✥</b>Move (IK)</button><button data-m="rotate"><b>🎛</b>Rotate</button></div>
     <div id="edMovePanel">
       <div class="epad" id="edPad">
@@ -2152,7 +2225,7 @@ async function processVideo() {
   const status = m => (st.textContent = m);
   go.textContent = 'Cancel'; prog.style.display = 'block'; bar.style.width = '0%';
   try {
-    currentTakeId = Date.now(); EDITS = { keys: {}, root: {}, spread: 0.5 };
+    currentTakeId = Date.now(); EDITS = { keys: {}, root: {}, spread: 0.5 }; edSyncLocks();
     saveTakeStart().catch(e => toast('Library save failed: ' + e.message, true));
     let q = $('quality').value, pfps = +$('procFps').value; const wantHands = $('hands').checked;
     try { await loadModels(q, wantHands, status); }
@@ -2299,11 +2372,11 @@ $('ttmText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shif
 $('ttmGo').onclick = () => { const txt = $('ttmText').value.trim(); if (!txt) { toast('Type what the character should do.', true); return; } runTextMotion(txt); };
 function runTextMotion(txt, existingId, seed) {
   if (seed == null) seed = existingId ? (ttmSeeds[existingId] || 0) : Math.floor(Math.random() * 1e6) + 1;
-  let a; try { a = S.textToMotion(txt, 30, seed); } catch (e) { toast(e.message, true, 9000); return; }
+  let a; try { a = smartTextMotion(txt, seed); } catch (e) { toast(e.message, true, 9000); return; }
   lastPrompt = txt; if ($('inPlace').checked) a.rootPos = a.rootPos.map(r => [0, r[1], 0]);
   if ($('ttmModal').style.display !== 'none') { $('ttmModal').style.display = 'none'; unlockPage(); } pause();
   if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; currentSource = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = [];
-  frames = null; meta = { fps: 30, dur: (a.n - 1) / 30, scans: 0 }; if (!existingId) EDITS = { keys: {}, root: {}, spread: 0.5 }; baseAnim = a; anim = applyEdits(a, EDITS); videoName = txt.slice(0, 40).replace(/[^\w-]+/g, '_') || 'text_motion'; curTime = 0;
+  frames = null; meta = { fps: 30, dur: (a.n - 1) / 30, scans: 0 }; if (!existingId) { EDITS = { keys: {}, root: {}, spread: 0.5 }; edSyncLocks(); } baseAnim = a; anim = applyEdits(a, EDITS); videoName = txt.slice(0, 40).replace(/[^\w-]+/g, '_') || 'text_motion'; curTime = 0;
   $('vEmpty').style.display = 'none'; ttmCaption = txt; $('bigPlay').style.display = 'none';
   buildCharacter(a.rest); setReady(true); drawContacts(); applyAt(0); requestRender(); updateRefineLabel();
   $('scrub').max = meta.dur; $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel();
@@ -2317,8 +2390,10 @@ function runTextMotion(txt, existingId, seed) {
 $('refineBtn').onclick = refineAgain;
 
 // zoomed re-scan of every frame, fused into the existing landmarks. prevScans = how many scans are already averaged in.
-async function zoomPass(grid, cv, pfps, iterate, zoom, prevScans, wantHands, status, bar, t0 = 0) {
-  const W = cv.width, H = cv.height, M = Math.max(W, H), CS = 640;
+const MP_FLIP = [0, 4, 5, 6, 1, 2, 3, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15, 18, 17, 20, 19, 22, 21, 24, 23, 26, 25, 28, 27, 30, 29, 32, 31];
+async function zoomPass(grid, cv, pfps, iterate, zoom, prevScans, wantHands, status, bar, t0 = 0, only = null) {
+  const W = cv.width, H = cv.height, M = Math.max(W, H), CS = 640, total = only ? only.size : grid.length;
+  const flipC = document.createElement('canvas'); flipC.width = flipC.height = CS; const fx = flipC.getContext('2d');
   let boxes = grid.map(g => {
     if (!g.pi || !g.pw) return null; let x0 = 1, y0 = 1, x1 = 0, y1 = 0, n = 0;
     for (const p of g.pi) if (p[2] > 0.3) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); n++; }
@@ -2330,7 +2405,7 @@ async function zoomPass(grid, cv, pfps, iterate, zoom, prevScans, wantHands, sta
   let fused = 0, k2 = 0, rejected = 0; const t1 = performance.now();
   await setMode('IMAGE');
   const one = t => {
-    const s = Math.round((t - t0) * pfps); if (s < 0 || s >= grid.length) return; const g = grid[s]; if (!g || (!g.pw && g.pi)) return; // skip frozen frames / outside trim
+    const s = Math.round((t - t0) * pfps); if (s < 0 || s >= grid.length) return; if (only && !only.has(s)) return; const g = grid[s]; if (!g || (!g.pw && g.pi)) { k2++; return; } // skip frozen frames / outside trim
     const [bx, by, bs] = sm[s], side = Math.min(M * 1.2, Math.max(M * 0.25, bs * zoom)), sx = bx - side / 2, sy = by - side / 2;
     cx.fillStyle = '#000'; cx.fillRect(0, 0, CS, CS); cx.drawImage(cv, sx, sy, side, side, 0, 0, CS, CS);
     const pr = poseLm.detect(crop);
@@ -2338,7 +2413,20 @@ async function zoomPass(grid, cv, pfps, iterate, zoom, prevScans, wantHands, sta
     if (pr.landmarks && pr.landmarks.length) {
       let best = 0, bd = 9; pr.landmarks.forEach((lm, i) => { const d = Math.hypot((lm[23].x + lm[24].x) / 2 - 0.5, (lm[23].y + lm[24].y) / 2 - 0.5); if (d < bd) { bd = d; best = i; } });
       if (bd < 0.35) {
-        const pi2 = pr.landmarks[best].map(mapP), pw2 = pr.worldLandmarks[best].map(p => [p.x, p.y, p.z]);
+        let pi2 = pr.landmarks[best].map(mapP), pw2 = pr.worldLandmarks[best].map(p => [p.x, p.y, p.z]);
+        if (only) { // double-check the tricky frame with a mirrored copy of the picture and keep what both views agree on
+          fx.setTransform(-1, 0, 0, 1, CS, 0); fx.drawImage(crop, 0, 0); fx.setTransform(1, 0, 0, 1, 0, 0);
+          const pf = poseLm.detect(flipC);
+          if (pf.landmarks && pf.landmarks.length) {
+            let fb = 0, fd = 9; pf.landmarks.forEach((lm, i) => { const d = Math.hypot(1 - (lm[23].x + lm[24].x) / 2 - 0.5, (lm[23].y + lm[24].y) / 2 - 0.5); if (d < fd) { fd = d; fb = i; } });
+            if (fd < 0.35) {
+              const L = pf.landmarks[fb], Wl = pf.worldLandmarks[fb];
+              const piF = MP_FLIP.map(src => mapP({ x: 1 - L[src].x, y: L[src].y, visibility: L[src].visibility })), pwF = MP_FLIP.map(src => [-Wl[src].x, Wl[src].y, Wl[src].z]);
+              pi2 = pi2.map((p, i) => { const q = piF[i]; if (Math.hypot((p[0] - q[0]) * W / M, (p[1] - q[1]) * H / M) > 0.05) return p[2] >= q[2] ? p : q; const a = Math.max(0.05, p[2]), b = Math.max(0.05, q[2]); return [(p[0] * a + q[0] * b) / (a + b), (p[1] * a + q[1] * b) / (a + b), Math.max(p[2], q[2])]; });
+              pw2 = pw2.map((p, i) => { const q = pwF[i]; if (Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) > 0.12) return piF[i][2] > (pr.landmarks[best][i].visibility ?? 1) ? q : p; return [0, 1, 2].map(c => (p[c] + q[c]) / 2); });
+            }
+          }
+        }
         // sanity check: the zoomed result must agree with what we already have (same person, same rough pose), otherwise it is ignored
         if (g.pw) {
           let dW = 0, dI = 0; for (const i of [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]) { dW += Math.hypot(pw2[i][0] - g.pw[i][0], pw2[i][1] - g.pw[i][1], pw2[i][2] - g.pw[i][2]); dI += Math.hypot((pi2[i][0] - g.pi[i][0]) * W / M, (pi2[i][1] - g.pi[i][1]) * H / M); }
@@ -2365,7 +2453,7 @@ async function zoomPass(grid, cv, pfps, iterate, zoom, prevScans, wantHands, sta
       }
     }
     k2++;
-    if (k2 % 2 === 0) { const p = Math.min(1, k2 / grid.length), el = (performance.now() - t1) / 1000; bar.style.width = (p * 100).toFixed(1) + '%'; status(`Refining (zoomed re-scan) ${k2}/${grid.length} · ~${Math.max(0, Math.ceil(el / p - el))}s left`); }
+    if (k2 % 2 === 0) { const p = Math.min(1, k2 / total), el = (performance.now() - t1) / 1000; bar.style.width = (p * 100).toFixed(1) + '%'; status(`Quick refine: re-checking tricky frames ${k2}/${total} · ~${Math.max(0, Math.ceil(el / p - el))}s left`); }
   };
   status('Refining (zoomed re-scan)…'); bar.style.width = '0%';
   try { await iterate(one); } finally { await setMode('VIDEO'); }
@@ -2404,11 +2492,12 @@ async function refineAgain() {
     else {
       preVid.pause(); const pv = await makeHiddenVideo(videoURL, preVid); if (!pv) throw new Error('Video could not be decoded'); procVideo = pv;
       const seek = async t => { pv.currentTime = t; await waitEvent(pv, 'seeked', 5000); if ('requestVideoFrameCallback' in pv) await Promise.race([new Promise(r => pv.requestVideoFrameCallback(() => r())), sleep(60)]); };
-      iterate = async cb => { for (let k = 0; k < frames.length; k++) { if (cancelFlag) break; const t = Math.min(dur - 0.001, (meta.t0 || 0) + k / pfps); await seek(t); ctx.drawImage(pv, 0, 0, W, H); cb(t); if (k % 2 === 0) await sleep(0); } };
+      iterate = async cb => { for (let k = 0; k < frames.length; k++) { if (cancelFlag) break; if (only && !only.has(k)) continue; const t = Math.min(dur - 0.001, (meta.t0 || 0) + k / pfps); await seek(t); ctx.drawImage(pv, 0, 0, W, H); cb(t); if (k % 2 === 0) await sleep(0); } };
     }
     const scans = meta.scans || 1, zoom = [1.3, 1.6, 1.38, 1.52, 1.25, 1.7][(scans - 1) % 6];
+    const only = trickyFrames(frames, scans);
     const before = { frames: JSON.parse(JSON.stringify(frames)), scans };
-    const res = await zoomPass(frames, cv, pfps, iterate, zoom, scans, $('hands').checked, status, bar, meta.t0 || 0);
+    const res = await zoomPass(frames, cv, pfps, iterate, zoom, scans, $('hands').checked, status, bar, meta.t0 || 0, only);
     if (res.fused === 0) { frames = before.frames; toast('Refine found nothing it could improve safely, so nothing was changed.'); return; }
     meta.scans = scans + 1;
     solve(); recordChange(before);
@@ -2422,6 +2511,23 @@ async function refineAgain() {
     if (procVideo) { procVideo.removeAttribute('src'); procVideo.load(); procVideo.remove(); procVideo = null; }
     busy = false; go.textContent = 'Generate motion'; setTimeout(() => (prog.style.display = 'none'), 800); updateRefineLabel(); updateUndo();
   }
+}
+// Quick refine: instead of re-scanning every frame, score each frame for trouble (missing, unsure, jumpy, half out of the
+// picture) and only re-check the worst ones, zoomed in and with a mirrored double-check. Each press looks at a fresh set.
+function trickyFrames(grid, scans) {
+  const n = grid.length, key = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28], sc = new Array(n).fill(0);
+  for (let k = 0; k < n; k++) {
+    const g = grid[k]; if (!g || !g.pi) continue; if (!g.pw) { sc[k] = 10; continue; }
+    let vis = 0, out = 0; for (const i of key) { vis += g.pi[i][2] || 0; const [x, y] = g.pi[i]; if (x < 0.02 || x > 0.98 || y < 0.02 || y > 0.98) out++; }
+    sc[k] += (1 - vis / key.length) * 4 + out * 0.6;
+    const a = grid[k - 1], b = grid[k + 1];
+    if (a && b && a.pw && b.pw) { let j = 0; for (const i of key) j += Math.hypot(...[0, 1, 2].map(c => g.pw[i][c] - (a.pw[i][c] + b.pw[i][c]) / 2)); sc[k] += Math.min(4, j / key.length / 0.02); }
+    if (g.scanned) sc[k] *= 1 / (1 + g.scanned); // already re-checked: give other frames a turn
+  }
+  const want = Math.max(8, Math.min(90, Math.round(n * 0.22))), order = [...sc.keys()].filter(k => grid[k] && grid[k].pi).sort((x, y) => sc[y] - sc[x]).slice(0, want);
+  const set = new Set(); for (const k of order) for (const q of [k - 1, k, k + 1]) if (q >= 0 && q < n && grid[q] && grid[q].pi) set.add(q);
+  for (const k of set) grid[k].scanned = (grid[k].scanned || 0) + 1;
+  return set;
 }
 function updateRefineLabel() { const b = $('refineBtn'); b.disabled = !frames || busy || (!videoURL && !codecSrc); b.innerHTML = `🔁 Refine again${meta && meta.scans > 1 ? ` <span style="opacity:.7">· ${meta.scans} scans</span>` : ''}`; }
 
@@ -2485,7 +2591,7 @@ function assignHands(fr, hr, W, H) {
 
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: +$('fov').value, smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: $('elbowGuard').checked, proLimits: $('proLimits').checked, headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
+  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
 }
 let solveT;
 function solve(rebuild = false) {
@@ -2829,9 +2935,9 @@ const LIB = {
   all() { return this.run('readonly', s => s.getAll()); }, del(id) { return this.run('readwrite', s => s.delete(id)); },
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
-const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
+const settingIds = ['smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
 const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; s.edits = JSON.parse(JSON.stringify(EDITS)); return s; };
-const writeSettings = s => { if (!s) return; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); EDITS = s.edits ? JSON.parse(JSON.stringify(s.edits)) : { keys: {}, root: {}, spread: 0.5 }; };
+const writeSettings = s => { if (!s) return; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); EDITS = s.edits ? JSON.parse(JSON.stringify(s.edits)) : { keys: {}, root: {}, spread: 0.5 }; try { edSyncLocks(); } catch (e) {} };
 const DEFAULT_SETTINGS = readSettings(); // the app's starting settings, used for anything a take never saved
 for (const id of settingIds) $(id).addEventListener('change', () => setTimeout(() => recordChange(), 0));
 $('fingerSeg').addEventListener('click', () => setTimeout(() => recordChange(), 0));
@@ -2921,7 +3027,7 @@ $('libList').onclick = async e => {
   }
   if (b.dataset.a === 'bvh' || b.dataset.a === 'glb' || b.dataset.a === 'fbx') {
     if (!take.frames && !take.prompt) { toast('This take did not finish processing. Open it and tap Generate motion.', true); return; }
-    const mine = readSettings(); quiet = true; writeSettings(take.settings); let a; try { a = take.prompt ? applyEdits(S.textToMotion(take.prompt, 30, take.seed || 0), take.settings && take.settings.edits) : takeAnim(take); } finally { writeSettings(mine); quiet = false; }
+    const mine = readSettings(); quiet = true; writeSettings(take.settings); let a; try { a = take.prompt ? applyEdits(smartTextMotion(take.prompt, take.seed || 0), take.settings && take.settings.edits) : takeAnim(take); } finally { writeSettings(mine); quiet = false; }
     return b.dataset.a === 'bvh' ? exportBVH(a, base) : b.dataset.a === 'fbx' ? exportFBX(a, base) : exportGLB(a, base);
   }
   if (b.dataset.a === 'open' || b.dataset.a === 'edit') {
@@ -2943,7 +3049,7 @@ renderLibrary();
 
 // ---------- ✏️ Edit motion: move any joint, the change is blended smoothly into the frames around it ----------
 const ssE = x => x * x * (3 - 2 * x);
-function hasEdits(E) { return !!E && (Object.values(E.keys || {}).some(m => Object.keys(m).length) || Object.keys(E.root || {}).length > 0); }
+function hasEdits(E) { return !!E && (Object.values(E.keys || {}).some(m => Object.keys(m).length) || Object.keys(E.root || {}).length > 0 || Object.keys(E.layer || {}).length > 0 || !!(E.layerRoot && E.layerRoot.some(v => v)) || !!E.pinFeet); }
 function applyEdits(a, E) {
   if (!a || !hasEdits(E)) return a;
   const n = a.n, R = Math.max(1, Math.round((+E.spread || 0.5) * a.fps));
@@ -2962,6 +3068,14 @@ function applyEdits(a, E) {
   };
   const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), qd = new THREE.Quaternion(), ql = new THREE.Quaternion();
   const affected = new Array(n).fill(false), own = Array.from({ length: n }, () => new Set());
+  // 🎞 layer: one change applied to the whole animation (on top of the original motion)
+  const LJ = Object.keys(E.layer || {}).map(Number).filter(j => j >= 0 && j < a.rest.joints.length);
+  if (LJ.length || (E.layerRoot && E.layerRoot.some(v => v))) for (let k = 0; k < n; k++) {
+    affected[k] = true;
+    for (const j of LJ) { const d = E.layer[j], L = locals[k][j]; ql.set(L[0], L[1], L[2], L[3]).premultiply(qd.set(d[0], d[1], d[2], d[3])).normalize(); locals[k][j] = [ql.x, ql.y, ql.z, ql.w]; own[k].add(j); }
+    if (E.layerRoot) for (let c = 0; c < 3; c++) rootPos[k][c] += E.layerRoot[c] || 0;
+  }
+  if (E.pinFeet) affected.fill(true);
   for (const js of Object.keys(E.keys || {})) {
     const j = +js; if (!(j >= 0 && j < a.rest.joints.length)) continue;
     curve(E.keys[js], (k, A, B, u) => {
@@ -2974,21 +3088,33 @@ function applyEdits(a, E) {
   }
   curve(E.root || {}, (k, A, B, u) => { const a0 = A || [0, 0, 0], b0 = B || [0, 0, 0]; let m = 0; for (let c = 0; c < 3; c++) { const d = a0[c] + (b0[c] - a0[c]) * u; rootPos[k][c] += d; m += Math.abs(d); } if (m > 1e-6) affected[k] = true; });
   lockPass(a, locals, rootPos, E, affected, own);
-  return { ...a, locals, rootPos };
+  const fixed = S.floorFinder(a.rest, locals, rootPos, null, a.M || { ankleH: 0.07 }, a.fps, false); // edits can never push a foot under the floor
+  return { ...a, locals, rootPos: fixed };
 }
 // 🔒 locks: on every frame an edit touches, feet stay exactly where the original animation had them, and/or
 // hands + head keep their original facing. Joints you edited yourself are left alone.
 function lockPass(a, locals, rootPos, E, affected, own) {
-  const lockFeet = E.lockFeet !== false, lockRot = !!E.lockRot; if (!lockFeet && !lockRot) return;
+  const lockFeet = true, pin = !!E.pinFeet, lockRot = !!E.lockRot; // edits never drag unedited feet; 🔒 pin freezes them for the whole clip
+  const pk = Math.max(0, Math.min(a.n - 1, E.pinFrame | 0)), pinRef = pin ? S.fk(a.rest, a.locals[pk], a.rootPos[pk]) : null;
   const rest = a.rest, ix = rest.index, J = rest.joints, Q = v => new THREE.Quaternion(v[0], v[1], v[2], v[3]), V = v => new THREE.Vector3(v[0], v[1], v[2]);
   const toArr = q => [q.x, q.y, q.z, q.w];
   for (let k = 0; k < a.n; k++) {
     if (!affected[k]) continue;
     const base = S.fk(rest, a.locals[k], a.rootPos[k]); let cur = S.fk(rest, locals[k], rootPos[k]);
+    if (pin) { // a frozen foot must stay reachable: if a leg would have to stretch, bring the hips just close enough
+      let sh = [0, 0, 0];
+      for (const Sd of ['Left', 'Right']) {
+        const iU = ix[Sd + 'UpLeg'], iL = ix[Sd + 'Leg'], iF = ix[Sd + 'Foot']; if ([iU, iL, iF].some(j => own[k].has(j))) continue;
+        const H = V(cur.pos[iU]).add(V(sh)), T = V(pinRef.pos[iF]), Lg = V(cur.pos[iU]).distanceTo(V(cur.pos[iL])) + V(cur.pos[iL]).distanceTo(V(cur.pos[iF])), d = H.distanceTo(T), ex = d - Lg * 0.985;
+        if (ex > 0) { const dir = T.clone().sub(H).normalize().multiplyScalar(ex); sh = [sh[0] + dir.x, sh[1] + dir.y, sh[2] + dir.z]; }
+      }
+      if (sh.some(v => Math.abs(v) > 1e-6)) { rootPos[k] = rootPos[k].map((v, c) => v + sh[c]); cur = S.fk(rest, locals[k], rootPos[k]); }
+    }
     if (lockFeet) for (const Sd of ['Left', 'Right']) {
       const iU = ix[Sd + 'UpLeg'], iL = ix[Sd + 'Leg'], iF = ix[Sd + 'Foot'], iT = ix[Sd + 'ToeBase'];
       if ([iU, iL, iF, iT].some(j => own[k].has(j))) continue; // you moved this leg yourself
-      const H = V(cur.pos[iU]), K = V(cur.pos[iL]), A = V(cur.pos[iF]), T = V(base.pos[iF]);
+      const ref = pin ? pinRef : base, H = V(cur.pos[iU]), K = V(cur.pos[iL]), A = V(cur.pos[iF]), T = V(ref.pos[iF]);
+      if (!pin && V(base.pos[iF]).distanceTo(A) < 1e-5) continue;
       const la = H.distanceTo(K), lb = K.distanceTo(A), dir = T.clone().sub(H), d = THREE.MathUtils.clamp(dir.length(), Math.abs(la - lb) + 1e-4, (la + lb) * 0.999); dir.normalize();
       let pole = K.clone().sub(H); pole.sub(dir.clone().multiplyScalar(pole.dot(dir))); if (pole.lengthSq() < 1e-10) pole = new THREE.Vector3(0, 0, 1); pole.normalize();
       const x = (la * la - lb * lb + d * d) / (2 * d), h = Math.sqrt(Math.max(0, la * la - x * x));
@@ -2999,7 +3125,8 @@ function lockPass(a, locals, rootPos, E, affected, own) {
       const pU = J[iU].parent;
       locals[k][iU] = toArr(Q(cur.rot[pU]).invert().multiply(gU).normalize());
       locals[k][iL] = toArr(gU.clone().invert().multiply(gL).normalize());
-      locals[k][iF] = toArr(gL.clone().invert().multiply(Q(base.rot[iF])).normalize()); // and the foot keeps its original angle
+      locals[k][iF] = toArr(gL.clone().invert().multiply(Q(ref.rot[iF])).normalize()); // and the foot keeps its angle
+      if (pin) locals[k][iT] = a.locals[pk][iT].slice();
     }
     if (lockRot) {
       cur = S.fk(rest, locals[k], rootPos[k]);
@@ -3011,7 +3138,7 @@ function lockPass(a, locals, rootPos, E, affected, own) {
   }
 }
 
-const ED = { renderer: null, scene: null, camera: null, controls: null, rig: null, dots: [], sel: -1, k: 0, mode: 'move', axis: 'twist', undo: [], redo: [], playing: false, loopId: 0, drag: null, dial: null, camAnim: null, floor: null, grid: null, hemi: null };
+const ED = { renderer: null, scene: null, camera: null, controls: null, rig: null, dots: [], sel: -1, k: 0, mode: 'move', apply: 'moment', axis: 'twist', undo: [], redo: [], playing: false, loopId: 0, drag: null, dial: null, camAnim: null, floor: null, grid: null, hemi: null };
 const ED_NAMES = { Hips: 'Hips (whole body)', Spine1: 'Lower back', Spine2: 'Chest', Neck: 'Neck', Head: 'Head', LeftShoulder: 'Left collarbone', LeftArm: 'Left shoulder', LeftForeArm: 'Left elbow', LeftHand: 'Left hand', RightShoulder: 'Right collarbone', RightArm: 'Right shoulder', RightForeArm: 'Right elbow', RightHand: 'Right hand', LeftUpLeg: 'Left hip', LeftLeg: 'Left knee', LeftFoot: 'Left foot', LeftToeBase: 'Left toes', RightUpLeg: 'Right hip', RightLeg: 'Right knee', RightFoot: 'Right foot', RightToeBase: 'Right toes' };
 const ED_THEMES = [['studio', '#38d6c6', '#0e1420'], ['gold', '#e6b422', '#070707'], ['light', '#2f6bff', '#eef1f6'], ['neon', '#ff3ec8', '#0b0614'], ['forest', '#7be07f', '#0b120d']];
 const EV = n => getComputedStyle($('editModal')).getPropertyValue(n).trim() || '#38d6c6';
@@ -3119,6 +3246,7 @@ function edTimeline() {
   const x = k => 14 + (k / Math.max(1, n - 1)) * (c.width - 28), all = new Set(), mine = new Set();
   for (const js of Object.keys(EDITS.keys)) for (const k of Object.keys(EDITS.keys[js])) { all.add(+k); if (+js === ED.sel) mine.add(+k); }
   for (const k of Object.keys(EDITS.root)) { all.add(+k); if (ED.sel === 0) mine.add(+k); }
+  if (Object.keys(EDITS.layer || {}).length || (EDITS.layerRoot && EDITS.layerRoot.some(v => v))) { g.fillStyle = EV('--e-acc2'); g.globalAlpha = 0.35; g.fillRect(14, 10, c.width - 28, 4); g.globalAlpha = 1; }
   g.fillStyle = EV('--e-dim'); for (const k of all) g.fillRect(x(k) - 2, 6, 4, 14);
   g.fillStyle = EV('--e-acc2'); for (const k of mine) g.fillRect(x(k) - 3, 0, 6, 24);
   $('edUndo').disabled = !ED.undo.length; $('edRedo').disabled = !ED.redo.length;
@@ -3129,21 +3257,36 @@ function edTimeline() {
   document.querySelectorAll('#edAxis button').forEach(b => b.classList.toggle('on', b.dataset.a === ED.axis));
   $('edDial').hidden = ED.mode !== 'rotate'; $('edMovePanel').style.display = ED.mode === 'move' ? 'flex' : 'none';
   document.querySelectorAll('#edPad button, #edMinus, #edPlus, #edDialZoom').forEach(b => (b.disabled = !nm));
+  document.querySelectorAll('#edApply button').forEach(b => b.classList.toggle('on', b.dataset.v === ED.apply));
+  $('edClearKey').textContent = ED.apply === 'layer' ? '↺ Reset limb (whole animation)' : '↺ Reset limb here';
   $('edClearKey').disabled = !nm; $('edZoom').disabled = !nm; edDrawDial();
 }
 function edRefresh() { anim = applyEdits(baseAnim, EDITS); edPose(); edTimeline(); }
 function edPush() { ED.undo.push({ e: JSON.stringify(EDITS), k: ED.k, sel: ED.sel }); if (ED.undo.length > 100) ED.undo.shift(); ED.redo = []; }
 const r4 = v => Math.round(v * 1e4) / 1e4;
-function edSetKey(j, k, local) { // stored as an offset from the AI's own pose, so it blends smoothly over nearby frames
-  const b = baseAnim.locals[k][j], d = local.clone().multiply(new THREE.Quaternion(b[0], b[1], b[2], b[3]).invert()).normalize();
+function edLayered(j, k, layer) { const b = baseAnim.locals[k][j], q = new THREE.Quaternion(b[0], b[1], b[2], b[3]), L = (layer || EDITS.layer || {})[j]; return L ? q.premultiply(new THREE.Quaternion(L[0], L[1], L[2], L[3])) : q; }
+function edSetKey(j, k, local) { // stored as an offset from the AI's own pose (plus any whole-animation layer), so it blends smoothly over nearby frames
+  const d = local.clone().multiply(edLayered(j, k).invert()).normalize();
   (EDITS.keys[j] = EDITS.keys[j] || {})[k] = [r4(d.x), r4(d.y), r4(d.z), r4(d.w)];
 }
 function edKeyChanged(st) { // key every bone this edit moved
   const b = ED.rig.bones;
+  if (ED.apply === 'layer') { // 🎞 the same change on every frame of the animation
+    EDITS.layer = EDITS.layer || {};
+    b.forEach((x, i) => {
+      if (Math.abs(x.quaternion.dot(st.locals[i])) >= 0.999999) return;
+      const bq = baseAnim.locals[ED.k][i], base = new THREE.Quaternion(bq[0], bq[1], bq[2], bq[3]);
+      const keyD = st.locals[i].clone().multiply(edLayered(i, ED.k, st.layer0).invert()); // whatever moment-edits already sit on this frame
+      const nl = keyD.invert().multiply(x.quaternion).multiply(base.invert()).normalize();
+      EDITS.layer[i] = [r4(nl.x), r4(nl.y), r4(nl.z), r4(nl.w)];
+    });
+    const dp = b[0].position.clone().sub(st.root); if (dp.lengthSq() > 1e-10) { const L = st.layerRoot0 || [0, 0, 0]; EDITS.layerRoot = [r4(L[0] + dp.x), r4(L[1] + dp.y), r4(L[2] + dp.z)]; }
+    return;
+  }
   b.forEach((x, i) => { if (Math.abs(x.quaternion.dot(st.locals[i])) < 0.999999) edSetKey(i, ED.k, x.quaternion); });
   if (b[0].position.distanceToSquared(st.root) > 1e-10) { const base = baseAnim.rootPos[ED.k], p = b[0].position; EDITS.root[ED.k] = [r4(p.x - base[0]), r4(p.y - base[1]), r4(p.z - base[2])]; }
 }
-function edSnap() { const b = ED.rig.bones; return { locals: b.map(x => x.quaternion.clone()), root: b[0].position.clone() }; }
+function edSnap() { const b = ED.rig.bones; return { locals: b.map(x => x.quaternion.clone()), root: b[0].position.clone(), layer0: JSON.parse(JSON.stringify(EDITS.layer || {})), layerRoot0: (EDITS.layerRoot || [0, 0, 0]).slice() }; }
 function edRestore(st) { const b = ED.rig.bones; b.forEach((x, i) => x.quaternion.copy(st.locals[i])); b[0].position.copy(st.root); ED.rig.group.updateMatrixWorld(true); }
 
 // ----- touch: a quick tap on a dot OR on a limb picks it; dragging always turns the camera -----
@@ -3180,6 +3323,7 @@ function edSelect(j) {
   edDots(); edTimeline();
 }
 function edIKTo(st, T) { // move the picked joint to T with the right kind of IK for that joint
+  if (/Foot$/.test(st.nm)) T.y = Math.max(T.y, (anim.M && anim.M.ankleH) || 0.07); else if (/ToeBase$/.test(st.nm)) T.y = Math.max(T.y, 0.015); else if (/Leg$/.test(st.nm)) T.y = Math.max(T.y, 0.12);
   const nm = st.nm, j = st.j, side = nm.startsWith('Left') ? 'Left' : nm.startsWith('Right') ? 'Right' : '', base = nm.replace(/^(Left|Right)/, '');
   if (nm === 'Hips' || base === 'UpLeg') { // move the whole body; planted feet stay where they are
     const b = ED.rig.bones, p = st.root.clone().add(T.clone().sub(st.wp)); p.y = Math.max(0.05, p.y); b[0].position.copy(p); ED.rig.group.updateMatrixWorld(true);
@@ -3310,9 +3454,17 @@ function edJump(h, label) { // undo / redo go back to where that change was made
 }
 $('edUndo').onclick = () => { if (!ED.undo.length) return; const h = ED.undo.pop(); ED.redo.push({ e: JSON.stringify(EDITS), k: h.k, sel: h.sel }); edJump(h, 'Undone'); };
 $('edRedo').onclick = () => { if (!ED.redo.length) return; const h = ED.redo.pop(); ED.undo.push({ e: JSON.stringify(EDITS), k: h.k, sel: h.sel }); edJump(h, 'Redone'); };
-function edSyncLocks() { $('edLockFeet').checked = EDITS.lockFeet !== false; $('edLockRot').checked = !!EDITS.lockRot; }
-$('edLockFeet').onchange = () => { edPush(); EDITS.lockFeet = $('edLockFeet').checked; edRefresh(); toast(EDITS.lockFeet ? 'Feet locked: your changes can\'t move them.' : 'Feet unlocked.'); };
-$('edLockRot').onchange = () => { edPush(); EDITS.lockRot = $('edLockRot').checked; edRefresh(); toast(EDITS.lockRot ? 'Hands & head keep their original rotation.' : 'Rotation lock off.'); };
+function edSyncLocks() { $('edLockFeet').checked = $('mainPinFeet').checked = !!EDITS.pinFeet; $('edLockRot').checked = $('mainLockRot').checked = !!EDITS.lockRot; }
+$('edApply').onclick = e => { const b = e.target.closest('button'); if (!b) return; ED.apply = b.dataset.v; ED.dial = null; edTimeline(); toast(ED.apply === 'layer' ? 'Whole animation: your change is added to every frame, on top of the original motion.' : 'This moment: your change blends in around this frame only.'); };
+function mainLockChanged() { // the Refine-section boxes: same locks as in the editor
+  EDITS.pinFeet = $('mainPinFeet').checked; if (EDITS.pinFeet) EDITS.pinFrame = anim ? Math.max(0, Math.min(anim.n - 1, Math.round((curTime - animT0()) * anim.fps))) : 0;
+  EDITS.lockRot = $('mainLockRot').checked; $('edLockFeet').checked = EDITS.pinFeet; $('edLockRot').checked = EDITS.lockRot;
+  if (baseAnim) { anim = applyEdits(baseAnim, EDITS); applyAt(curTime); drawContacts(); requestRender(); }
+  recordChange(); toast(EDITS.pinFeet ? `Feet locked where they are at ${(curTime - animT0()).toFixed(2)}s, for the whole animation.` : 'Locks updated.');
+}
+$('mainPinFeet').onchange = mainLockChanged; $('mainLockRot').onchange = mainLockChanged;
+$('edLockFeet').onchange = () => { edPush(); EDITS.pinFeet = $('edLockFeet').checked; EDITS.pinFrame = ED.k; $('mainPinFeet').checked = EDITS.pinFeet; edRefresh(); toast(EDITS.pinFeet ? `Feet frozen where they are on frame ${ED.k + 1}, for the whole animation.` : 'Feet unlocked.'); };
+$('edLockRot').onchange = () => { edPush(); EDITS.lockRot = $('edLockRot').checked; $('mainLockRot').checked = EDITS.lockRot; edRefresh(); toast(EDITS.lockRot ? 'Hands & head keep their original rotation.' : 'Rotation lock off.'); };
 $('edMode').onclick = e => { const b = e.target.closest('button'); if (!b) return; ED.mode = b.dataset.m; ED.dial = null; edTimeline(); };
 $('edScrub').addEventListener('input', () => { if (ED.playing) edStop(); edGo(+$('edScrub').value); });
 let edScan = null;
@@ -3334,15 +3486,18 @@ function edGroup(nm) { // the joints one edit can move together
 }
 $('edClearKey').onclick = () => {
   if (ED.sel < 0) return; const nm = edName(); edPush();
+  if (ED.apply === 'layer') { for (const n2 of edGroup(nm)) { const j = edJ(n2); if (j != null && EDITS.layer) delete EDITS.layer[j]; } if (nm === 'Hips' || /UpLeg$/.test(nm)) delete EDITS.layerRoot; }
+  else {
   for (const n2 of edGroup(nm)) { const j = edJ(n2); if (j == null || !EDITS.keys[j]) continue; delete EDITS.keys[j][ED.k]; if (!Object.keys(EDITS.keys[j]).length) delete EDITS.keys[j]; }
   if (nm === 'Hips' || /UpLeg$/.test(nm)) delete EDITS.root[ED.k];
+  }
   ED.dial = null; edRefresh(); toast('Reset at this frame. Undo brings it back.');
 };
 let edClearArm = 0;
 $('edClearAll').onclick = () => {
   if (!hasEdits(EDITS)) return;
   if (Date.now() - edClearArm > 3000) { edClearArm = Date.now(); $('edClearAll').textContent = 'Tap again to clear'; setTimeout(() => ($('edClearAll').textContent = 'Clear all'), 3000); return; }
-  edPush(); EDITS = { keys: {}, root: {}, spread: EDITS.spread || 0.5, lockFeet: EDITS.lockFeet, lockRot: EDITS.lockRot }; $('edClearAll').textContent = 'Clear all'; ED.dial = null; edRefresh();
+  edPush(); EDITS = { keys: {}, root: {}, spread: EDITS.spread || 0.5, pinFeet: EDITS.pinFeet, pinFrame: EDITS.pinFrame, lockRot: EDITS.lockRot }; $('edClearAll').textContent = 'Clear all'; ED.dial = null; edRefresh();
 };
 document.addEventListener('keydown', e => {
   if (!edOpen()) return; const tg = e.target; if (tg && (tg.tagName === 'INPUT' && tg.type !== 'range' && tg.type !== 'checkbox' || tg.tagName === 'TEXTAREA' || tg.isContentEditable)) return;
@@ -3488,6 +3643,134 @@ $('mmToggle').onclick = () => { $('modelMenu').classList.remove('open'); setMode
 $('mmForget').onclick = async () => { $('modelMenu').classList.remove('open'); if (MODEL.obj) scene.remove(MODEL.prep.wrap); MODEL.obj = null; MODEL.on = false; try { localStorage.removeItem('nocap-model'); await caches.delete('nocap-user-model'); } catch (e) {} setModelOn(false); toast('Character removed.'); };
 $('modelFile').onchange = () => { const f = $('modelFile').files[0]; $('modelFile').value = ''; if (f) loadModelFile(f, f.name); };
 async function restoreModel() { try { const name = localStorage.getItem('nocap-model'); if (!name || MODEL.obj) return; const c = await caches.open('nocap-user-model'), r = await c.match('/my-model'); if (r) await loadModelFile(await r.blob(), name, true); } catch (e) {} }
+
+// ---------- 🧠 Teach your AI: an example-based motion memory ----------
+// You show it real moves with words. A prompt is split into steps ("then", commas); each step is matched to your taught moves
+// by its words (with word stems + related words, e.g. "punching" ~ "punch" ~ "jab"); the best matches are played, varied
+// (speed, mirror, which example) and stitched together with smooth blends and matching facing. Steps nobody taught it fall back
+// to the built-in generator. Nothing leaves the phone.
+let LEARNED = [], WORDMAP = {};
+const L_IDX = 'nocap-learned', L_WORDS = 'nocap-words';
+const T_STOP = new Set('a an the and then with do does some times time for of to in on at my his her him he she it is be please make like style quick quickly slow slowly fast few seconds second sec secs while doing'.split(' '));
+const T_NUM = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, once: 1, twice: 2 };
+const T_SYN = [['punch', 'jab', 'hit', 'strike', 'cross', 'hook', 'uppercut', 'box', 'boxing', 'fight', 'fighter', 'spar', 'combo'], ['kick', 'roundhouse', 'sweep'], ['walk', 'stroll', 'step', 'march', 'pace'], ['run', 'jog', 'sprint', 'dash'], ['jump', 'hop', 'leap'], ['dance', 'groove', 'boogie'], ['wave', 'hello', 'hi', 'greet', 'bye'], ['idle', 'stand', 'wait', 'breathe', 'rest'], ['spin', 'turn', 'pivot', 'twirl', 'rotate'], ['squat', 'crouch', 'duck', 'kneel'], ['throw', 'pitch', 'toss'], ['sit', 'seat'], ['celebrate', 'cheer', 'victory', 'win']];
+const tStem = w => { w = w.toLowerCase(); if (w.length > 5 && w.endsWith('ing')) w = w.slice(0, -3); else if (w.length > 4 && w.endsWith('es')) w = w.slice(0, -2); else if (w.length > 4 && w.endsWith('ed')) w = w.slice(0, -2); else if (w.length > 3 && w.endsWith('s') && !w.endsWith('ss')) w = w.slice(0, -1); return w; };
+const tToks = s => String(s).toLowerCase().split(/[^a-z0-9']+/).filter(w => w && !T_STOP.has(w) && !/^\d+$/.test(w) && !T_NUM[w]);
+const tGroup = w => T_SYN.findIndex(g => g.some(x => tStem(x) === w));
+function applyWordMap(txt) { let s = String(txt); for (const [k, v] of Object.entries(WORDMAP)) s = s.replace(new RegExp('\\b' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'gi'), v); return s; }
+function tScore(stepToks, m) {
+  const mw = m.words.flatMap(w => tToks(w)).map(tStem); if (!mw.length) return 0; let s = 0;
+  for (const t of stepToks.map(tStem)) { if (mw.includes(t)) s += 3; else { const g = tGroup(t); if (g >= 0 && mw.some(x => tGroup(x) === g)) s += 1; } }
+  return s;
+}
+const tRand = seed => { let a = (seed >>> 0) || 1; return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
+const tYaw = q => { const f = S.qrot(q, [0, 0, 1]); return Math.atan2(f[0], f[2]); };
+const tQY = a => [0, Math.sin(a / 2), 0, Math.cos(a / 2)];
+function learnedPiece(m, rnd) {
+  const d = m.data, sp = 0.93 + 0.14 * rnd(), mirror = rnd() < 0.35, n0 = d.n, n = Math.max(2, Math.round((n0 - 1) / sp) + 1);
+  const J = d.rest.joints, partner = J.map((j, i) => { const nm = j.name.startsWith('Left') ? 'Right' + j.name.slice(4) : j.name.startsWith('Right') ? 'Left' + j.name.slice(5) : j.name; const p = J.findIndex(x => x.name === nm); return p < 0 ? i : p; });
+  const locals = [], rootPos = [];
+  for (let i = 0; i < n; i++) {
+    const u = Math.min(n0 - 1, i * sp), i0 = Math.floor(u), i1 = Math.min(n0 - 1, i0 + 1), a = u - i0;
+    let L = d.locals[i0].map((q, j) => S.qslerp(q, d.locals[i1][j], a)), R = [0, 1, 2].map(c => d.rootPos[i0][c] + (d.rootPos[i1][c] - d.rootPos[i0][c]) * a);
+    if (mirror) { L = L.map((_, j) => { const q = L[partner[j]]; return [q[0], -q[1], -q[2], q[3]]; }); R = [-R[0], R[1], R[2]]; }
+    locals.push(L); rootPos.push(R);
+  }
+  return { rest: d.rest, locals, rootPos, M: d.M, learned: true };
+}
+function stitchPieces(pieces) {
+  const main = pieces.find(p => p.learned) || pieces[0], rest = main.rest, J = rest.joints, M = main.M || { ankleH: 0.07 };
+  const legOf = p => p.M && p.M.thigh ? p.M.thigh + p.M.shin + (p.M.ankleH || 0.07) : 0.91, ref = legOf(main);
+  const F = 8, locals = [], rootPos = [];
+  for (const p of pieces) {
+    const map = J.map(j => p.rest.index[j.name]), sc = ref / legOf(p);
+    let L = p.locals.map(l => map.map(i => (i == null ? [0, 0, 0, 1] : l[i]).slice())), R = p.rootPos.map(r => [r[0] * sc, r[1] * sc, r[2] * sc]);
+    if (locals.length) { // continue from where the last move ended, facing the same way
+      const e = locals.length - 1, dy = tYaw(locals[e][0]) - tYaw(L[0][0]), c = Math.cos(dy), s = Math.sin(dy), r0 = R[0], re = rootPos[e];
+      R = R.map(r => { const x = r[0] - r0[0], z = r[2] - r0[2]; return [re[0] + x * c + z * s, r[1], re[2] - x * s + z * c]; });
+      L = L.map(l => { const c2 = l.slice(); c2[0] = S.qmul(tQY(dy), l[0]); return c2; });
+      const f = Math.min(F, L.length - 1, locals.length - 1);
+      for (let i = 0; i < f; i++) { const k = locals.length - f + i, u = (i + 1) / (f + 1), w = u * u * (3 - 2 * u); locals[k] = locals[k].map((q, j) => S.qslerp(q, L[i][j], w)); rootPos[k] = rootPos[k].map((v, c) => v + (R[i][c] - v) * w); }
+      L = L.slice(f); R = R.slice(f);
+    }
+    locals.push(...L); rootPos.push(...R);
+  }
+  const n = locals.length, ix = rest.index, contacts = locals.map((l, k) => { const P = S.fk(rest, l, rootPos[k]).pos, c = {}; for (const Sd of ['Left', 'Right']) c[Sd] = P[ix[Sd + 'Foot']][1] - (M.ankleH || 0.07) < 0.06; return c; });
+  const r0 = rootPos[0], rp = rootPos.map(r => [r[0] - r0[0], r[1], r[2] - r0[2]]);
+  return { rest, fps: 30, n, locals, rootPos: S.floorFinder(rest, locals, rp, contacts, M, 30, true), contacts, M, hasHands: { Left: false, Right: false } };
+}
+function smartTextMotion(txt0, seed) {
+  const txt = applyWordMap(txt0);
+  if (!LEARNED.length) return S.textToMotion(txt, 30, seed);
+  const steps = txt.split(/\s*(?:,|;|\band then\b|\bthen\b|\bfollowed by\b|\bafter that\b)\s*/i).map(s => s.trim()).filter(Boolean);
+  const rnd = tRand(seed * 2654435761), pieces = [], plan = [], unknown = [], styles = []; let used = false;
+  steps.forEach((st, i) => {
+    let count = 1; for (const w of st.toLowerCase().split(/\s+/)) { if (/^\d+$/.test(w)) count = Math.min(8, +w); else if (T_NUM[w]) count = T_NUM[w]; }
+    const tk = tToks(st), scored = LEARNED.map(m => ({ m, s: tScore(tk, m) })).filter(x => x.s >= 3).sort((a, b) => b.s - a.s);
+    if (scored.length) {
+      const top = scored.filter(x => x.s >= scored[0].s - 1);
+      for (let c = 0; c < count; c++) { const m = top[Math.floor(rnd() * top.length)].m; pieces.push(learnedPiece(m, rnd)); plan.push('🧠 ' + m.name); }
+      used = true;
+    } else { const a = S.textToMotion(st, 30, seed + i * 7919); pieces.push({ rest: a.rest, locals: a.locals, rootPos: a.rootPos, M: a.M }); plan.push(...a.plan); unknown.push(...(a.unknown || [])); styles.push(...(a.styles || [])); }
+  });
+  if (!used) return S.textToMotion(txt, 30, seed);
+  return { ...stitchPieces(pieces), plan, unknown, styles: [...new Set(styles)] };
+}
+async function loadLearned() {
+  try {
+    WORDMAP = JSON.parse(localStorage.getItem(L_WORDS) || '{}');
+    const idx = JSON.parse(localStorage.getItem(L_IDX) || '[]'), c = await caches.open('nocap-learned'), out = [];
+    for (const m of idx) { const r = await c.match('/m/' + m.id); if (r) out.push({ ...m, data: await r.json() }); }
+    LEARNED = out;
+  } catch (e) { console.warn('learned moves', e); }
+  renderTeach();
+}
+function saveLearnedIndex() { try { localStorage.setItem(L_IDX, JSON.stringify(LEARNED.map(({ data, ...m }) => m))); localStorage.setItem(L_WORDS, JSON.stringify(WORDMAP)); } catch (e) {} }
+function renderTeach() {
+  const known = [...LEARNED.map(m => '🧠 ' + m.words[0]), ...Object.keys(WORDMAP).map(k => '🔗 ' + k)];
+  $('ttmKnown').innerHTML = known.length ? 'Your AI also knows: ' + known.map(k => `<button class="btn small" data-w="${k.slice(2).trim()}" style="margin:2px">${k}</button>`).join('') : '';
+  $('tchList').innerHTML = (LEARNED.length ? '<div class="sub">Taught moves</div>' : '') + LEARNED.map(m => `<div class="row" style="gap:6px"><label style="flex:1">🧠 <b>${m.words.join(', ')}</b> <span class="mini">${(m.n / 30).toFixed(1)}s</span></label><button class="btn small" data-try="${m.id}">▶ Try</button><button class="btn small" data-del="${m.id}">🗑</button></div>`).join('')
+    + (Object.keys(WORDMAP).length ? '<div class="sub">Word links</div>' : '') + Object.entries(WORDMAP).map(([k, v]) => `<div class="row" style="gap:6px"><label style="flex:1">🔗 "${k}" → "${v}"</label><button class="btn small" data-wdel="${k}">🗑</button></div>`).join('');
+}
+async function fillTeachSources() {
+  if (anim) { $('tchSrc').innerHTML = '<option value="cur">The motion open now</option>'; $('tchA').value = 0; $('tchB').value = ((anim.n - 1) / anim.fps).toFixed(1); }
+  const keep = $('tchSrc').value;
+  let takes = []; try { takes = (await LIB.all()).sort((a, b) => (+b.mod || +b.id || 0) - (+a.mod || +a.id || 0)); } catch (e) {}
+  $('tchSrc').innerHTML = (anim ? '<option value="cur">The motion open now</option>' : '') + takes.map(k => `<option value="${k.id}">${(k.prompt ? '✍️ ' : '🎥 ') + (k.name || 'take')} · ${(+k.dur || 0).toFixed(1)}s</option>`).join('');
+  const setRange = () => { const v = $('tchSrc').value; let d = 0; if (v === 'cur' && anim) { d = (anim.n - 1) / anim.fps; $('tchA').value = (trim && trim.s) || 0; $('tchB').value = (trim && trim.e != null ? trim.e : d).toFixed(1); return; } const k = takes.find(x => String(x.id) === v); d = k ? +k.dur || 0 : 0; $('tchA').value = 0; $('tchB').value = d.toFixed(1); };
+  $('tchSrc').onchange = setRange; if (keep && [...$('tchSrc').options].some(o => o.value === keep)) $('tchSrc').value = keep; else setRange();
+}
+async function teachSave() {
+  const words = $('tchWords').value.split(/[,;\n]/).map(s => s.trim().toLowerCase()).filter(Boolean);
+  if (!words.length) { toast('Type a few words for this move first (e.g. "jab, quick punch").', true); return; }
+  const v = $('tchSrc').value || 'cur'; let a = null;
+  try {
+    if (v === 'cur') a = anim;
+    else { const take = (await LIB.all()).find(x => String(x.id) === v); if (!take) throw new Error('take not found');
+      const mine = readSettings(); quiet = true; writeSettings(take.settings);
+      try { a = take.prompt ? applyEdits(smartTextMotion(take.prompt, take.seed || 0), take.settings && take.settings.edits) : takeAnim(take); } finally { writeSettings(mine); quiet = false; } }
+    if (!a) throw new Error('nothing to learn from');
+    const A = Math.max(0, +$('tchA').value || 0), B = Math.max(A + 0.2, +$('tchB').value || (a.n - 1) / a.fps), cut = S.sliceAnim(a, A, B);
+    const n = Math.max(2, Math.round((cut.n - 1) / cut.fps * 30) + 1), q4 = x => Math.round(x * 1e4) / 1e4, locals = [], rootPos = [];
+    for (let i = 0; i < n; i++) { const smp = S.sample(cut, i / 30); locals.push(smp.locals.map(q => q.map(q4))); rootPos.push(smp.root.map(q4)); }
+    const r0 = rootPos[0]; for (const r of rootPos) { r[0] = q4(r[0] - r0[0]); r[2] = q4(r[2] - r0[2]); }
+    const id = Date.now(), data = { rest: cut.rest, M: cut.M || null, n, locals, rootPos };
+    const c = await caches.open('nocap-learned'); await c.put('/m/' + id, new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } }));
+    LEARNED.push({ id, name: words[0], words, n, data }); saveLearnedIndex(); renderTeach();
+    $('tchWords').value = ''; toast(`Learned "${words[0]}". Try a prompt like "${words[0]}, then ${words[0]}".`);
+  } catch (e) { console.error(e); toast('Could not learn that: ' + e.message, true); }
+}
+$('ttmTeachBtn').onclick = () => { const b = $('teachBox'); b.hidden = !b.hidden; if (!b.hidden) { fillTeachSources(); renderTeach(); } };
+$('tchSave').onclick = teachSave;
+$('wmAdd').onclick = () => { const f = $('wmFrom').value.trim().toLowerCase(), to = $('wmTo').value.trim().toLowerCase(); if (!f || !to) { toast('Fill in both words.', true); return; } WORDMAP[f] = to; saveLearnedIndex(); renderTeach(); $('wmFrom').value = $('wmTo').value = ''; toast(`Now "${f}" means "${to}".`); };
+$('tchList').onclick = async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.del) { const id = +b.dataset.del; LEARNED = LEARNED.filter(m => m.id !== id); saveLearnedIndex(); try { (await caches.open('nocap-learned')).delete('/m/' + id); } catch (er) {} renderTeach(); }
+  else if (b.dataset.wdel) { delete WORDMAP[b.dataset.wdel]; saveLearnedIndex(); renderTeach(); }
+  else if (b.dataset.try) { const m = LEARNED.find(x => x.id === +b.dataset.try); if (m) { $('ttmText').value = m.words[0]; runTextMotion(m.words[0]); } }
+};
+$('ttmKnown').onclick = e => { const b = e.target.closest('button[data-w]'); if (!b) return; const ta = $('ttmText'); ta.value = (ta.value.trim() ? ta.value.trim() + ', then ' : '') + b.dataset.w; };
+loadLearned();
 
 // ---------- exports ----------
 const outName = (ext, base) => `${base || videoName}_${$('naming').value}_${$('outFps').value}fps.${ext}`;
