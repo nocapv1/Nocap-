@@ -36,7 +36,7 @@
   --scene-bg:#080505; --floor:#130b0b; --grid1:#4a2525; --grid2:#241313; --body:#e4d6d6;
 }
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.45 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+html,body{overflow-x:hidden;max-width:100%;touch-action:manipulation;margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.45 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 button,select,input,textarea{font:inherit;color:inherit}
 header{display:flex;align-items:center;gap:14px;padding:12px 20px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,var(--panel),var(--bg))}
 .themebtn{position:relative;margin-left:8px;width:32px;height:32px;border-radius:50%;border:1px solid var(--line);background:var(--panel2);cursor:pointer;flex:none;font-size:15px;display:grid;place-items:center}
@@ -123,7 +123,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;font-size:12px}
 .stats div{background:#0e1118;border-radius:8px;padding:6px 8px;color:var(--dim)}
 .stats b{display:block;color:var(--text);font-weight:600}
-.modal{position:fixed;inset:0;background:#000a;display:none;place-items:center;z-index:60}
+.modal{overscroll-behavior:contain;touch-action:pan-y;position:fixed;inset:0;background:#000a;display:none;place-items:center;z-index:60}
 .modal .box{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:16px;width:min(560px,92vw)}
 .modal .box{max-height:calc(100dvh - 24px);overflow:auto}
 #camModal .box{display:flex;flex-direction:column;gap:10px}
@@ -1406,11 +1406,11 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
 
   <section class="card">
     <h2><span class="n">3</span>Refine <span style="margin-left:auto;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400">applies instantly</span></h2>
-    <div class="row"><label>Smoothing <span class="mini">left = snappy · right = very smooth</span></label><span><input type="range" id="smooth" min="0" max="1" step="0.01" value="0.45"></span><span class="val" id="smoothV">0.45</span></div>
+    <div class="row"><label>Smoothing <span class="mini">left = snappy · right = very smooth</span></label><span><input type="range" id="smooth" min="0" max="1" step="0.01" value="0.6"></span><span class="val" id="smoothV">0.60</span></div>
     <div class="sub">Feet</div>
     <div class="row"><label>Anti-slide <span class="mini">applied while processing</span></label><input type="checkbox" id="footLock" checked></div>
     <input type="checkbox" id="antiJitter" checked hidden>
-    <div class="row"><label>Foot lock <span class="mini">plant &amp; flatten on the floor</span></label><input type="checkbox" id="footIK" checked></div>
+    <div class="row"><label>Foot lock <span class="mini">plant &amp; flatten on the floor</span></label><input type="checkbox" id="footIK"></div>
     <div class="row"><label>Contact sensitivity</label><span><input type="range" id="contact" min="0.02" max="0.15" step="0.005" value="0.07"></span><span class="val" id="contactV">7cm</span></div>
     <div class="row"><label>Knee guard <span class="mini">no locked, snapping or backwards knees</span></label><input type="checkbox" id="kneeGuard" checked></div>
     <div class="row"><label>Ankle limits <span class="mini">no over-twist</span></label><input type="checkbox" id="ankleLimit" checked></div>
@@ -1748,7 +1748,7 @@ async function showPreviewBlob(blob, idx) {
 function useCodecMode(on) { $('pcv').style.display = on ? 'block' : 'none'; vid.style.display = on ? 'none' : ''; if (on) { vid.removeAttribute('src'); vid.load(); } }
 
 let loadToken = 0;
-async function loadVideo(file, name) {
+async function loadVideo(file, name, opts = {}) {
   const my = ++loadToken; pause(); curTime = 0; ttmCaption = null; trim = { s: 0, e: null }; $('trimBar').style.display = 'none'; $('trimBtn').classList.remove('on');
   name = name || file.name || 'video';
   const info = $('vinfo'), cp = $('cprog'), bar = cp.querySelector('i');
@@ -1811,7 +1811,7 @@ async function loadVideo(file, name) {
   info.innerHTML = `<span style="color:var(--accent);font-weight:600">✓ Video loaded</span> — ${name} · ${W}×${H} · ${D.toFixed(1)}s` + (converted ? ' · converted' : '') + '<br>Then tap <b>Generate motion</b> (✂️ on the play bar re-opens the trim window).';
   $('drop').innerHTML = '<b>✓ ' + name.replace(/[<>&]/g, '') + '</b><br>Tap to choose a different video';
   
-  if (D > 0.5) setTimeout(openTrimWindow, 300);
+  if (D > 0.5 && !opts.fromLibrary) setTimeout(openTrimWindow, 300);
   $('go').disabled = false; drawOverlay(); $('bigPlay').style.display = 'block';
   $('scrub').max = D; $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel(); requestRender();
 }
@@ -1836,15 +1836,15 @@ async function startCam() {
   try { await cv.play(); } catch (e) {}
 }
 $('camBtn').onclick = async () => {
-  try { $('camModal').style.display = 'grid'; await startCam(); }
-  catch (e) { $('camModal').style.display = 'none'; toast('Camera not available: ' + e.message, true); }
+  try { $('camModal').style.display = 'grid'; lockPage(); await startCam(); }
+  catch (e) { $('camModal').style.display = 'none'; unlockPage(); toast('Camera not available: ' + e.message, true); }
 };
 $('camFlip').onclick = async () => {
   if (recorder && recorder.state === 'recording') return;
   camFacing = camFacing === 'user' ? 'environment' : 'user';
   try { await startCam(); $('camStat').textContent = camFacing === 'user' ? 'Front camera' : 'Back camera'; } catch (e) { toast('Could not switch camera: ' + e.message, true); }
 };
-$('camClose').onclick = () => { if (recorder && recorder.state === 'recording') { recorder.onstop = null; recorder.stop(); } clearInterval(recTimer); $('camTimer').textContent = ''; $('recBtn').classList.remove('on'); camStream?.getTracks().forEach(t => t.stop()); camStream = null; $('camModal').style.display = 'none'; };
+$('camClose').onclick = () => { if (recorder && recorder.state === 'recording') { recorder.onstop = null; recorder.stop(); } clearInterval(recTimer); $('camTimer').textContent = ''; $('recBtn').classList.remove('on'); camStream?.getTracks().forEach(t => t.stop()); camStream = null; if ($('camModal').style.display !== 'none') { $('camModal').style.display = 'none'; unlockPage(); } };
 $('recBtn').onclick = () => {
   if (!camStream) return;
   if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
@@ -2043,15 +2043,15 @@ $('inPlace').addEventListener('change', () => { if (!frames && lastPrompt && ani
 const TTM_EXAMPLES = ['boxing stance then jab cross hook', 'boxer walking then 3 jabs', 'tired walk for 4 seconds', 'sneaky walk then jump', 'proud walk then wave', 'drunk walk', 'roundhouse kick', 'happy dance'];
 $('ttmChips').innerHTML = TTM_EXAMPLES.map(e => `<button class="btn small" data-e="${e}">${e}</button>`).join('');
 $('ttmChips').onclick = e => { const b = e.target.closest('button'); if (b) $('ttmText').value = b.dataset.e; };
-$('ttmBtn').onclick = () => { $('ttmModal').style.display = 'grid'; setTimeout(() => $('ttmText').focus(), 50); };
-$('ttmClose').onclick = () => ($('ttmModal').style.display = 'none');
+$('ttmBtn').onclick = () => { $('ttmModal').style.display = 'grid'; lockPage(); setTimeout(() => $('ttmText').focus(), 50); };
+$('ttmClose').onclick = () => { $('ttmModal').style.display = 'none'; unlockPage(); };
 $('ttmText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('ttmGo').click(); } });
 $('ttmGo').onclick = () => { const txt = $('ttmText').value.trim(); if (!txt) { toast('Type what the character should do.', true); return; } runTextMotion(txt); };
 function runTextMotion(txt, existingId, seed) {
   if (seed == null) seed = existingId ? (ttmSeeds[existingId] || 0) : Math.floor(Math.random() * 1e6) + 1;
   let a; try { a = S.textToMotion(txt, 30, seed); } catch (e) { toast(e.message, true, 9000); return; }
   lastPrompt = txt; if ($('inPlace').checked) a.rootPos = a.rootPos.map(r => [0, r[1], 0]);
-  $('ttmModal').style.display = 'none'; pause();
+  if ($('ttmModal').style.display !== 'none') { $('ttmModal').style.display = 'none'; unlockPage(); } pause();
   if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; currentSource = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = [];
   frames = null; meta = { fps: 30, dur: (a.n - 1) / 30, scans: 0 }; anim = a; videoName = txt.slice(0, 40).replace(/[^\w-]+/g, '_') || 'text_motion'; curTime = 0;
   $('vEmpty').style.display = 'none'; ttmCaption = txt; $('bigPlay').style.display = 'none';
@@ -2477,6 +2477,14 @@ function tmPlay() {
   };
   TM.raf = requestAnimationFrame(step);
 }
+let lockY = 0;
+function lockPage() { lockY = window.scrollY; const b = document.body.style; b.position = 'fixed'; b.top = -lockY + 'px'; b.left = '0'; b.right = '0'; b.width = '100%'; }
+function unlockPage() {
+  const b = document.body.style; b.position = ''; b.top = ''; b.left = ''; b.right = ''; b.width = '';
+  window.scrollTo(0, lockY);
+  // reset any zoom left over from the pop-up (iOS)
+  const m = document.querySelector('meta[name=viewport]'); if (m) { const c = m.content; m.content = c + ', maximum-scale=1'; setTimeout(() => (m.content = c), 300); }
+}
 function openTrimWindow() {
   const D = tmDur(); if (!D) { toast('Load a video first.', true); return; }
   pause();
@@ -2484,9 +2492,9 @@ function openTrimWindow() {
   const v = $('tVid'), c = $('tCv');
   if (codecSrc) { v.style.display = 'none'; c.style.display = 'block'; v.removeAttribute('src'); }
   else { c.style.display = 'none'; v.style.display = 'block'; if (v.src !== videoURL) { v.src = videoURL; v.load(); } }
-  $('trimModal').style.display = 'grid'; tmShow(s);
+  $('trimModal').style.display = 'grid'; lockPage(); tmShow(s);
 }
-function closeTrimWindow() { tmStop(); $('trimModal').style.display = 'none'; }
+function closeTrimWindow() { tmStop(); if ($('trimModal').style.display !== 'none') { $('trimModal').style.display = 'none'; unlockPage(); } }
 $('tClose').onclick = closeTrimWindow;
 $('tPlay').onclick = () => (TM.playing ? tmStop() : tmPlay());
 $('tSetA').onclick = () => { TM.s = Math.min(TM.cur, TM.e - 0.1); tmRender(); };
@@ -2665,7 +2673,7 @@ $('libList').onclick = async e => {
     clearTimeout(autosaveT);
     if (take.prompt) { quiet = true; writeSettings(take.settings); quiet = false; ttmSeeds[take.id] = take.seed || 0; runTextMotion(take.prompt, take.id, take.seed || 0); resetHistory(); return; }
     const vblob = take.videoBuf ? new Blob([take.videoBuf], { type: take.videoType || 'video/mp4' }) : take.video;
-    if (vblob) await loadVideo(vblob, take.videoName || take.name);
+    if (vblob) await loadVideo(vblob, take.videoName || take.name, { fromLibrary: true });
     else { pause(); if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = []; }
     quiet = true; writeSettings(take.settings); quiet = false; currentTakeId = take.id; resetHistory();
     if (take.settings && take.settings.trim) { trim = { ...take.settings.trim }; renderTrim(); }
