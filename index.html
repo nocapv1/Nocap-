@@ -660,7 +660,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const ks = []; mask.forEach((m, k) => m && ks.push(k));
     if (ks.length < 3) return { partial: false };
     const legs = ks.filter(k => [25, 26, 27, 28].filter(i => mask[k][i]).length >= 3).length / ks.length;
-    if (legs >= 0.5) return { partial: false, legs };
+    if (legs >= 0.5) return { partial: false, legs, armsOut: armsOutOf(frames, fps) };
     const hips = ks.filter(k => mask[k][23] && mask[k][24]).length / ks.length;
     const P = ks.map(k => pi[k]), shW = Math.max(0.02, median(P.map(p => Math.hypot(p[11][0] - p[12][0], p[11][1] - p[12][1]))));
     const cx = P.map(p => (p[11][0] + p[12][0]) / 2), cy = P.map(p => (p[11][1] + p[12][1]) / 2), sw = P.map(p => Math.hypot(p[11][0] - p[12][0], p[11][1] - p[12][1]));
@@ -684,20 +684,28 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       sit: (hips < 0.4 ? 1 : 0) + (shW > 0.28 ? 1 : 0) + (o.webcam ? 0.7 : 0) + (still ? 0.4 : 0) + 3 * fT * tW,
       idle: 0.8 + (hips >= 0.6 ? 1 : 0) + (still ? 0.3 : 0) + 3 * dT * tW,
     };
-    const kind = Object.keys(score).reduce((a, b) => (score[b] > score[a] ? b : a));
-    const why = { walk: 'you look like you\'re moving along', sit: hips < 0.4 ? 'your hips are out of shot and you\'re close to the camera, so probably sat down' : 'your thighs look level, so probably sat down', idle: 'upper body only and fairly still, so probably standing' }[kind];
-    return { partial: true, kind, why, legs, hips, score };
+    let kind = Object.keys(score).reduce((a, b) => (score[b] > score[a] ? b : a));
+    if (kind === 'walk' && bob.corr > 0.45 && bob.rate > 2.4) kind = 'run'; // fast rhythm = running
+    const why = { run: 'you look like you\'re moving along quickly', walk: 'you look like you\'re moving along', sit: hips < 0.4 ? 'your hips are out of shot and you\'re close to the camera, so probably sat down' : 'your thighs look level, so probably sat down', idle: 'upper body only and fairly still, so probably standing' }[kind];
+    return { partial: true, kind, why, legs, hips, score, armsOut: armsOutOf(frames, fps) };
+  }
+  // how much of the clip each arm is out of shot (0..1)
+  function armsOutOf(frames, fps) {
+    const pi = frames.map(f => f.pi), m = armMask(frames.map(f => f.pw), pi, fps, { Left: frames.map(f => !!f.hl), Right: frames.map(f => !!f.hr) });
+    const ks = m.map((x, k) => (x ? k : -1)).filter(k => k >= 0); if (!ks.length) return { Left: 0, Right: 0 };
+    return { Left: ks.filter(k => !m[k][15]).length / ks.length, Right: ks.filter(k => !m[k][16]).length / ks.length };
   }
   // replace what the camera never saw: arms out of the picture hang relaxed (or rest on the lap when sitting), and when the
   // legs aren't in the video they get a chosen walking / sitting / standing pose built around the real upper body
   function offscreenFill(P, mask, M, opt, fps, ys, R) {
-    const n = P.length, kind = ['walk', 'sit', 'idle'].includes(opt.lowerBody) ? opt.lowerBody : null, Y = [0, 1, 0];
+    const n = P.length, kind = ['walk', 'run', 'sit', 'idle'].includes(opt.lowerBody) ? opt.lowerBody : null, Y = [0, 1, 0], moving = kind === 'walk' || kind === 'run', guardArm = opt.armPose === 'guard';
     P = P.map(a => a.map(p => p.slice()));
     let lastLr = [1, 0, 0];
     const lrOf = (a, b) => { const v = sub(a, b), l = Math.hypot(v[0], v[2]); if (l > 1e-4) lastLr = [v[0] / l, 0, v[2] / l]; return lastLr; };
-    let rate = 1.8; if (kind === 'walk') { const b = bobRate(ys, fps); if (b.corr > 0.45 && b.rate > 1.2 && b.rate < 2.8) rate = b.rate; }
-    const om = Math.PI * rate, A = 0.4; // one step = half a gait cycle
-    const legAng = (k, sx) => { const ps = om * k / fps + (sx > 0 ? 0 : Math.PI); return [A * Math.sin(ps), 0.12 + 0.95 * Math.pow(Math.max(0, Math.cos(ps + 0.5)), 1.5)]; };
+    const run = kind === 'run';
+    let rate = run ? 2.8 : 1.8; if (moving) { const b = bobRate(ys, fps); if (b.corr > 0.45 && (run ? b.rate > 2.2 && b.rate < 3.6 : b.rate > 1.2 && b.rate < 2.8)) rate = b.rate; }
+    const om = Math.PI * rate, A = run ? 0.62 : 0.4; // one step = half a gait cycle
+    const legAng = (k, sx) => { const ps = om * k / fps + (sx > 0 ? 0 : Math.PI); return [A * Math.sin(ps), (run ? 0.25 : 0.12) + (run ? 1.55 : 0.95) * Math.pow(Math.max(0, Math.cos(ps + 0.5)), 1.5)]; };
     const relax = {}, am = armMask(P.map(() => 1), opt._pi0 || [], fps, opt._hands);
     for (const [S, sx, i] of SIDES) {
       // out of shot = the whole arm goes down by the side and stays still (the AI's guesses for it are ignored)
@@ -706,14 +714,22 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       for (let k = 0; k < n; k++) {
         if (wE[k] <= 0 && wW[k] <= 0) continue;
         const p = P[k], lr = lrOf(p[11], p[12]), fwd = cross(lr, Y);
-        const swing = kind === 'walk' ? -0.7 * legAng(k, sx)[0] : 0;
-        const ue = norm(add(add(sc(Y, -Math.cos(swing)), sc(fwd, Math.sin(swing))), sc(lr, sx * (kind === 'sit' ? 0.2 : 0.12)))); // a touch out to clear the seat
+        const swing = moving ? (run ? -1.0 : -0.7) * legAng(k, sx)[0] : 0;
+        let ue, fd;
+        if (guardArm) { // 🥊 boxing guard: elbows tucked, fists up by the chin (a little bounce when moving)
+          const bob = moving ? 0.04 * Math.sin(om * k / fps * 2) : 0;
+          ue = norm(add(add(sc(Y, -0.82), sc(fwd, 0.42 + bob)), sc(lr, sx * 0.12)));
+          fd = norm(add(add(sc(Y, 0.82), sc(fwd, 0.5)), sc(lr, -sx * 0.32)));
+        } else { // 🧍 down by the side (swinging naturally when walking / running)
+          ue = norm(add(add(sc(Y, -Math.cos(swing)), sc(fwd, Math.sin(swing))), sc(lr, sx * (kind === 'sit' ? 0.2 : 0.12)))); // a touch out to clear the seat
+          const s2 = run ? swing + 1.35 : swing * 1.2 + 0.1; // running: elbow bent ~80°
+          fd = norm(add(add(sc(Y, -Math.cos(s2)), sc(fwd, Math.sin(s2))), sc(lr, sx * (kind === 'sit' ? 0.1 : 0.04))));
+        }
         const el = lerp(p[i.el], add(p[i.sh], sc(ue, M.upper)), wE[k]);
-        const s2 = swing * 1.2 + 0.1, fd = norm(add(add(sc(Y, -Math.cos(s2)), sc(fwd, Math.sin(s2))), sc(lr, sx * (kind === 'sit' ? 0.1 : 0.04)))); // hanging by the side
         p[i.el] = el;
         if (wW[k] <= 0) continue;
         const wr = lerp(p[i.wr], add(el, sc(fd, M.fore)), wW[k]);
-        const d = norm(sub(wr, el)), sv = norm(perp(fwd, d)), h = M.hand;
+        const d = norm(sub(wr, el)), sv = norm(perp(guardArm ? sc(fwd, -1) : fwd, d)), h = M.hand;
         const want = { [i.ix]: add(add(wr, sc(d, 0.8 * h)), sc(sv, 0.025)), [i.pk]: sub(add(wr, sc(d, 0.75 * h)), sc(sv, 0.025)), [i.wr + 6]: add(add(wr, sc(d, 0.4 * h)), sc(sv, 0.035)) };
         p[i.wr] = wr;
         for (const j in want) p[j] = lerp(p[j], want[j], wW[k]);
@@ -723,11 +739,11 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     if (kind) {
       const keepHips = mask.filter(m => m && m[23] && m[24]).length / Math.max(1, mask.filter(Boolean).length) > 0.6;
       let v = 0;
-      if (kind === 'walk' && R && n > 1) { const moved = Math.hypot(R[n - 1][0] - R[0][0], R[n - 1][2] - R[0][2]) / (n / fps); if (moved < 0.35) v = (M.thigh + M.shin) * A * om * 2 / Math.PI; } // the video itself isn't travelling: walk forward
+      if (moving && R && n > 1) { const moved = Math.hypot(R[n - 1][0] - R[0][0], R[n - 1][2] - R[0][2]) / (n / fps); if (moved < 0.35) v = (M.thigh + M.shin) * A * om * 2 / Math.PI; } // the video itself isn't travelling: walk forward
       let tr = [0, 0, 0];
       // the base of the body (hips) follows the shoulders only slowly: waving an arm lifts / turns the shoulder line a bit, and that
       // must bend the spine, not swing the whole body. Sitting = steadiest.
-      const hw = Math.max(1, Math.round(fps * ({ sit: 1.0, idle: 0.6, walk: 0.25 }[kind])));
+      const hw = Math.max(1, Math.round(fps * ({ sit: 1.0, idle: 0.6, walk: 0.25, run: 0.2 }[kind])));
       const msA = P.map(p => mid(p[11], p[12])), lrA = P.map(p => { const v = sub(p[11], p[12]); return [v[0], 0, v[2]]; });
       const avg = (A, k) => { let s0 = [0, 0, 0], c = 0; for (let q = k - hw; q <= k + hw; q++) if (q >= 0 && q < n) { s0 = add(s0, A[q]); c++; } return sc(s0, 1 / c); };
       const msS = msA.map((_, k) => avg(msA, k)), lrS = lrA.map((_, k) => avg(lrA, k));
@@ -738,7 +754,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         const fwd = cross(lr, Y);
         for (const [, sx, i] of SIDES) {
           let th, sh;
-          if (kind === 'walk') { const [a, kn] = legAng(k, sx); th = add(sc(Y, -Math.cos(a)), sc(fwd, Math.sin(a))); sh = add(sc(Y, -Math.cos(a - kn)), sc(fwd, Math.sin(a - kn))); }
+          if (moving) { const [a, kn] = legAng(k, sx); th = add(sc(Y, -Math.cos(a)), sc(fwd, Math.sin(a))); sh = add(sc(Y, -Math.cos(a - kn)), sc(fwd, Math.sin(a - kn))); }
           else if (kind === 'sit') { th = norm(add(add(fwd, sc(Y, -0.08)), sc(lr, sx * 0.1))); sh = norm(add(sc(Y, -1), sc(fwd, 0.12))); }
           else { const b = 0.04 + 0.025 * Math.sin(2 * Math.PI * k / fps / 5 + (sx > 0 ? 0 : Math.PI)); th = norm(add(add(sc(Y, -1), sc(fwd, b)), sc(lr, sx * 0.03))); sh = norm(add(sc(Y, -1), sc(fwd, -b * 0.6))); }
           const kn = add(p[i.hip], sc(th, M.thigh)), an = add(kn, sc(sh, M.shin));
@@ -939,14 +955,14 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     // ---- depth recovery: limbs pointing at / away from the camera look too short; restore true length along the camera axis ----
     if (opt.depthFix !== false) P = recoverDepth(P, dt);
     const M = measure(pw.map(a => a.map(toY)), hlF && hlF.map(a => a.map(toY)), hrF && hrF.map(a => a.map(toY)));
-    const synthLegs = ['walk', 'sit', 'idle'].includes(opt.lowerBody);
+    const synthLegs = ['walk', 'run', 'sit', 'idle'].includes(opt.lowerBody);
     if (synthLegs) { // legs never seen: normal proportions from the upper body
       const T = clamp(M.torso, 1.25 * M.shoulderW, 1.75 * M.shoulderW);
       Object.assign(M, { torso: T, thigh: 0.84 * T, shin: 0.8 * T, foot: 0.3 * T, ankleH: 0.14 * T, hipW: clamp(M.hipW, 0.45 * M.shoulderW, 0.75 * M.shoulderW) });
     }
     const off = opt.offscreen === false ? null : offscreenFill(P, mask0, M, opt, fps, piF ? piF.map(p => (p[11][1] + p[12][1]) / 2 / opt.H) : P.map(() => 0), R);
     if (off) P = off.P;
-    if (synthLegs) for (const S of ['Left', 'Right']) footStill[S] = footStill[S].map(() => opt.lowerBody !== 'walk');
+    if (synthLegs) for (const S of ['Left', 'Right']) footStill[S] = footStill[S].map(() => opt.lowerBody !== 'walk' && opt.lowerBody !== 'run');
     const rest = buildRest(M);
     { // calibrate the face's neutral direction: on average the head faces where the chest faces
       const pitches = P.map(p => {
@@ -957,6 +973,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       rest.headFwd = [0, Math.sin(pm), Math.cos(pm)];
     }
     let locals = applyLimits(rest, forearmTwistFix(rest, P.map((p, k) => solveFrame(p, HL && !(off && off.relax.Left[k] > 0.5) ? HL[k] : null, HR && !(off && off.relax.Right[k] > 0.5) ? HR[k] : null, rest)), fps, HL, HR), { ...opt, hasHand: { Left: !!HL, Right: !!HR } });
+    if (off && opt.armPose === 'guard') for (const S of ['Left', 'Right']) locals.forEach((l, k) => { if (off.relax[S][k] > 0.5) fingerCurl(rest, l, S, 'fist'); }); // 🥊 guard = fists
     // keep quaternion hemispheres continuous
     for (let k = 1; k < n; k++) for (let j = 0; j < locals[k].length; j++) {
       const a = locals[k - 1][j], b = locals[k][j];
@@ -1767,7 +1784,16 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     // fighting stance: lead (left) foot forward, rear foot back, both knees bent, weight on the balls of the feet
     LeftUpLeg: V(0.14, -0.92, 0.42), LeftLeg: V(0.06, -1, -0.04), RightUpLeg: V(-0.12, -1, -0.12), RightLeg: V(-0.04, -0.95, -0.42) };
   const GUARD_LOW = { LeftUpLeg: V(0.15, -0.85, 0.52), LeftLeg: V(0.06, -1, -0.12), RightUpLeg: V(-0.12, -0.97, -0.05), RightLeg: V(-0.04, -0.9, -0.5) };
-  const pose = (dirs = {}, o = {}) => ({ dirs: { ...BASE, ...dirs }, hipsYaw: 0, hipsPitch: 0, chestYaw: 0, chestPitch: 0, headPitch: 0, rootY: 0, ...o });
+  const pose = (dirs = {}, o = {}) => ({ dirs: { ...BASE, ...dirs }, hipsYaw: 0, hipsPitch: 0, chestYaw: 0, chestPitch: 0, chestRoll: 0, headPitch: 0, headYaw: 0, rootY: 0, ...o });
+  // crouched legs for dips / bobbing (fighting stance, lead leg left)
+  const DIP = { LeftUpLeg: V(0.15, -0.72, 0.68), LeftLeg: V(0.06, -1, -0.3), RightUpLeg: V(-0.12, -0.88, 0.2), RightLeg: V(-0.04, -0.78, -0.62) };
+  const DEEP = { LeftUpLeg: V(0.16, -0.52, 0.85), LeftLeg: V(0.06, -1, -0.42), RightUpLeg: V(-0.12, -0.72, 0.5), RightLeg: V(-0.04, -0.68, -0.74) };
+  // fighter guards
+  const PEEK = { LeftArm: V(0.15, -0.85, 0.5), LeftForeArm: V(-0.3, 0.92, 0.25), RightArm: V(-0.15, -0.88, 0.45), RightForeArm: V(0.3, 0.93, 0.2) }; // Tyson peek-a-boo
+  const LOWHANDS = { LeftArm: V(0.3, -1, 0.25), LeftForeArm: V(-0.1, -0.2, 1), RightArm: V(-0.3, -1, 0.15), RightForeArm: V(0.15, -0.5, 0.85) }; // Ali
+  const ROLL = { LeftArm: V(0.15, -1, 0.3), LeftForeArm: V(-1, 0.05, 0.35), RightArm: V(-0.3, -0.85, 0.4), RightForeArm: V(0.3, 0.92, 0.4) }; // Mayweather shoulder roll
+  const ADDRESS = { LeftArm: V(-0.2, -0.85, 0.45), LeftForeArm: V(-0.1, -0.9, 0.4), RightArm: V(0.2, -0.85, 0.45), RightForeArm: V(0.1, -0.9, 0.4), LeftUpLeg: V(0.12, -1, 0.12), LeftLeg: V(0.05, -1, -0.12), RightUpLeg: V(-0.12, -1, 0.12), RightLeg: V(-0.05, -1, -0.12) };
+  const CHAIR = { LeftUpLeg: V(0.08, -0.05, 1), LeftLeg: V(0, -1, 0.08), RightUpLeg: V(-0.08, -0.05, 1), RightLeg: V(0, -1, 0.08) };
   const guardP = (extra = {}, o = {}) => pose({ ...GUARD, ...extra }, { hipsYaw: -38, chestYaw: -8, chestPitch: 8, headPitch: 14, ...o, guard: 1 });
   // each move: dur (s), keys [[time 0..1, pose]], optional travel (m/s forward), loop flag
   const MOVES = {
@@ -1785,6 +1811,64 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     spin: { dur: 1.2, keys: [[0, pose()], [0.5, pose({ LeftArm: V(1, -0.2, 0), RightArm: V(-1, -0.2, 0), LeftForeArm: V(1, -0.2, 0), RightForeArm: V(-1, -0.2, 0) }, { hipsYaw: 180 })], [1, pose({}, { hipsYaw: 360 })]] },
     dance: { dur: 2, loop: true, keys: [0, 0.25, 0.5, 0.75, 1].map((tt, i) => [tt, pose({ LeftArm: V(0.6, i % 2 ? 0.6 : -0.2, 0.5), LeftForeArm: V(0, 1, 0.3), RightArm: V(-0.6, i % 2 ? -0.2 : 0.6, 0.5), RightForeArm: V(0, 1, 0.3), LeftUpLeg: V(0.08, -1, i % 2 ? 0.25 : 0), LeftLeg: V(0, -1, i % 2 ? -0.3 : 0), RightUpLeg: V(-0.08, -1, i % 2 ? 0 : 0.25), RightLeg: V(0, -1, i % 2 ? 0 : -0.3) }, { hipsYaw: i % 2 ? 15 : -15, chestYaw: i % 2 ? -10 : 10, rootY: i % 2 ? -0.06 : 0 })]) },
   };
+  const K = (...ks) => ks; // readability
+  Object.assign(MOVES.jab, { side: 'L' }); Object.assign(MOVES.cross, { side: 'R' }); Object.assign(MOVES.hook, { side: 'L' }); Object.assign(MOVES.uppercut, { side: 'R' });
+  Object.assign(MOVES.kick, { side: 'R', legs: true }); Object.assign(MOVES.roundhouse, { side: 'R', legs: true }); Object.assign(MOVES.wave, { side: 'R' });
+  Object.assign(MOVES, {
+    bodyhook: { dur: 0.75, side: 'L', keys: K([0, guardP()], [0.3, guardP({ ...DIP }, { chestYaw: -25, chestPitch: 16 })], [0.55, guardP({ ...DIP, LeftArm: V(0.65, -0.4, 0.7), LeftForeArm: V(-0.85, -0.15, 0.5) }, { chestYaw: 32, hipsYaw: 5, chestPitch: 22 })], [1, guardP()]) },
+    bodyjab: { dur: 0.6, side: 'L', keys: K([0, guardP()], [0.4, guardP({ ...DIP, LeftArm: V(0.05, -0.35, 1), LeftForeArm: V(0, -0.3, 1) }, { chestYaw: -12, hipsYaw: -45, chestPitch: 22 })], [0.55, guardP({ ...DIP, LeftArm: V(0.05, -0.35, 1), LeftForeArm: V(0, -0.3, 1) }, { chestYaw: -12, hipsYaw: -45, chestPitch: 22 })], [1, guardP()]) },
+    slip: { dur: 0.55, side: 'R', keys: K([0, guardP()], [0.45, guardP({ ...DIP }, { chestRoll: 16, chestYaw: -14, chestPitch: 16, headPitch: 18 })], [1, guardP()]) },
+    weave: { dur: 0.95, side: 'R', keys: K([0, guardP()], [0.35, guardP({ ...DEEP }, { chestRoll: -14, chestPitch: 26, chestYaw: 8 })], [0.65, guardP({ ...DEEP }, { chestRoll: 14, chestPitch: 26, chestYaw: -12 })], [1, guardP()]) },
+    block: { dur: 0.9, keys: K([0, guardP()], [0.3, guardP({ LeftArm: V(0.15, -0.4, 0.9), LeftForeArm: V(-0.1, 1, 0.2), RightArm: V(-0.15, -0.4, 0.9), RightForeArm: V(0.1, 1, 0.2) }, { chestPitch: 16, headPitch: 24 })], [0.7, guardP({ LeftArm: V(0.15, -0.4, 0.9), LeftForeArm: V(-0.1, 1, 0.2), RightArm: V(-0.15, -0.4, 0.9), RightForeArm: V(0.1, 1, 0.2) }, { chestPitch: 16, headPitch: 24 })], [1, guardP()]) },
+    knee: { dur: 0.9, side: 'R', legs: true, keys: K([0, guardP()], [0.45, guardP({ RightUpLeg: V(-0.05, 0.35, 1), RightLeg: V(0, -1, -0.1), LeftArm: V(0.3, 0.4, 0.8), LeftForeArm: V(0, 0.6, 0.8), RightArm: V(-0.3, 0.4, 0.8), RightForeArm: V(0, 0.6, 0.8) }, { chestPitch: -8, hipsYaw: -10 })], [1, guardP()]) },
+    elbow: { dur: 0.6, side: 'L', keys: K([0, guardP()], [0.5, guardP({ LeftArm: V(0.6, 0.15, 0.75), LeftForeArm: V(-1, 0.05, -0.1) }, { chestYaw: 35, hipsYaw: 0 })], [1, guardP()]) },
+    teep: { dur: 0.9, side: 'L', legs: true, keys: K([0, guardP()], [0.3, guardP({ LeftUpLeg: V(0.1, 0.1, 1), LeftLeg: V(0.05, -0.9, 0.4) }, { chestPitch: -12 })], [0.5, guardP({ LeftUpLeg: V(0.1, 0.25, 1), LeftLeg: V(0.05, 0.15, 1) }, { chestPitch: -18 })], [0.75, guardP({ LeftUpLeg: V(0.1, 0.1, 1), LeftLeg: V(0.05, -0.9, 0.4) })], [1, guardP()]) },
+    shuffle: { dur: 0.8, loop: true, keys: K([0, guardP()], [0.25, guardP({ LeftUpLeg: V(0.14, -0.95, 0.3), RightUpLeg: V(-0.12, -1, 0.05), RightLeg: V(-0.04, -1, -0.2) })], [0.5, guardP()], [0.75, guardP({ LeftUpLeg: V(0.14, -0.95, 0.55), LeftLeg: V(0.06, -1, -0.1), RightUpLeg: V(-0.12, -0.95, -0.3), RightLeg: V(-0.04, -0.9, -0.55) })], [1, guardP()]) },
+    turn: { dur: 0.8, keys: K([0, pose()], [1, pose()]) },
+    soccerkick: { dur: 1.1, side: 'R', legs: true, keys: K([0, pose()], [0.35, pose({ RightUpLeg: V(-0.05, -0.85, -0.5), RightLeg: V(0, -0.2, -1), LeftArm: V(0.7, -0.3, 0.4), RightArm: V(-0.6, -0.5, -0.4), LeftUpLeg: V(0.05, -1, 0.15), LeftLeg: V(0, -1, -0.1) }, { chestPitch: 5, chestYaw: -15 })], [0.55, pose({ RightUpLeg: V(-0.02, -0.4, 0.95), RightLeg: V(0, -0.3, 1), LeftArm: V(0.75, -0.2, -0.3), RightArm: V(-0.5, -0.5, 0.6) }, { chestPitch: -12, chestYaw: 15 })], [0.75, pose({ RightUpLeg: V(-0.02, 0.05, 1), RightLeg: V(0, 0.1, 1) }, { chestPitch: -15 })], [1, pose()]) },
+    golf: { dur: 2.8, side: 'R', all: true, keys: K([0, pose(ADDRESS, { chestPitch: 35, headPitch: 22 })], [0.12, pose(ADDRESS, { chestPitch: 35, headPitch: 22 })],
+      [0.45, pose({ ...ADDRESS, LeftArm: V(-0.85, 0.35, 0.35), LeftForeArm: V(-0.5, 0.85, -0.1), RightArm: V(-0.6, 0.2, -0.6), RightForeArm: V(-0.1, 0.95, 0.3) }, { chestYaw: -85, hipsYaw: -40, chestPitch: 25, headPitch: 22 })],
+      [0.6, pose(ADDRESS, { chestYaw: 15, hipsYaw: 30, chestPitch: 33, headPitch: 22 })],
+      [0.78, pose({ ...ADDRESS, LeftArm: V(0.55, 0.5, -0.4), LeftForeArm: V(0.1, 0.9, -0.35), RightArm: V(0.85, 0.35, 0.3), RightForeArm: V(0.4, 0.85, -0.2), RightUpLeg: V(-0.05, -1, -0.2), RightLeg: V(0, -0.8, -0.6) }, { chestYaw: 95, hipsYaw: 75, chestPitch: -5, headPitch: -5 })],
+      [1, pose({ ...ADDRESS, LeftArm: V(0.55, 0.5, -0.4), LeftForeArm: V(0.1, 0.9, -0.35), RightArm: V(0.85, 0.35, 0.3), RightForeArm: V(0.4, 0.85, -0.2), RightUpLeg: V(-0.05, -1, -0.2), RightLeg: V(0, -0.8, -0.6) }, { chestYaw: 95, hipsYaw: 75, chestPitch: -5, headPitch: -5 })]) },
+    bat: { dur: 1.8, side: 'R', all: true, keys: K([0, pose({ LeftArm: V(-0.6, -0.1, 0.6), LeftForeArm: V(-0.6, 0.6, 0.3), RightArm: V(-0.9, -0.3, 0.1), RightForeArm: V(0.1, 0.9, 0.2), LeftUpLeg: V(0.18, -1, 0), RightUpLeg: V(-0.18, -1, 0), LeftLeg: V(0.05, -1, -0.1), RightLeg: V(-0.05, -1, -0.1) }, { chestYaw: -30, chestPitch: 12 })],
+      [0.3, pose({ LeftArm: V(-0.6, -0.1, 0.6), LeftForeArm: V(-0.6, 0.6, 0.3), RightArm: V(-0.9, -0.3, 0.1), RightForeArm: V(0.1, 0.9, 0.2), LeftUpLeg: V(0.12, -0.6, 0.75), LeftLeg: V(0.05, -1, 0) }, { chestYaw: -40, chestPitch: 12 })],
+      [0.5, pose({ LeftArm: V(0.4, -0.1, 0.9), LeftForeArm: V(0.6, 0, 0.8), RightArm: V(0.1, -0.2, 1), RightForeArm: V(0.5, 0, 0.85), LeftUpLeg: V(0.2, -1, 0.3), RightUpLeg: V(-0.15, -1, -0.15), RightLeg: V(-0.05, -0.85, -0.5) }, { chestYaw: 60, hipsYaw: 40, chestPitch: 10 })],
+      [0.75, pose({ LeftArm: V(0.9, 0.2, -0.1), LeftForeArm: V(0.4, 0.6, -0.6), RightArm: V(0.6, 0.3, 0.6), RightForeArm: V(0.6, 0.5, -0.4), LeftUpLeg: V(0.2, -1, 0.3), RightUpLeg: V(-0.15, -1, -0.15), RightLeg: V(-0.05, -0.85, -0.5) }, { chestYaw: 100, hipsYaw: 60 })], [1, pose({ LeftArm: V(0.9, 0.2, -0.1), LeftForeArm: V(0.4, 0.6, -0.6), RightArm: V(0.6, 0.3, 0.6), RightForeArm: V(0.6, 0.5, -0.4) }, { chestYaw: 90, hipsYaw: 50 })]) },
+    throw: { dur: 1.5, side: 'R', all: true, keys: K([0, pose()], [0.35, pose({ RightArm: V(-0.8, 0.3, -0.5), RightForeArm: V(-0.2, 1, -0.3), LeftArm: V(0.3, 0.2, 0.9), LeftForeArm: V(0.1, 0.3, 1), LeftUpLeg: V(0.1, 0.2, 0.9), LeftLeg: V(0, -1, 0.1) }, { chestYaw: -40 })],
+      [0.6, pose({ RightArm: V(-0.3, 0.6, 0.8), RightForeArm: V(0, 0.4, 1), LeftArm: V(0.6, -0.6, -0.3), LeftUpLeg: V(0.12, -0.75, 0.6), LeftLeg: V(0, -1, -0.1), RightUpLeg: V(-0.1, -0.9, -0.4), RightLeg: V(0, -0.8, -0.6) }, { chestYaw: 30, chestPitch: 20 })],
+      [0.8, pose({ RightArm: V(0.4, -0.6, 0.6), RightForeArm: V(0.6, -0.6, 0.5), LeftUpLeg: V(0.12, -0.75, 0.6), LeftLeg: V(0, -1, -0.1), RightUpLeg: V(-0.1, -0.9, -0.4), RightLeg: V(0, -0.8, -0.6) }, { chestYaw: 35, chestPitch: 35 })], [1, pose()]) },
+    serve: { dur: 1.8, side: 'R', all: true, keys: K([0, pose({ RightArm: V(-0.4, -0.8, 0.4), LeftArm: V(0.2, -0.6, 0.8) })], [0.35, pose({ LeftArm: V(0.1, 1, 0.2), LeftForeArm: V(0, 1, 0.1), RightArm: V(-0.9, 0.1, -0.3), RightForeArm: V(-0.1, 1, -0.4), LeftUpLeg: V(0.06, -0.9, 0.4), LeftLeg: V(0, -1, -0.3), RightUpLeg: V(-0.06, -0.9, 0.4), RightLeg: V(0, -1, -0.3) }, { chestPitch: -15 })],
+      [0.6, pose({ RightArm: V(-0.2, 1, 0.3), RightForeArm: V(0, 0.8, 0.6) }, { chestPitch: 5, chestYaw: 20 })], [0.8, pose({ RightArm: V(0.4, -0.5, 0.7), RightForeArm: V(0.6, -0.5, 0.5) }, { chestPitch: 30, chestYaw: 35 })], [1, pose()]) },
+    forehand: { dur: 1.4, side: 'R', all: true, keys: K([0, pose({ RightArm: V(-0.4, -0.6, 0.6), RightForeArm: V(0, -0.2, 1), LeftArm: V(0.3, -0.6, 0.7) })], [0.35, pose({ RightArm: V(-0.9, -0.3, -0.3), RightForeArm: V(-0.5, 0, -0.8), LeftArm: V(0.3, -0.3, 0.9), LeftForeArm: V(-0.4, 0, 0.9) }, { chestYaw: -60, hipsYaw: -30 })],
+      [0.6, pose({ RightArm: V(-0.1, -0.1, 1), RightForeArm: V(0.3, 0.2, 0.9) }, { chestYaw: 20, hipsYaw: 10 })], [0.8, pose({ RightArm: V(0.6, 0.1, 0.8), RightForeArm: V(0.7, 0.4, 0.4) }, { chestYaw: 55, hipsYaw: 30 })], [1, pose()]) },
+    shoot: { dur: 1.5, side: 'R', all: true, keys: K([0, pose({ RightArm: V(-0.15, -0.2, 0.95), RightForeArm: V(0, 0.6, 0.8), LeftArm: V(0.3, -0.2, 0.95), LeftForeArm: V(-0.4, 0.6, 0.6) })],
+      [0.3, pose({ RightArm: V(-0.15, 0.1, 0.95), RightForeArm: V(0, 0.95, 0.3), LeftArm: V(0.3, 0, 0.95), LeftForeArm: V(-0.3, 0.9, 0.3), LeftUpLeg: V(0.06, -0.6, 0.8), LeftLeg: V(0, -1, -0.45), RightUpLeg: V(-0.06, -0.6, 0.8), RightLeg: V(0, -1, -0.45) }, { chestPitch: 15 })],
+      [0.55, pose({ RightArm: V(-0.05, 0.95, 0.3), RightForeArm: V(0, 1, 0.25), LeftArm: V(0.2, 0.8, 0.5), LeftForeArm: V(-0.4, 0.9, 0.2) }, { rootY: 0.3, air: 1 })], [0.65, pose({ RightArm: V(-0.05, 0.95, 0.3), RightForeArm: V(0, 0.55, 0.85), LeftArm: V(0.3, 0.7, 0.6) }, { rootY: 0.25, air: 1 })],
+      [0.85, pose({ RightArm: V(-0.05, 0.8, 0.6), RightForeArm: V(0, 0.4, 0.9), LeftUpLeg: V(0.06, -0.75, 0.6), LeftLeg: V(0, -1, -0.3), RightUpLeg: V(-0.06, -0.75, 0.6), RightLeg: V(0, -1, -0.3) }, { chestPitch: 10 })], [1, pose()]) },
+    dribble: { dur: 0.55, loop: true, side: 'R', all: true, keys: K([0, pose({ RightArm: V(-0.3, -0.6, 0.6), RightForeArm: V(-0.05, -0.4, 0.9), LeftArm: V(0.4, -0.6, 0.6), LeftForeArm: V(0.1, -0.2, 1), LeftUpLeg: V(0.12, -0.85, 0.45), LeftLeg: V(0.04, -1, -0.25), RightUpLeg: V(-0.12, -0.85, 0.45), RightLeg: V(-0.04, -1, -0.25) }, { chestPitch: 25 })],
+      [0.5, pose({ RightArm: V(-0.3, -0.75, 0.55), RightForeArm: V(-0.05, -0.95, 0.3), LeftArm: V(0.4, -0.6, 0.6), LeftForeArm: V(0.1, -0.2, 1), LeftUpLeg: V(0.12, -0.85, 0.45), LeftLeg: V(0.04, -1, -0.25), RightUpLeg: V(-0.12, -0.85, 0.45), RightLeg: V(-0.04, -1, -0.25) }, { chestPitch: 25 })], [1, pose({ RightArm: V(-0.3, -0.6, 0.6), RightForeArm: V(-0.05, -0.4, 0.9), LeftArm: V(0.4, -0.6, 0.6), LeftForeArm: V(0.1, -0.2, 1), LeftUpLeg: V(0.12, -0.85, 0.45), LeftLeg: V(0.04, -1, -0.25), RightUpLeg: V(-0.12, -0.85, 0.45), RightLeg: V(-0.04, -1, -0.25) }, { chestPitch: 25 })]) },
+    clap: { dur: 0.6, loop: true, keys: K([0, pose({ LeftArm: V(0.3, -0.5, 0.85), LeftForeArm: V(0.15, 0.1, 1), RightArm: V(-0.3, -0.5, 0.85), RightForeArm: V(-0.15, 0.1, 1) })], [0.5, pose({ LeftArm: V(0.25, -0.45, 0.88), LeftForeArm: V(-0.55, 0.1, 0.83), RightArm: V(-0.25, -0.45, 0.88), RightForeArm: V(0.55, 0.1, 0.83) })], [1, pose({ LeftArm: V(0.3, -0.5, 0.85), LeftForeArm: V(0.15, 0.1, 1), RightArm: V(-0.3, -0.5, 0.85), RightForeArm: V(-0.15, 0.1, 1) })]) },
+    celebrate: { dur: 1.6, keys: K([0, pose()], [0.25, pose({ LeftArm: V(0.4, 1, 0.1), LeftForeArm: V(0.15, 1, 0), RightArm: V(-0.4, 1, 0.1), RightForeArm: V(-0.15, 1, 0) }, { chestPitch: -10, headPitch: -15 })], [0.5, pose({ LeftArm: V(0.45, 1, 0.15), LeftForeArm: V(0.25, 1, 0.1), RightArm: V(-0.45, 1, 0.15), RightForeArm: V(-0.25, 1, 0.1), LeftUpLeg: V(0.03, -1, 0.1), RightUpLeg: V(-0.03, -1, 0.1) }, { chestPitch: -12, headPitch: -18, rootY: 0.18, air: 1 })], [0.75, pose({ LeftArm: V(0.4, 1, 0.1), LeftForeArm: V(0.15, 1, 0), RightArm: V(-0.4, 1, 0.1), RightForeArm: V(-0.15, 1, 0) }, { chestPitch: -10, headPitch: -15 })], [1, pose()]) },
+    fistpump: { dur: 1.2, side: 'R', keys: K([0, pose()], [0.3, pose({ RightArm: V(-0.3, 0.6, 0.5), RightForeArm: V(0, 1, 0.2) }, { chestPitch: -6 })], [0.45, pose({ RightArm: V(-0.35, -0.2, 0.6), RightForeArm: V(0, 0.9, 0.3) }, { chestPitch: 6 })], [0.6, pose({ RightArm: V(-0.3, 0.6, 0.5), RightForeArm: V(0, 1, 0.2) })], [1, pose()]) },
+    point: { dur: 1.6, side: 'R', keys: K([0, pose()], [0.3, pose({ RightArm: V(-0.1, 0.15, 1), RightForeArm: V(0, 0.15, 1) }, { chestYaw: 10 })], [0.75, pose({ RightArm: V(-0.1, 0.15, 1), RightForeArm: V(0, 0.15, 1) }, { chestYaw: 10 })], [1, pose()]) },
+    bow: { dur: 2.2, keys: K([0, pose()], [0.4, pose({}, { chestPitch: 50, headPitch: 55 })], [0.6, pose({}, { chestPitch: 50, headPitch: 55 })], [1, pose()]) },
+    salute: { dur: 1.8, side: 'R', keys: K([0, pose()], [0.3, pose({ RightArm: V(-0.85, 0.15, 0.45), RightForeArm: V(0.65, 0.7, 0.15) }, { chestPitch: -4 })], [0.75, pose({ RightArm: V(-0.85, 0.15, 0.45), RightForeArm: V(0.65, 0.7, 0.15) }, { chestPitch: -4 })], [1, pose()]) },
+    shrug: { dur: 1.3, keys: K([0, pose()], [0.4, pose({ LeftArm: V(0.6, -0.75, 0.2), LeftForeArm: V(0.4, 0.1, 0.9), RightArm: V(-0.6, -0.75, 0.2), RightForeArm: V(-0.4, 0.1, 0.9) }, { headPitch: -6 })], [0.65, pose({ LeftArm: V(0.6, -0.75, 0.2), LeftForeArm: V(0.4, 0.1, 0.9), RightArm: V(-0.6, -0.75, 0.2), RightForeArm: V(-0.4, 0.1, 0.9) }, { headPitch: -6 })], [1, pose()]) },
+    nod: { dur: 1.2, keys: K([0, pose()], [0.25, pose({}, { headPitch: 18 })], [0.5, pose({}, { headPitch: -4 })], [0.75, pose({}, { headPitch: 16 })], [1, pose()]) },
+    headshake: { dur: 1.2, keys: K([0, pose()], [0.2, pose({}, { headYaw: 30 })], [0.45, pose({}, { headYaw: -30 })], [0.7, pose({}, { headYaw: 25 })], [1, pose()]) },
+    lookaround: { dur: 3, keys: K([0, pose()], [0.25, pose({}, { headYaw: 55, chestYaw: 15 })], [0.5, pose({}, { headYaw: 0, headPitch: -8 })], [0.75, pose({}, { headYaw: -55, chestYaw: -15 })], [1, pose()]) },
+    think: { dur: 2.5, side: 'R', keys: K([0, pose()], [0.25, pose({ RightArm: V(-0.2, -0.6, 0.75), RightForeArm: V(0.3, 0.9, 0.3), LeftArm: V(0.1, -0.7, 0.6), LeftForeArm: V(-0.9, 0.1, 0.3) }, { headPitch: 8, headYaw: 10 })], [0.8, pose({ RightArm: V(-0.2, -0.6, 0.75), RightForeArm: V(0.3, 0.9, 0.3), LeftArm: V(0.1, -0.7, 0.6), LeftForeArm: V(-0.9, 0.1, 0.3) }, { headPitch: 12, headYaw: -10 })], [1, pose()]) },
+    flex: { dur: 2, keys: K([0, pose()], [0.3, pose({ LeftArm: V(1, 0.2, 0), LeftForeArm: V(0.1, 1, 0.1), RightArm: V(-1, 0.2, 0), RightForeArm: V(-0.1, 1, 0.1) }, { chestPitch: -6 })], [0.75, pose({ LeftArm: V(1, 0.2, 0), LeftForeArm: V(0.1, 1, 0.1), RightArm: V(-1, 0.2, 0), RightForeArm: V(-0.1, 1, 0.1) }, { chestPitch: -6 })], [1, pose()]) },
+    stretch: { dur: 3.2, keys: K([0, pose()], [0.25, pose({ LeftArm: V(0.2, 1, 0), LeftForeArm: V(0, 1, 0), RightArm: V(-0.2, 1, 0), RightForeArm: V(0, 1, 0) }, { chestPitch: -8 })], [0.5, pose({ LeftArm: V(0.2, 1, 0), LeftForeArm: V(-0.3, 1, 0), RightArm: V(-0.2, 1, 0), RightForeArm: V(-0.3, 1, 0) }, { chestRoll: 22 })], [0.75, pose({ LeftArm: V(0.2, 1, 0), LeftForeArm: V(0.3, 1, 0), RightArm: V(-0.2, 1, 0), RightForeArm: V(0.3, 1, 0) }, { chestRoll: -22 })], [1, pose()]) },
+    jacks: { dur: 0.9, loop: true, keys: K([0, pose()], [0.5, pose({ LeftArm: V(0.6, 1, 0), LeftForeArm: V(0.3, 1, 0), RightArm: V(-0.6, 1, 0), RightForeArm: V(-0.3, 1, 0), LeftUpLeg: V(0.35, -1, 0), LeftLeg: V(0.3, -1, 0), RightUpLeg: V(-0.35, -1, 0), RightLeg: V(-0.3, -1, 0) }, { rootY: 0.08, air: 1 })], [1, pose()]) },
+    lunge: { dur: 2, keys: K([0, pose()], [0.45, pose({ LeftUpLeg: V(0.1, -0.25, 1), LeftLeg: V(0.05, -1, 0), RightUpLeg: V(-0.08, -0.75, -0.65), RightLeg: V(-0.03, -0.2, -1) })], [0.6, pose({ LeftUpLeg: V(0.1, -0.25, 1), LeftLeg: V(0.05, -1, 0), RightUpLeg: V(-0.08, -0.75, -0.65), RightLeg: V(-0.03, -0.2, -1) })], [1, pose()]) },
+    sitdown: { dur: 2.5, keys: K([0, pose()], [0.4, pose({ ...CHAIR, LeftArm: V(0.25, -0.9, 0.4), RightArm: V(-0.25, -0.9, 0.4), LeftForeArm: V(0.05, -0.3, 1), RightForeArm: V(-0.05, -0.3, 1) }, { chestPitch: 8 })], [1, pose({ ...CHAIR, LeftArm: V(0.25, -0.9, 0.4), RightArm: V(-0.25, -0.9, 0.4), LeftForeArm: V(0.05, -0.3, 1), RightForeArm: V(-0.05, -0.3, 1) }, { chestPitch: 4 })]) },
+    hitreact: { dur: 1, keys: K([0, guardP()], [0.2, pose({ LeftArm: V(0.5, -0.5, 0.4), RightArm: V(-0.5, -0.5, 0.4), LeftUpLeg: V(0.08, -1, -0.2), RightUpLeg: V(-0.08, -1, 0.1) }, { chestPitch: -22, headPitch: -35, chestYaw: 15 })], [0.5, pose({ RightUpLeg: V(-0.1, -1, -0.25), RightLeg: V(0, -1, -0.1) }, { chestPitch: -8, headPitch: -10 })], [1, guardP()]) },
+    push: { dur: 1.6, keys: K([0, pose()], [0.4, pose({ LeftArm: V(0.2, 0, 1), LeftForeArm: V(0, 0.2, 1), RightArm: V(-0.2, 0, 1), RightForeArm: V(0, 0.2, 1), LeftUpLeg: V(0.08, -0.8, 0.55), LeftLeg: V(0, -1, -0.15), RightUpLeg: V(-0.08, -0.9, -0.45), RightLeg: V(0, -0.9, -0.45) }, { chestPitch: 25 })], [0.75, pose({ LeftArm: V(0.2, 0, 1), LeftForeArm: V(0, 0.2, 1), RightArm: V(-0.2, 0, 1), RightForeArm: V(0, 0.2, 1), LeftUpLeg: V(0.08, -0.8, 0.55), LeftLeg: V(0, -1, -0.15), RightUpLeg: V(-0.08, -0.9, -0.45), RightLeg: V(0, -0.9, -0.45) }, { chestPitch: 30 })], [1, pose()]) },
+    pull: { dur: 1.6, keys: K([0, pose()], [0.3, pose({ LeftArm: V(0.15, -0.1, 1), LeftForeArm: V(0, -0.1, 1), RightArm: V(-0.15, -0.1, 1), RightForeArm: V(0, -0.1, 1) }, { chestPitch: 15 })], [0.7, pose({ LeftArm: V(0.4, -0.9, -0.2), LeftForeArm: V(0, 0, 1), RightArm: V(-0.4, -0.9, -0.2), RightForeArm: V(0, 0, 1), LeftUpLeg: V(0.08, -0.85, 0.5), LeftLeg: V(0, -1, -0.2) }, { chestPitch: -18 })], [1, pose()]) },
+    lift: { dur: 2.6, keys: K([0, pose()], [0.35, pose({ LeftUpLeg: V(0.2, -0.35, 1), LeftLeg: V(0.05, -1, -0.25), RightUpLeg: V(-0.2, -0.35, 1), RightLeg: V(-0.05, -1, -0.25), LeftArm: V(0.2, -0.9, 0.4), RightArm: V(-0.2, -0.9, 0.4), LeftForeArm: V(0, -0.8, 0.6), RightForeArm: V(0, -0.8, 0.6) }, { chestPitch: 35 })], [0.7, pose({ LeftArm: V(0.2, -0.8, 0.5), RightArm: V(-0.2, -0.8, 0.5), LeftForeArm: V(-0.1, 0.1, 1), RightForeArm: V(0.1, 0.1, 1) }, { chestPitch: -4 })], [1, pose({ LeftArm: V(0.2, -0.8, 0.5), RightArm: V(-0.2, -0.8, 0.5), LeftForeArm: V(-0.1, 0.1, 1), RightForeArm: V(0.1, 0.1, 1) }, { chestPitch: -4 })]) },
+  });
   // walk / run are generated as cycles
   function cyclePose(t, run) {
     const ph = t * 2 * Math.PI, a = run ? 0.75 : 0.45, s = Math.sin(ph), c = Math.cos(ph);
@@ -1799,37 +1883,123 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   MOVES.walk = { dur: 1.1, loop: true, travel: 1.3, cycle: false };
   MOVES.run = { dur: 0.7, loop: true, travel: 3.6, cycle: true };
   const WORDS = [
-    [/\b(walk|walking|stroll)/, 'walk'], [/\b(run|running|sprint|jog)/, 'run'], [/\b(jump|jumping|hop|leap)/, 'jump'],
-    [/\b(jab|jabs|punch|punches|punching)/, 'jab'], [/\b(cross|straight|right hand)/, 'cross'], [/\b(hook|hooks)/, 'hook'], [/\b(uppercut|upper cut)/, 'uppercut'],
-    [/\b(roundhouse|round house|round kick)/, 'roundhouse'], [/\b(kick|kicks|kicking)/, 'kick'], [/\b(squat|squats|crouch)/, 'squat'],
-    [/\b(wave|waving|hello|hi\b)/, 'wave'], [/\b(dance|dancing|groove)/, 'dance'], [/\b(spin|turn around|twirl)/, 'spin'],
-    [/\b(stance|guard|fight stance|boxing stance|bounce)/, 'stance'], [/\b(idle|stand|standing|wait|breath)/, 'idle'],
+    [/\b(walk|walking|walks|stroll|strolling|march|marching|step|steps|pace|pacing|wander)/, 'walk'], [/\b(run|running|runs|sprint|sprinting|jog|jogging|dash)/, 'run'],
+    [/\b(jumping jacks?|star jumps?|jacks)\b/, 'jacks'], [/\b(jump shot|jumpshot|shoot|shooting|free throw|three pointer|basket)\b/, 'shoot'], [/\b(jump|jumping|jumps|hop|hopping|leap|leaping)/, 'jump'],
+    [/\b(body jab|jab to the body|jab (to )?(the )?(gut|stomach|body))\b/, 'bodyjab'], [/\b(body (hook|shot|punch)|liver shot|hook to the body|(punch|hook) to the (body|gut|ribs|stomach|liver))\b/, 'bodyhook'],
+    [/\b(jab|jabs|jabbing|punch|punches|punching|hit|hits|strike|strikes|straight left|lead straight)\b/, 'jab'], [/\b(cross|crosses|straight right|right hand|rear straight|power punch|straight)\b/, 'cross'],
+    [/\b(haymaker|overhand)\b/, 'hook:R'], [/\b(hook|hooks|hooking)\b/, 'hook'], [/\b(uppercut|uppercuts|upper cut|upper-cut)/, 'uppercut'],
+    [/\b(slip|slips|slipping|dodge|dodges|dodging|evade)\b/, 'slip'], [/\b(bob and weave|bob & weave|bob|bobbing|weave|weaving|duck|ducks|ducking|roll under)\b/, 'weave'],
+    [/\b(block|blocks|blocking|cover up|covering up|parry|parries|shell)\b/, 'block'], [/\b(shoulder roll|philly shell)\b/, 'slip'],
+    [/\b(knee|knees|knee strike|kneeing)\b/, 'knee'], [/\b(elbow|elbows|elbow strike)\b/, 'elbow'], [/\b(teep|push kick|front kick|front push)\b/, 'teep'],
+    [/\b(roundhouse|round house|round kick|leg kick|low kick|body kick|head kick|high kick)/, 'roundhouse'], [/\b(kick the ball|shoot the ball|soccer kick|football kick|penalty|free kick|pass the ball|volley)\b/, 'soccerkick'], [/\b(kick|kicks|kicking)/, 'kick'],
+    [/\b(shuffle|shuffles|footwork|bounce on (my|his|her|the) feet)\b/, 'shuffle'], [/\b(pivot|pivots|pivoting)\b/, 'turn:45'],
+    [/\b(turn around|turns around|about turn)\b/, 'turn:180'], [/\b(turn left|turns left|face left)\b/, 'turn:90'], [/\b(turn right|turns right|face right)\b/, 'turn:-90'], [/\b(turn|turns)\b/, 'turn:90'],
+    [/\b(golf|golf swing|tee off|drive the ball|putt)\b/, 'golf'], [/\b(swing (a |the )?bat|batting|baseball swing|home run|hit a home run|bat)\b/, 'bat'],
+    [/\b(throw|throws|throwing|pitch|pitches|pitching|toss|hurl|bowl|bowling)\b/, 'throw'], [/\b(serve|serves|serving)\b/, 'serve'], [/\b(forehand|backhand|tennis swing|racket|racquet)\b/, 'forehand'],
+    [/\b(dribble|dribbles|dribbling|bounce the ball)\b/, 'dribble'], [/\b(clap|claps|clapping|applaud|applause)\b/, 'clap'],
+    [/\b(celebrate|celebrates|celebrating|celebration|victory|cheer|cheers|cheering|hooray|hurray|arms up|hands up|win|wins|winning|goal)\b/, 'celebrate'],
+    [/\b(fist pump|fistpump|yes!?|lets go|let's go)\b/, 'fistpump'], [/\b(point|points|pointing)\b/, 'point'], [/\b(bow|bows|bowing)\b/, 'bow'], [/\b(salute|salutes|saluting)\b/, 'salute'],
+    [/\b(shrug|shrugs|shrugging|dunno|don't know)\b/, 'shrug'], [/\b(nod|nods|nodding|yes yes)\b/, 'nod'], [/\b(shake (his |her |my |the )?head|shakes head|no no)\b/, 'headshake'],
+    [/\b(look around|looks around|looking around|search|searching|scan)\b/, 'lookaround'], [/\b(think|thinks|thinking|ponder|pondering|wonder|hmm)\b/, 'think'],
+    [/\b(flex|flexes|flexing|show muscles|biceps|bodybuilder pose)\b/, 'flex'], [/\b(stretch|stretches|stretching|warm up|warming up)\b/, 'stretch'],
+    [/\b(lunge|lunges|lunging)\b/, 'lunge'], [/\b(sit down|sits down|sitting down|take a seat|sit on (a |the )?chair|sit|sits|sitting|seated)\b/, 'sitdown'],
+    [/\b(get hit|gets hit|got hit|take a hit|takes a hit|get punched|gets punched|hit reaction|recoil|stagger|knocked back)\b/, 'hitreact'],
+    [/\b(push|pushes|pushing|shove)\b/, 'push'], [/\b(pull|pulls|pulling|tug|rope)\b/, 'pull'], [/\b(lift|lifts|lifting|pick up|picks up|deadlift)\b/, 'lift'],
+    [/\b(squat|squats|squatting|crouch|crouches|crouching|kneel)/, 'squat'],
+    [/\b(wave|waves|waving|hello|hi\b|hey\b|bye|goodbye|greet)/, 'wave'], [/\b(dance|dancing|dances|groove|boogie|party|disco)/, 'dance'], [/\b(spin|spins|spinning|twirl|pirouette)/, 'spin'],
+    [/\b(stance|guard|fight stance|fighting stance|boxing stance|bounce|bouncing|ready position)\b/, 'stance'], [/\b(idle|stand|standing|stands|wait|waiting|breath|breathing|relax)/, 'idle'],
   ];
-  const NUMS = { one: 1, once: 1, two: 2, twice: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  const NUMS = { one: 1, once: 1, two: 2, twice: 2, three: 3, thrice: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, a: 1, an: 1, couple: 2, few: 3, several: 4 };
+  // boxing numbers: 1 jab, 2 cross, 3 lead hook, 4 rear hook, 5 lead uppercut, 6 rear uppercut
+  const PUNCH_NUM = { 1: ['jab', null], 2: ['cross', null], 3: ['hook', 'lead'], 4: ['hook', 'rear'], 5: ['uppercut', 'lead'], 6: ['uppercut', 'rear'] };
   const STYLE_WORDS = {
-    boxing: /\b(box|boxer|boxing|fight|fighter|fighting|jab|cross|hook|uppercut|punch|punches|stance|guard|spar|sparring|mma|kickbox|kickboxing|muay|karate)/,
-    tired: /\b(tired|exhausted|sleepy|weak|sad|depressed)/, proud: /\b(proud|confident|strut|swagger|cool)/,
-    sneaky: /\b(sneak|sneaky|sneaking|stealth|creep|creeping|crouch(ed)?)\b/, happy: /\b(happy|excited|joyful|cheerful|bouncy)/,
-    angry: /\b(angry|aggressive|furious|mad|rage)/, drunk: /\b(drunk|dizzy|wobbly|stumbl)/, old: /\b(old|elderly|old man|old woman)/,
+    boxing: /\b(box|boxer|boxing|fight|fighter|fighting|jab|cross|hook|uppercut|punch|punches|stance|guard|spar|sparring|mma|ufc|kickbox|kickboxing|muay|thai|karate|slip|weave|block|knee|elbow|teep|haymaker|combo|shadow ?box)/,
+    tired: /\b(tired|exhausted|sleepy|weak|sad|depressed|hot|desert|heat)\b/, proud: /\b(proud|confident|strut|swagger|cool|catwalk|model|runway|boss)\b/,
+    sneaky: /\b(sneak|sneaky|sneaking|stealth|creep|creeping|crouch(ed)?|ninja|spy|tiptoe)\b/, happy: /\b(happy|excited|joyful|cheerful|bouncy)\b/,
+    angry: /\b(angry|aggressive|furious|mad|rage|explosive|powerful)\b/, drunk: /\b(drunk|dizzy|wobbly|stumbl\w*|on ice|icy|slippery)\b/, old: /\b(old|elderly|old man|old woman|grandpa|grandma)\b/,
+    zombie: /\b(zombie|undead|walking dead|mummy)\b/, cold: /\b(cold|freezing|rain|raining|rainy|snow|snowing|winter|shivering)\b/, windy: /\b(wind|windy|storm|stormy|gale|blizzard)\b/,
+    heavy: /\b(underwater|in water|wading|through water|mud|muddy|deep snow|heavy|slow motion|slow-mo|slowmo)\b/, uphill: /\b(uphill|up a hill|up hill|stairs|upstairs|climb|climbing|incline)\b/,
+    downhill: /\b(downhill|down a hill|downstairs|down the stairs|decline)\b/, march: /\b(march|marching|soldier|army|military|parade)\b/, carry: /\b(carry|carrying|holding a box|with a box)\b/,
+    peekaboo: /\b(tyson|iron mike|mike tyson|peek ?a ?boo|peekaboo)\b/, ali: /\b(ali|muhammad ali|float like a butterfly)\b/, roll: /\b(mayweather|floyd|shoulder roll|philly shell)\b/,
+    canelo: /\b(canelo|alvarez)\b/, loma: /\b(lomachenko|loma)\b/, brucelee: /\b(bruce lee|jeet kune do|jkd)\b/, conor: /\b(mcgregor|conor|notorious)\b/,
+    muaythai: /\b(muay thai|muay|thai boxing|buakaw)\b/, karate: /\b(karate|kung fu|taekwondo|martial arts)\b/,
+    south: /\b(southpaw|lefty|left handed|left-handed)\b/,
   };
-  function detectStyles(text) { const s = {}; for (const k in STYLE_WORDS) if (STYLE_WORDS[k].test(text.toLowerCase())) s[k] = true; return s; }
+  // themes with no specific moves: build a believable routine (varies each take)
+  const ROUTINES = {
+    peekaboo: [['stance'], ['weave'], ['hook', 'lead'], ['uppercut', 'rear'], ['weave'], ['bodyhook', 'lead'], ['hook', 'lead'], ['hook', 'rear']],
+    ali: [['shuffle'], ['jab'], ['jab'], ['cross'], ['shuffle'], ['slip'], ['jab'], ['cross']],
+    roll: [['stance'], ['slip'], ['cross'], ['jab'], ['slip'], ['cross'], ['hook', 'lead']],
+    canelo: [['stance'], ['slip'], ['weave'], ['bodyhook', 'lead'], ['hook', 'lead'], ['uppercut', 'rear']],
+    loma: [['shuffle'], ['jab'], ['turn', null, 45], ['cross'], ['hook', 'lead'], ['turn', null, -45], ['jab']],
+    brucelee: [['shuffle'], ['jab'], ['jab'], ['kick', 'lead'], ['cross'], ['shuffle']],
+    conor: [['stance'], ['jab'], ['cross'], ['teep'], ['cross'], ['hook', 'lead']],
+    muaythai: [['stance'], ['teep'], ['roundhouse'], ['jab'], ['cross'], ['knee'], ['elbow'], ['roundhouse']],
+    karate: [['stance'], ['cross'], ['kick'], ['block'], ['jab'], ['roundhouse']],
+    boxing: [['stance'], ['jab'], ['jab'], ['cross'], ['slip'], ['hook', 'lead'], ['cross'], ['weave'], ['jab'], ['cross']],
+    golf: [['golf']], basketball: [['dribble'], ['dribble'], ['shoot']], baseball: [['bat']], tennis: [['serve'], ['forehand']], football: [['soccerkick']],
+    workout: [['jacks'], ['jacks'], ['jacks'], ['squat'], ['lunge'], ['stretch']], celebrate: [['celebrate'], ['fistpump']],
+  };
+  const THEME_WORDS = { golf: /\bgolf/, basketball: /\b(basketball|hoops|nba)\b/, baseball: /\b(baseball|batter|mlb)\b/, tennis: /\b(tennis|wimbledon)\b/, football: /\b(football|soccer|footy)\b/,
+    workout: /\b(workout|work out|exercise|exercising|gym|training|fitness|cardio|warm ?up)\b/, celebrate: /\b(celebrat\w*|party time|winner)\b/ };
+  // typo-tolerant reading: unknown words are matched to the nearest word the AI knows
+  const VOCAB = [...new Set(('walk walking run running sprint jog jump hop leap jab cross hook uppercut punch punches kick kicks roundhouse squat wave dance spin stance guard idle stand boxing boxer fight fighter slip weave bob block knee elbow teep shuffle pivot turn around left right lead rear front back backwards golf swing baseball bat throw pitch serve forehand backhand tennis basketball dribble shoot clap celebrate cheer point bow salute shrug nod shake head look think flex stretch lunge sit sitting down push pull lift tired proud sneaky happy angry drunk zombie march soldier rain windy uphill stairs tyson ali mayweather canelo lomachenko bruce conor mcgregor muay thai karate southpaw combo body shot slowly quickly times twice circle then and seconds workout exercise celebrate football soccer jacks').split(' '))];
+  const lev = (a, b) => { const m = a.length, n = b.length; if (Math.abs(m - n) > 2) return 9; let prev = Array.from({ length: n + 1 }, (_, j) => j); for (let i = 1; i <= m; i++) { const cur = [i]; for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = cur; } return prev[n]; };
+  const COMMON = new Set('the a an and then with do does some times time for of to in on at my his her him he she it is be please make like style quick slow fast few seconds second while doing into onto from out up down over under very really just bit little lot more less again after before next then them they this that these those your you me man woman guy girl person character someone people who what how when where why can could would should will wants want lets let get gets got goes go going have has had was were are am not no yes all each every both other another same here there now way like'.split(' '));
+  function fixTypos(text) {
+    return text.replace(/[a-z']+/g, w => {
+      if (w.length < 4 || COMMON.has(w) || VOCAB.includes(w) || WORDS.some(([re]) => re.test(w))) return w;
+      let best = null, bd = 9; for (const v of VOCAB) { if (Math.abs(v.length - w.length) > 2) continue; const d = lev(w, v); if (d < bd) { bd = d; best = v; } }
+      return best && bd <= (w.length >= 7 ? 2 : 1) ? best : w;
+    });
+  }
+  function detectStyles(text) { const s = {}, t = String(text).toLowerCase(); for (const k in STYLE_WORDS) if (STYLE_WORDS[k].test(t)) s[k] = true; if (s.peekaboo || s.ali || s.roll || s.canelo || s.loma || s.brucelee || s.conor || s.muaythai || s.karate) s.boxing = true; return s; }
+  const SIDE_RE = /\b(left|right|lead|rear|back|front|jab hand|power hand|other)\s*(hand(ed)?|side|arm|leg|foot)?\s*$/;
   function parsePrompt(text) {
-    const segs = text.toLowerCase().split(/\bthen\b|,|;|\.|\band then\b|\bfollowed by\b|\band\b/).map(s => s.trim()).filter(Boolean);
-    const plan = [], unknown = [];
-    for (const s of segs) {
-      const hits = []; for (const [re, m] of WORDS) { const mm = s.match(re); if (mm && !hits.some(h => h.m === m)) hits.push({ m, at: mm.index }); }
-      // "jab cross hook" in one segment = combo in written order
-      if (!hits.length) { unknown.push(s); continue; }
-      if (hits.some(h => h.m === 'roundhouse')) { const i = hits.findIndex(h => h.m === 'kick'); if (i >= 0) hits.splice(i, 1); }
+    let t = ' ' + fixTypos(String(text).toLowerCase()) + ' ';
+    // "1-2", "1 2 3", "one two" = boxing combos
+    t = t.replace(/\b(one|two|three|four|five|six)(?=[\s-]+(one|two|three|four|five|six)\b)/g, m => ({ one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 })[m]).replace(/(\d)[\s-]+(one|two|three|four|five|six)\b/g, (m, a, b) => a + '-' + ({ one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 })[b]);
+    t = t.replace(/\b([1-6](?:\s*[-–]\s*[1-6])+)\b/g, m => ' ' + m.split(/\s*[-–]\s*/).map(d => (PUNCH_NUM[d][1] ? PUNCH_NUM[d][1] + ' ' : '') + PUNCH_NUM[d][0]).join(' ') + ' ');
+    t = t.replace(/\bcombo\b(?!\w)/g, m => (/(jab|cross|hook|uppercut|[1-6]-)/.test(t) ? '' : 'jab cross hook'));
+    const st = detectStyles(t);
+    const segs = t.split(/\bthen\b|,|;|\.|\band then\b|\bfollowed by\b|\bafter that\b|\bnext\b|\band\b(?!\s*(?:weave|then))/).map(x => x.trim()).filter(Boolean);
+    const plan = [], unknown = [], used = [];
+    for (const sg of segs) {
+      const hits = [];
+      for (const [re, m] of WORDS) {
+        const g = new RegExp(re.source, 'g'); let mm;
+        while ((mm = g.exec(sg))) {
+          if (hits.some(h => mm.index < h.at + h.len && h.at < mm.index + mm[0].length)) continue; // already covered by a more specific phrase
+          const [mv, arg] = m.split(':'); hits.push({ m: mv, arg, at: mm.index, len: mm[0].length });
+        }
+      }
+      if (!hits.length) { unknown.push(sg); continue; }
       hits.sort((a, b) => a.at - b.at);
-      const nm = s.match(/(\d+)\s*(x|times)?/) || s.match(/\b(one|once|two|twice|three|four|five|six|seven|eight|nine|ten)\b/);
-      let count = nm ? (+nm[1] || NUMS[nm[1]] || 1) : 1; const secs = s.match(/(\d+(\.\d+)?)\s*(s|sec|secs|seconds)\b/);
-      const st = detectStyles(text), speed = (/\b(slow|slowly|gentle)/.test(s) ? 0.65 : /\b(fast|quick|quickly|rapid|explosive)/.test(s) ? 1.5 : 1) * (st.tired || st.old ? 0.7 : st.sneaky ? 0.6 : st.angry || st.happy ? 1.15 : 1);
-      if (secs) count = 1;
-      const boxing = detectStyles(text).boxing;
-      for (let r = 0; r < Math.min(count, 20); r++) for (const h of hits) plan.push({ move: boxing && h.m === 'idle' ? 'stance' : h.m, speed, secs: secs ? +secs[1] : null });
+      const nm = sg.match(/(\d+)\s*(x|times|reps)?\b/) || sg.match(/\b(once|twice|thrice|three|four|five|six|seven|eight|nine|ten|couple|few|several)\b/);
+      let count = nm ? (+nm[1] || NUMS[nm[1]] || 1) : 1; const secs = sg.match(/(\d+(\.\d+)?)\s*(s|sec|secs|seconds)\b/), mins = sg.match(/(\d+(\.\d+)?)\s*(m|min|mins|minutes)\b/);
+      if (secs || mins) count = 1;
+      const speed = (/\b(slow|slowly|gentle|gently|lazy|lazily)/.test(sg) ? 0.65 : /\b(fast|quick|quickly|rapid|rapidly|explosive|lightning|hard)/.test(sg) ? 1.4 : 1)
+        * (st.tired || st.old ? 0.75 : st.sneaky ? 0.6 : st.heavy ? 0.55 : st.angry || st.happy ? 1.15 : st.peekaboo || st.loma || st.brucelee ? 1.2 : 1);
+      const back = /\b(backwards?|backward|reverse|in reverse|back up)\b/.test(sg), circle = /\b(in a circle|around in circles|circles|circle)\b/.test(sg);
+      const reps = Math.min(count, 20);
+      for (let r = 0; r < reps; r++) for (const h of hits) {
+        const before = sg.slice(Math.max(0, h.at - 24), h.at); const sm = before.match(SIDE_RE);
+        let side = sm ? ({ left: 'left', right: 'right', lead: 'lead', front: 'lead', 'jab hand': 'lead', rear: 'rear', back: 'rear', 'power hand': 'rear', other: null })[sm[1]] : null;
+        if (h.arg === 'R') side = 'rear';
+        let move = st.boxing && h.m === 'idle' ? 'stance' : h.m;
+        if (st.march && move === 'walk') move = 'walk';
+        const e = { move, side, speed, secs: secs ? +secs[1] : mins ? +mins[1] * 60 : null, back: back && (move === 'walk' || move === 'run'), turnRate: circle && (move === 'walk' || move === 'run') ? 60 : 0 };
+        if (move === 'turn') { e.turn = +(h.arg || 90); if (/\bright\b/.test(sg) && !h.arg) e.turn = -90; }
+        plan.push(e); used.push(move);
+      }
     }
-    return { plan, unknown };
+    // a theme / fighter with no moves of its own ("do some boxing", "Mike Tyson", "golf") gets a routine
+    const theme = Object.keys(THEME_WORDS).find(k => THEME_WORDS[k].test(t)) || ['peekaboo', 'ali', 'roll', 'canelo', 'loma', 'brucelee', 'conor', 'muaythai', 'karate'].find(k => st[k]) || (st.boxing ? 'boxing' : null);
+    if (!plan.length && theme) { for (const [move, side, turn] of ROUTINES[theme]) plan.push({ move, side: side || null, speed: st.peekaboo || st.loma ? 1.2 : 1, secs: null, turn, routine: true }); unknown.length = 0; }
+    // Tyson style: bob & weave into the hooks
+    if (st.peekaboo && plan.length && !plan.some(p => p.move === 'weave')) { const i = plan.findIndex(p => p.move === 'hook' || p.move === 'uppercut' || p.move === 'bodyhook'); if (i >= 0) plan.splice(i, 0, { move: 'weave', speed: 1.2, secs: null }); }
+    if (st.boxing && plan.length && !['stance', 'shuffle'].includes(plan[0].move) && MOVES[plan[0].move] && (MOVES[plan[0].move].keys || [])[0] && MOVES[plan[0].move].keys[0][1].guard) plan.unshift({ move: 'stance', speed: 1, secs: 0.6 });
+    return { plan, unknown, styles: st };
   }
   function samplePlan(plan, t) { // returns pose at global time t
     let acc = 0;
@@ -1839,40 +2009,80 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       acc += d;
     }
   }
+  const PAIRS = [['LeftArm', 'RightArm'], ['LeftForeArm', 'RightForeArm'], ['LeftUpLeg', 'RightUpLeg'], ['LeftLeg', 'RightLeg']];
+  const mx = v => [-v[0], v[1], v[2]], close = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2] > 0.995;
+  // swap sides. limbs=true: only the limbs that move away from the stance are swapped (a rear hook keeps an orthodox stance)
+  function mirrorPose(P_, onlyMoving, legsToo) {
+    const d = { ...P_.dirs }, base = P_.guard > 0.5 ? { ...BASE, ...GUARD } : BASE, o = { ...P_, dirs: d };
+    for (const [L, R] of PAIRS) {
+      const isLeg = L.includes('Leg');
+      if (!onlyMoving) { d[L] = mx(P_.dirs[R]); d[R] = mx(P_.dirs[L]); continue; }
+      if (isLeg && !legsToo) continue;
+      const dl = !close(P_.dirs[L], base[L]), dr = !close(P_.dirs[R], base[R]);
+      d[L] = dr ? mx(P_.dirs[R]) : dl ? base[L] : P_.dirs[L]; d[R] = dl ? mx(P_.dirs[L]) : dr ? base[R] : P_.dirs[R];
+    }
+    if (!onlyMoving) { o.hipsYaw = -P_.hipsYaw; o.chestYaw = -P_.chestYaw; }
+    else { const hb = P_.guard > 0.5 ? -38 : 0, cb = P_.guard > 0.5 ? -8 : 0; o.chestYaw = 2 * cb - P_.chestYaw; if (legsToo || MOVES_ALL_FLAG) o.hipsYaw = 2 * hb - P_.hipsYaw; }
+    o.chestRoll = -(P_.chestRoll || 0); o.headYaw = -(P_.headYaw || 0); o.hipsRoll = -(P_.hipsRoll || 0);
+    return o;
+  }
+  let MOVES_ALL_FLAG = false;
   function movePose(p, lt) {
     const M_ = MOVES[p.move], cyc = M_.dur / p.speed;
-    if (p.move === 'walk' || p.move === 'run') return cyclePose((lt % cyc) / cyc, p.move === 'run');
-    let u = M_.loop ? (lt % cyc) / cyc : clamp(lt / cyc, 0, 1);
-    const K = M_.keys; let k = 0; while (k < K.length - 2 && u > K[k + 1][0]) k++;
-    const [t0, a] = K[k], [t1, b] = K[k + 1], w = ss(clamp((u - t0) / Math.max(1e-6, t1 - t0), 0, 1));
-    return blendPose(a, b, w);
+    let P_;
+    if (p.move === 'walk' || p.move === 'run') { const u = (lt % cyc) / cyc; P_ = cyclePose(p.back ? 1 - u : u, p.move === 'run'); }
+    else {
+      let u = M_.loop ? (lt % cyc) / cyc : clamp(lt / cyc, 0, 1);
+      const K = M_.keys; let k = 0; while (k < K.length - 2 && u > K[k + 1][0]) k++;
+      const [t0, a] = K[k], [t1, b] = K[k + 1], w = ss(clamp((u - t0) / Math.max(1e-6, t1 - t0), 0, 1));
+      P_ = blendPose(a, b, w);
+    }
+    if (p.mirror) { MOVES_ALL_FLAG = !!M_.all; P_ = mirrorPose(P_, !M_.all, !!M_.legs); MOVES_ALL_FLAG = false; }
+    if (p.south) P_ = mirrorPose(P_, false);
+    return P_;
   }
   function blendPose(a, b, w) {
     const dirs = {}; for (const j in a.dirs) dirs[j] = lerpN(a.dirs[j], b.dirs[j] || a.dirs[j], w);
-    const o = { dirs }; for (const k of ['hipsYaw', 'hipsPitch', 'hipsRoll', 'chestYaw', 'chestPitch', 'headPitch', 'rootY', 'guard']) o[k] = (a[k] || 0) * (1 - w) + (b[k] || 0) * w;
+    const o = { dirs }; for (const k of ['hipsYaw', 'hipsPitch', 'hipsRoll', 'chestYaw', 'chestPitch', 'chestRoll', 'headPitch', 'headYaw', 'rootY', 'guard']) o[k] = (a[k] || 0) * (1 - w) + (b[k] || 0) * w;
     o.air = Math.max(a.air || 0, b.air || 0) * (w > 0.05 && w < 0.95 ? 1 : 0); return o;
   }
   function textToMotion(text, fps = 30, seed = 0) {
     let sd = (seed * 9301 + 49297) % 233280 || 1; const rnd = () => { sd = (sd * 9301 + 49297) % 233280; return sd / 233280; }; // repeatable variation per seed
-    const { plan, unknown } = parsePrompt(text || ''), style = detectStyles(text || '');
+    const { plan, unknown, styles: style } = parsePrompt(text || '');
     if (!plan.length && style.boxing) plan.push({ move: 'stance', speed: 1, secs: 3 });
-    if (!plan.length) throw new Error('I didn\'t recognise any moves. Try words like: walk, run, jump, jab, cross, hook, uppercut, kick, roundhouse, squat, wave, dance, spin, stance, idle.');
+    if (!plan.length) throw new Error('I didn\'t recognise any moves. Try things like: "Mike Tyson left hook", "1-2-3 then slip", "golf swing", "zombie walk in a circle", "basketball jump shot", "workout", "celebrate".');
     if (seed) for (const p of plan) p.speed *= 0.88 + rnd() * 0.24; // each new take varies the timing a little
+    if (seed) for (const p of plan) if (p.routine && ['jab', 'cross', 'hook', 'slip'].includes(p.move) && rnd() < 0.3) p.move = ['jab', 'cross', 'hook', 'slip'][Math.floor(rnd() * 4)]; // routines vary per take
+    // which side does each move use? (orthodox: lead = left, rear = right; southpaw / lefty swaps the whole body)
+    for (const p of plan) {
+      const M_ = MOVES[p.move] || {}; if (!M_.side) continue; p.south = !!style.south;
+      let want = p.side === 'lead' ? 'L' : p.side === 'rear' ? 'R' : p.side === 'left' ? 'L' : p.side === 'right' ? 'R' : null;
+      if (want && style.south && (p.side === 'left' || p.side === 'right')) want = want === 'L' ? 'R' : 'L'; // the whole body is mirrored afterwards
+      p.mirror = !!want && want !== M_.side;
+    }
+    for (const p of plan) if (!p.south && style.south) p.south = true;
+    { let yw = 0; for (const p of plan) { p.yaw0 = yw; if (p.move === 'turn') yw += p.turn || 90; } }
     const vYaw = seed ? (rnd() - 0.5) * 14 : 0, vBounce = seed ? 1.4 + rnd() * 0.7 : 1.7, vLean = seed ? (rnd() - 0.5) * 8 : 0;
-    for (const p of plan) { const M_ = MOVES[p.move]; p.len = p.secs || (M_.loop && !p.secs ? M_.dur * (p.move === 'walk' || p.move === 'run' ? 3 : 1) : M_.dur) / (p.secs ? 1 : p.speed); }
+    for (const p of plan) { const M_ = MOVES[p.move]; p.len = p.secs || (M_.loop && !p.secs ? M_.dur * (p.move === 'walk' || p.move === 'run' ? (p.turnRate ? 6 : 3) : p.move === 'dribble' || p.move === 'clap' ? 4 : p.move === 'jacks' ? 3 : p.move === 'shuffle' ? 2 : 1) : M_.dur) / (p.secs ? 1 : p.speed); }
     const total = plan.reduce((a, p) => a + p.len, 0), n = Math.max(2, Math.round(total * fps) + 1), rest = buildRest({ ...DEFAULT_M }), ix = rest.index, J = rest.joints;
-    const BLEND = 0.18; const locals = [], rootPos = [], contacts = []; let z = 0, yaw = 0;
+    const BLEND = 0.18; const locals = [], rootPos = [], contacts = []; let px = 0, pz = 0, yaw = 0;
     for (let k = 0; k < n; k++) {
       const t = k / fps, cur = samplePlan(plan, t); let P_ = cur.pose;
       // smooth hand-over between moves
       if (cur.i > 0 && cur.lt < BLEND) { const prev = plan[cur.i - 1]; P_ = blendPose(movePose(prev, prev.len), P_, ss(cur.lt / BLEND)); }
       P_ = { ...P_, dirs: { ...P_.dirs } };
-      const mv = cur.p.move, kicking = mv === 'kick' || mv === 'roundhouse';
+      const mv = cur.p.move, kicking = ['kick', 'roundhouse', 'knee', 'teep'].includes(mv);
+      yaw = (cur.p.yaw0 || 0) + (mv === 'turn' ? (cur.p.turn || 90) * ss(clamp(cur.lt / cur.p.len, 0, 1)) : cur.p.turnRate ? cur.p.turnRate * cur.lt : 0);
       if (style.boxing) {
         if (mv === 'walk' || mv === 'run') { // footwork with the hands up
           for (const j of ['LeftArm', 'LeftForeArm', 'RightArm', 'RightForeArm']) P_.dirs[j] = GUARD[j];
           P_.chestPitch += 8; P_.headPitch += 12; P_.chestYaw += -10;
         }
+        // fighter styles change the guard (only while that arm isn't punching)
+        const SG = style.peekaboo ? PEEK : style.ali ? LOWHANDS : style.roll ? ROLL : null;
+        if (SG && (P_.guard || 0) > 0.5) for (const S2 of ['Left', 'Right']) if (close(P_.dirs[S2 + 'Arm'], GUARD[S2 + 'Arm']) && close(P_.dirs[S2 + 'ForeArm'], GUARD[S2 + 'ForeArm'])) { P_.dirs[S2 + 'Arm'] = SG[S2 + 'Arm']; P_.dirs[S2 + 'ForeArm'] = SG[S2 + 'ForeArm']; }
+        if (style.peekaboo && (P_.guard || 0) > 0.5 && !kicking) { for (const j in DIP) P_.dirs[j] = lerpN(P_.dirs[j], DIP[j], 0.6); P_.chestPitch += 10; P_.chestRoll = (P_.chestRoll || 0) + Math.sin(t * 2 * Math.PI * 0.9) * 7; } // crouched, head always moving
+        if (style.roll) { P_.chestYaw -= 12; P_.headPitch += 4; }
         if ((P_.guard || 0) > 0.5 && !kicking) { // light bounce on the balls of the feet
           const b = (Math.sin(t * 2 * Math.PI * vBounce) + 1) / 2 * 0.8;
           for (const j in GUARD_LOW) P_.dirs[j] = lerpN(P_.dirs[j], lerpN(GUARD[j], GUARD_LOW[j], 1), b * 0.6);
@@ -1885,10 +2095,18 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       if (style.sneaky) { P_.chestPitch += 20; P_.headPitch -= 10; for (const S of ['Left', 'Right']) { P_.dirs[S + 'UpLeg'] = lerpN(P_.dirs[S + 'UpLeg'], V(0, -0.7, 0.75), 0.55); P_.dirs[S + 'Leg'] = lerpN(P_.dirs[S + 'Leg'], V(0, -1, -0.45), 0.55); } }
       if (style.angry) { P_.chestPitch += 10; P_.headPitch += 6; }
       if (style.happy) { for (const j of ['LeftArm', 'RightArm']) P_.dirs[j] = lerpN(P_.dirs[j], V(j[0] === 'L' ? 0.6 : -0.6, 0.2, 0.4), 0.25); P_.chestPitch -= 4; }
+      if (style.zombie) { for (const S2 of ['Left', 'Right']) { P_.dirs[S2 + 'Arm'] = lerpN(P_.dirs[S2 + 'Arm'], V(S2 === 'Left' ? 0.15 : -0.15, 0.05, 1), 0.85); P_.dirs[S2 + 'ForeArm'] = lerpN(P_.dirs[S2 + 'ForeArm'], V(0, 0, 1), 0.85); } P_.chestPitch += 12; P_.headPitch += Math.sin(t * 2 * Math.PI * 0.4) * 10 - 8; P_.hipsRoll = (P_.hipsRoll || 0) + Math.sin(t * 2 * Math.PI * 0.5) * 5; }
+      if (style.cold) { for (const S2 of ['Left', 'Right']) if (!/clap|wave|point|throw|serve|shoot|golf|bat|forehand|dribble|celebrate|fistpump|salute|jab|cross|hook|uppercut/.test(mv)) { P_.dirs[S2 + 'Arm'] = lerpN(P_.dirs[S2 + 'Arm'], V(S2 === 'Left' ? 0.2 : -0.2, -0.75, 0.6), 0.8); P_.dirs[S2 + 'ForeArm'] = lerpN(P_.dirs[S2 + 'ForeArm'], V(S2 === 'Left' ? -0.9 : 0.9, 0.15, 0.3), 0.8); } P_.chestPitch += 14; P_.headPitch += 16; P_.chestRoll = (P_.chestRoll || 0) + Math.sin(t * 2 * Math.PI * 6) * 1.5; }
+      if (style.windy) { P_.chestPitch += 18; P_.headPitch += 12; P_.chestRoll = (P_.chestRoll || 0) + Math.sin(t * 2 * Math.PI * 0.3) * 4; }
+      if (style.heavy) { P_.chestPitch += 8; }
+      if (style.uphill || style.march) for (const S2 of ['Left', 'Right']) if (mv === 'walk' || mv === 'run') { const u = P_.dirs[S2 + 'UpLeg']; if (u[2] > 0.1) P_.dirs[S2 + 'UpLeg'] = lerpN(u, V(u[0], -0.45, 0.9), style.march ? 0.55 : 0.35); }
+      if (style.uphill) P_.chestPitch += 14; if (style.downhill) { P_.chestPitch -= 8; P_.headPitch += 10; }
+      if (style.march) { P_.chestPitch -= 6; P_.headPitch -= 6; for (const S2 of ['Left', 'Right']) if (mv === 'walk') P_.dirs[S2 + 'ForeArm'] = lerpN(P_.dirs[S2 + 'ForeArm'], P_.dirs[S2 + 'Arm'], 0.8); }
+      if (style.carry && !/throw|serve|shoot|golf|bat/.test(mv)) { for (const S2 of ['Left', 'Right']) { P_.dirs[S2 + 'Arm'] = V(S2 === 'Left' ? 0.2 : -0.2, -0.8, 0.5); P_.dirs[S2 + 'ForeArm'] = V(S2 === 'Left' ? -0.2 : 0.2, 0.15, 1); } P_.chestPitch -= 6; }
       if (style.drunk) { P_.hipsRoll = (P_.hipsRoll || 0) + Math.sin(t * 2 * Math.PI * 0.5) * 7; P_.chestYaw += Math.sin(t * 2 * Math.PI * 0.35) * 10; P_.headPitch += Math.sin(t * 2 * Math.PI * 0.7) * 10; }
       P_.chestPitch += vLean; const hy = P_.hipsYaw + yaw + vYaw, Hq = qmul(qmul(axq([0, 1, 0], hy), axq([1, 0, 0], P_.hipsPitch)), axq([0, 0, 1], P_.hipsRoll || 0));
-      const Cq = qmul(Hq, qmul(axq([0, 1, 0], P_.chestYaw), axq([1, 0, 0], P_.chestPitch)));
-      const G = {}; G.Hips = Hq; G.Spine = qslerp(Hq, Cq, 1 / 3); G.Spine1 = qslerp(Hq, Cq, 2 / 3); G.Spine2 = Cq; G.Neck = Cq; G.Head = qmul(Cq, axq([1, 0, 0], P_.headPitch - P_.chestPitch * 0.6));
+      const Cq = qmul(Hq, qmul(axq([0, 1, 0], P_.chestYaw), qmul(axq([1, 0, 0], P_.chestPitch), axq([0, 0, 1], P_.chestRoll || 0))));
+      const G = {}; G.Hips = Hq; G.Spine = qslerp(Hq, Cq, 1 / 3); G.Spine1 = qslerp(Hq, Cq, 2 / 3); G.Spine2 = Cq; G.Neck = Cq; G.Head = qmul(Cq, qmul(axq([0, 1, 0], P_.headYaw || 0), axq([1, 0, 0], P_.headPitch - P_.chestPitch * 0.6)));
       for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
         G[S + 'Shoulder'] = Cq;
         G[S + 'Arm'] = qmul(Cq, qFromTo([sx, 0, 0], P_.dirs[S + 'Arm'])); G[S + 'ForeArm'] = qmul(Cq, qFromTo([sx, 0, 0], P_.dirs[S + 'ForeArm'])); G[S + 'Hand'] = G[S + 'ForeArm'];
@@ -1896,20 +2114,21 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       }
       const glob = [], loc = [];
       for (let j = 0; j < J.length; j++) { const p = J[j].parent; glob[j] = G[J[j].name] || glob[p]; loc[j] = p >= 0 ? qnorm(qmul(qconj(glob[p]), glob[j])) : glob[j]; }
-      const fist = style.boxing || /jab|cross|hook|uppercut|stance/.test(cur.p.move) || style.angry; fingerCurl(rest, loc, 'Left', fist ? 'fist' : 'relaxed'); fingerCurl(rest, loc, 'Right', fist ? 'fist' : 'relaxed');
+      const fist = (style.boxing && !/golf|bat|throw|serve|forehand|shoot|dribble|clap|point|salute|wave/.test(mv)) || /jab|cross|hook|uppercut|stance|bodyhook|bodyjab|elbow|fistpump|flex|block/.test(mv) || style.angry; fingerCurl(rest, loc, 'Left', fist ? 'fist' : 'relaxed'); fingerCurl(rest, loc, 'Right', fist ? 'fist' : 'relaxed');
       // root: feet on the ground (unless airborne), forward travel for walk/run
       const f0 = fk(rest, loc, [0, 0, 0]);
       const low = Math.min(...['Left', 'Right'].flatMap(S => [f0.pos[ix[S + 'Foot']][1] - DEFAULT_M.ankleH, f0.pos[ix[S + 'ToeBase']][1]]));
-      const travel = MOVES[cur.p.move].travel ? MOVES[cur.p.move].travel * (cur.p.speed || 1) : 0;
-      if (k > 0) z += travel / fps;
-      const fwd = qrot(axq([0, 1, 0], yaw), [0, 0, 1]);
-      const y = -low + (P_.air ? Math.max(0, P_.rootY) : Math.min(0, P_.rootY) * 0 + 0);
-      rootPos.push([fwd[0] * z, y + (P_.air ? 0 : 0), fwd[2] * z]);
+      const travel = MOVES[cur.p.move].travel ? MOVES[cur.p.move].travel * (cur.p.speed || 1) * (cur.p.back ? -0.55 : 1) * (style.heavy ? 0.6 : 1) : 0;
+      const fwd = qrot(axq([0, 1, 0], yaw + vYaw), [0, 0, 1]);
+      if (k > 0) { px += fwd[0] * travel / fps; pz += fwd[2] * travel / fps; }
+      const y = -low + (P_.air ? Math.max(0, P_.rootY) : 0);
+      rootPos.push([px, y, pz]);
       locals.push(loc);
       contacts.push({ Left: !P_.air && f0.pos[ix.LeftFoot][1] - low < 0.1, Right: !P_.air && f0.pos[ix.RightFoot][1] - low < 0.1 });
     }
     for (let k = 1; k < n; k++) for (let j = 0; j < locals[k].length; j++) { const a = locals[k - 1][j], b = locals[k][j]; if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0) locals[k][j] = b.map(v => -v); }
-    return { rest, fps, n, rootPos, locals, contacts, hasHands: { Left: false, Right: false }, M: rest.M, unknown, plan: plan.map(p => p.move), styles: Object.keys(style), text };
+    const label = p => (p.side && MOVES[p.move] && MOVES[p.move].side ? p.side + ' ' : '') + (p.move === 'turn' ? `turn ${p.turn > 0 ? 'left' : 'right'} ${Math.abs(p.turn)}°` : p.move) + (p.back ? ' backwards' : '') + (p.turnRate ? ' in a circle' : '');
+    return { rest, fps, n, rootPos, locals, contacts, hasHands: { Left: false, Right: false }, M: rest.M, unknown, plan: plan.map(label), styles: Object.keys(style).filter(k => style[k]), text };
   }
 
   // cut an animation down to [a, b] seconds (relative to its own start)
@@ -1933,7 +2152,6 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
 </script>
 </head>
 <body>
-<div style="text-align:center;color:#ff4fa3;font-weight:700;font-size:22px;padding:10px 0 2px">Sarah is awesome</div>
 <header>
   <div class="logo">M</div>
   <div><h1>NoCap MoCap</h1><div class="tag">AI video → 3D motion capture · body + fingers · BVH / GLB</div></div>
@@ -1971,10 +2189,17 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="progress" id="prog"><i></i></div>
     <div class="status" id="pstat"></div>
     <div class="legpick" id="legPick" style="display:none">
+      <div id="legPart">
       <div class="lp-title">🦵 No full body in this video</div>
       <div class="mini" id="legPickWhy"></div>
-      <div class="seg" id="legSeg"><button data-v="walk">🚶 Walking</button><button data-v="sit">🪑 Sitting</button><button data-v="idle">🧍 Standing</button></div>
+      <div class="seg" id="legSeg" style="grid-template-columns:repeat(4,1fr)"><button data-v="walk">🚶 Walk</button><button data-v="run">🏃 Run</button><button data-v="sit">🪑 Sit</button><button data-v="idle">🧍 Stand</button></div>
       <button class="btn small" id="legRaw" style="width:100%">Use the tracked legs anyway</button>
+      </div>
+      <div id="armPart" style="margin-top:10px">
+      <div class="lp-title">💪 Arms out of shot</div>
+      <div class="mini" id="armPickWhy">What should an arm do while it's out of the picture?</div>
+      <div class="seg" id="armSeg" style="grid-template-columns:repeat(2,1fr)"><button data-v="side">🧍 Down by side</button><button data-v="guard">🥊 Boxing guard</button></div>
+      </div>
     </div>
   </section>
 
@@ -1994,7 +2219,8 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <input type="checkbox" id="elbowGuard" checked hidden><input type="checkbox" id="proLimits" checked hidden>
     <div class="row"><label>Wrist rotation</label><select id="handMode"><option value="limited" selected>Natural limits</option><option value="locked">Locked to forearm</option><option value="free">Free (raw)</option></select></div>
     <div class="sub">Body</div>
-    <div class="row"><label>Legs <span class="mini">for videos without the full body</span></label><select id="lowerBody"><option value="ai" selected>Tracked from video</option><option value="walk">Walking</option><option value="sit">Sitting</option><option value="idle">Standing idle</option></select></div>
+    <div class="row"><label>Legs <span class="mini">for videos without the full body</span></label><select id="lowerBody"><option value="ai" selected>Tracked from video</option><option value="walk">Walking</option><option value="run">Running</option><option value="sit">Sitting</option><option value="idle">Standing idle</option></select></div>
+    <div class="row"><label>Arms out of shot</label><select id="armPose"><option value="side" selected>🧍 Down by side</option><option value="guard">🥊 Boxing guard</option></select></div>
     <div class="row"><label>Auto-upright <span class="mini">fix tilt</span></label><input type="checkbox" id="autoLevel" checked></div>
     <input type="range" id="headTilt" min="-25" max="25" step="1" value="0" hidden><span id="headTiltV" hidden></span>
     <div class="row"><label>In-place <span class="mini">feet stay on one spot, body keeps moving</span></label><input type="checkbox" id="inPlace"></div>
@@ -2007,6 +2233,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <section class="card">
     <h2><span class="n">4</span>Export</h2>
     <div class="row"><label>Target rig naming</label><select id="naming"><option value="unity" selected>Unity (Humanoid)</option><option value="standard">Standard / Blender</option><option value="mixamo">Mixamo</option><option value="unreal">Unreal (UE mannequin)</option></select></div>
+    <div class="row"><label>Clip speed <span class="mini">slows down / speeds up the animation itself (exports too)</span></label><div style="display:flex;align-items:center;gap:6px"><button class="btn small" id="csMinus" type="button">−</button><input type="range" id="clipSpeed" min="0.1" max="3" step="0.05" value="1" style="width:110px"><button class="btn small" id="csPlus" type="button">+</button><b id="clipSpeedV" style="min-width:44px;text-align:right">1×</b></div></div>
     <div class="row"><label>Frame rate</label><select id="outFps"><option>24</option><option selected>30</option><option>60</option><option>120</option></select></div>
     <div class="grid3" style="grid-template-columns:repeat(4,1fr)"><button class="btn" id="exFBX" disabled>FBX</button><button class="btn" id="exBVH" disabled>BVH</button><button class="btn" id="exGLB" disabled>GLB</button><button class="btn" id="exJSON" disabled>JSON</button></div>
     <button class="btn small" id="exDebug" style="width:100%;margin-top:8px;opacity:.75">🛠 Save tracking data (send to Claude to fix a problem)</button>
@@ -2054,7 +2281,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <div class="timeline">
     <button class="btn" id="play" disabled>▶</button>
     <div class="tlwrap"><input type="range" id="scrub" min="0" max="1" step="0.0001" value="0" disabled><canvas id="ctl" height="10"></canvas></div>
-    <select id="speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
+    <select id="speed" title="Preview speed"><option value="0.1">0.1×</option><option value="0.15">0.15×</option><option value="0.2">0.2×</option><option value="0.25">0.25×</option><option value="0.3">0.3×</option><option value="0.35">0.35×</option><option value="0.4">0.4×</option><option value="0.45">0.45×</option><option value="0.5">0.5×</option><option value="0.55">0.55×</option><option value="0.6">0.6×</option><option value="0.65">0.65×</option><option value="0.7">0.7×</option><option value="0.75">0.75×</option><option value="0.8">0.8×</option><option value="0.85">0.85×</option><option value="0.9">0.9×</option><option value="0.95">0.95×</option><option value="1" selected>1×</option><option value="1.05">1.05×</option><option value="1.1">1.1×</option><option value="1.15">1.15×</option><option value="1.2">1.2×</option><option value="1.25">1.25×</option><option value="1.3">1.3×</option><option value="1.4">1.4×</option><option value="1.5">1.5×</option><option value="1.6">1.6×</option><option value="1.75">1.75×</option><option value="2">2×</option><option value="2.25">2.25×</option><option value="2.5">2.5×</option><option value="3">3×</option></select>
     <div class="time" id="tlabel">0.00s / 0.00s</div>
     <button class="btn" id="undoAll" title="Undo" disabled>↩️</button>
     <button class="btn" id="trimBtn" title="Trim">✂️</button>
@@ -2094,7 +2321,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div style="display:flex;gap:6px;align-items:center"><input id="wmFrom" placeholder="when I say… (scrap)" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:9px;font-size:16px"><input id="wmTo" placeholder="it means… (boxing)" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:9px;font-size:16px"><button class="btn" id="wmAdd">Add</button></div>
     <div id="tchList" style="margin-top:10px"></div>
   </div>
-  <div class="hint">Moves: walk, run, jump, jab, cross, hook, uppercut, kick, roundhouse, squat, wave, dance, spin, stance, idle. Styles change the whole body: boxing / fighter, tired, sneaky, proud, happy, angry, drunk, old. Add numbers ("3 jabs"), speed ("fast", "slowly"), time ("walk for 5 seconds") and chain them with "then" or commas.</div>
+  <div class="hint">Type it how you'd say it — typos are fine. <b>Boxing:</b> jab, cross, hook, uppercut, body shot, slip, bob &amp; weave, block, combos like 1-2-3, left / right / lead / rear, southpaw. <b>Fighters:</b> Tyson, Ali, Mayweather, Canelo, Lomachenko, Bruce Lee, McGregor, Muay Thai, karate. <b>Sports:</b> golf, baseball bat / pitch, tennis serve / forehand, basketball dribble / shoot, football kick. <b>Moves:</b> walk, run, backwards, in a circle, turn, jump, kick, knee, elbow, teep, squat, lunge, jumping jacks, stretch, sit down, push, pull, lift, wave, clap, point, bow, salute, shrug, nod, look around, think, flex, celebrate, dance, spin. <b>Moods &amp; places:</b> tired, proud, sneaky, happy, angry, drunk, old, zombie, in the rain, windy, on ice, uphill, underwater, soldier march, carrying a box. Just a theme ("workout", "Mike Tyson") makes a full routine. Tap Create again for a new variation. 🧠 Teach my AI learns any move from a video, e.g. a real Tyson hook clip.</div>
 </div></div>
 <div id="editModal" data-et="studio">
   <div class="ehead">
@@ -2678,7 +2905,7 @@ async function processVideo() {
     bar.style.width = '100%';
     const lg = legGuess(true);
     solve(true); updateRefineLabel(); resetHistory();
-    if (lg && lg.partial) toast(`No full body in shot, so I gave the legs a ${{ walk: 'walking', sit: 'sitting', idle: 'standing' }[lg.kind]} pose. Change it in step 2.`, false, 7000);
+    if (lg && lg.partial) toast(`No full body in shot, so I gave the legs a ${{ walk: 'walking', run: 'running', sit: 'sitting', idle: 'standing' }[lg.kind]} pose. Change it in step 2.`, false, 7000);
     const bridged = out.filter(f => !f.pw).length;
     if (bridged > N * 0.15) toast(`The person was lost in ${bridged} of ${N} frames, so those were bridged. Try Refine again, or film with the full body in frame.`, true, 9000);
     status(`Done · ${found}/${N} frames tracked${wantHands ? ` · fingers in ${Math.round(100 * hf / N)}%` : ''}. Tweak step 3 or export.`);
@@ -2702,7 +2929,7 @@ $('go').onclick = processVideo;
 // ---- text to motion ----
 let lastPrompt = null, ttmSeeds = {}, lastSeed = 0, ttmCaption = null;
 $('inPlace').addEventListener('change', () => { if (!frames && lastPrompt && anim) runTextMotion(lastPrompt, currentTakeId, lastSeed); });
-const TTM_EXAMPLES = ['boxing stance then jab cross hook', 'boxer walking then 3 jabs', 'tired walk for 4 seconds', 'sneaky walk then jump', 'proud walk then wave', 'drunk walk', 'roundhouse kick', 'happy dance'];
+const TTM_EXAMPLES = ['Mike Tyson left hook', '1-2-3 then slip', 'southpaw jab cross then right hook', 'muay thai', 'do some boxing', 'golf swing', 'basketball dribble then jump shot', 'zombie walk in a circle', 'walk backwards then turn around and wave', 'workout', 'march like a soldier', 'tired walk in the rain', 'celebrate'];
 $('ttmChips').innerHTML = TTM_EXAMPLES.map(e => `<button class="btn small" data-e="${e}">${e}</button>`).join('');
 $('ttmChips').onclick = e => { const b = e.target.closest('button'); if (b) $('ttmText').value = b.dataset.e; };
 $('ttmBtn').onclick = () => { $('ttmModal').style.display = 'grid'; lockPage(); setTimeout(() => $('ttmText').focus(), 50); };
@@ -2940,20 +3167,27 @@ function legGuess(apply) { // apply = set the Legs setting to the guess (fresh c
   legPickUI(); return LEG_GUESS;
 }
 function legPickUI() {
-  const g = LEG_GUESS, box = $('legPick'), v = $('lowerBody').value;
-  box.style.display = frames && (g && g.partial || v !== 'ai') ? 'block' : 'none';
+  const g = LEG_GUESS, box = $('legPick'), v = $('lowerBody').value, av = $('armPose').value;
+  const legsOn = !!(frames && (g && g.partial || v !== 'ai')), out = g && g.armsOut || { Left: 0, Right: 0 }, armsOn = !!(frames && (Math.max(out.Left, out.Right) > 0.2 || av !== 'side' || legsOn));
+  box.style.display = legsOn || armsOn ? 'block' : 'none';
   if (box.style.display === 'none') return;
-  $('legPickWhy').textContent = g && g.partial ? `Pick what the legs should do. My guess: ${{ walk: 'walking', sit: 'sitting', idle: 'standing' }[g.kind]} (${g.why}).` : 'Pick what the legs should do.';
+  $('legPart').style.display = legsOn ? 'block' : 'none'; $('armPart').style.display = armsOn ? 'block' : 'none'; $('armPart').style.marginTop = legsOn ? '10px' : '0';
+  const which = out.Left > 0.2 && out.Right > 0.2 ? 'Both arms are' : out.Left > 0.2 ? 'Your left arm is' : out.Right > 0.2 ? 'Your right arm is' : 'An arm is';
+  $('armPickWhy').textContent = `${which} out of the picture for part of the clip. Pick what it does then${v === 'walk' || v === 'run' ? ' (down by the side swings as you move)' : ''}.`;
+  document.querySelectorAll('#armSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === av));
+  $('legPickWhy').textContent = g && g.partial ? `Pick what the legs should do. My guess: ${{ walk: 'walking', run: 'running', sit: 'sitting', idle: 'standing' }[g.kind]} (${g.why}).` : 'Pick what the legs should do.';
   document.querySelectorAll('#legSeg button').forEach(b => { b.classList.toggle('on', b.dataset.v === v); b.classList.toggle('guess', !!(g && g.partial && g.kind === b.dataset.v)); });
   $('legRaw').classList.toggle('primary', v === 'ai');
 }
 $('legSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; $('lowerBody').value = b.dataset.v; $('lowerBody').dispatchEvent(new Event('change')); };
 $('legRaw').onclick = () => { $('lowerBody').value = 'ai'; $('lowerBody').dispatchEvent(new Event('change')); };
 $('lowerBody').addEventListener('change', legPickUI);
+$('armSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; $('armPose').value = b.dataset.v; $('armPose').dispatchEvent(new Event('change')); };
+$('armPose').addEventListener('change', legPickUI);
 
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, lowerBody: $('lowerBody').value, contactHeight: +$('contact').value, contactSpeed: 0.6 };
+  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, lowerBody: $('lowerBody').value, armPose: $('armPose').value, contactHeight: +$('contact').value, contactSpeed: 0.6 };
 }
 let solveT;
 function solve(rebuild = false) {
@@ -2968,7 +3202,7 @@ function solve(rebuild = false) {
 }
 $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#fingerSeg button').forEach(x => x.classList.toggle('on', x === b)); solve(); };
 for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('change', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 30); }); // update once you let go (no stutter while dragging)
-for (const id of ['lowerBody', 'footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
+for (const id of ['armPose', 'lowerBody', 'footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
 
 function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON', 'editBtn']) $(id).disabled = !on; if (on && !MODEL.obj) setTimeout(() => restoreModel(), 0); else if (on && MODEL.obj) { scene.add(MODEL.prep.wrap); } }
 function showStats() {
@@ -3261,6 +3495,10 @@ $('bigPlay').onclick = () => play();
 $('pinBtn').onclick = () => { const on = document.body.classList.toggle('pinned'); $('pinBtn').classList.toggle('on', on); $('pinBtn').textContent = on ? '📌 Unpin' : '📌 Pin'; if (on) $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); };
 $('vview').addEventListener('click', e => { if (playing && e.target.closest('.vtools') == null) pause(); });
 $('speed').onchange = () => (vid.playbackRate = +$('speed').value);
+{ const cs = $('clipSpeed'), show = () => ($('clipSpeedV').textContent = (+cs.value).toFixed(2).replace(/\.?0+$/, '') + '×');
+  cs.addEventListener('input', show); show();
+  const step = d => { cs.value = Math.max(0.1, Math.min(3, Math.round((+cs.value + d) * 100) / 100)); show(); cs.dispatchEvent(new Event('change')); };
+  $('csMinus').onclick = () => step(-0.05); $('csPlus').onclick = () => step(0.05); }
 let pendingSeek = null;
 function seekDisplay(t) { if (!vid.src) return; if (vid.seeking) { pendingSeek = t; return; } vid.currentTime = t; }
 $('scrub').addEventListener('input', () => { pause(); curTime = +$('scrub').value; seekDisplay(curTime); applyAt(curTime); drawOverlay(); updateTimeLabel(); requestRender(); });
@@ -3270,7 +3508,7 @@ function loop(now) {
   const dt = (now - last) / 1000; last = now;
   if (playing) {
     // the 3D always moves on a steady clock; the video is gently sped up / slowed down to stay in step (no jumps, no waiting on video stutters)
-    const spd = +$('speed').value; curTime += Math.min(dt, 0.1) * spd;
+    const spd = +$('speed').value * (+$('clipSpeed').value || 1); curTime += Math.min(dt, 0.1) * spd;
     // the video plays at its normal speed (changing its speed makes iPhones stutter); it is only re-aligned if it drifts noticeably
     if (vid.src && !vid.seeking && now - lastSync > 700) {
       const diff = curTime - vid.currentTime;
@@ -3299,7 +3537,7 @@ const LIB = {
   all() { return this.run('readonly', s => s.getAll()); }, del(id) { return this.run('readwrite', s => s.delete(id)); },
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
-const settingIds = ['lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
+const settingIds = ['clipSpeed', 'armPose', 'lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
 const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; s.edits = JSON.parse(JSON.stringify(EDITS)); return s; };
 const writeSettings = s => { if (!s) return; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); EDITS = s.edits ? JSON.parse(JSON.stringify(s.edits)) : { keys: {}, root: {}, spread: 0.5 }; try { edSyncLocks(); } catch (e) {} };
 const DEFAULT_SETTINGS = readSettings(); // the app's starting settings, used for anything a take never saved
@@ -3392,6 +3630,7 @@ $('libList').onclick = async e => {
   if (b.dataset.a === 'bvh' || b.dataset.a === 'glb' || b.dataset.a === 'fbx') {
     if (!take.frames && !take.prompt) { toast('This take did not finish processing. Open it and tap Generate motion.', true); return; }
     const mine = readSettings(); quiet = true; writeSettings(take.settings); let a; try { a = take.prompt ? applyEdits(smartTextMotion(take.prompt, take.seed || 0), take.settings && take.settings.edits) : takeAnim(take); } finally { writeSettings(mine); quiet = false; }
+    a = retime(a, +((take.settings && take.settings.clipSpeed) || 1));
     return b.dataset.a === 'bvh' ? exportBVH(a, base) : b.dataset.a === 'fbx' ? exportFBX(a, base) : exportGLB(a, base);
   }
   if (b.dataset.a === 'open' || b.dataset.a === 'edit') {
@@ -3626,7 +3865,7 @@ function edTimeline() {
   $('edClearKey').disabled = !nm; $('edZoom').disabled = !nm; edDrawDial();
 }
 function edRefresh() { anim = applyEdits(baseAnim, EDITS); edPose(); edTimeline(); }
-function edPush() { ED.undo.push({ e: JSON.stringify(EDITS), k: ED.k, sel: ED.sel }); if (ED.undo.length > 100) ED.undo.shift(); ED.redo = []; }
+function edPush() { const e = JSON.stringify(EDITS), top = ED.undo[ED.undo.length - 1]; if (top && top.e === e) return; ED.undo.push({ e }); if (ED.undo.length > 100) ED.undo.shift(); ED.redo = []; }
 const r4 = v => Math.round(v * 1e4) / 1e4;
 function edLayered(j, k, layer) { const b = baseAnim.locals[k][j], q = new THREE.Quaternion(b[0], b[1], b[2], b[3]), L = (layer || EDITS.layer || {})[j]; return L ? q.premultiply(new THREE.Quaternion(L[0], L[1], L[2], L[3])) : q; }
 function edSetKey(j, k, local) { // stored as an offset from the AI's own pose (plus any whole-animation layer), so it blends smoothly over nearby frames
@@ -3810,14 +4049,14 @@ function closeEditor() {
 const edOpen = () => $('editModal').style.display === 'flex';
 $('editBtn').onclick = openEditor;
 $('edDone').onclick = closeEditor;
-function edJump(h, label) { // undo / redo go back to where that change was made, so you can see it
+function edJump(h, label) { // undo / redo only change your edits back: the frame you're on and the joint you picked stay put
   EDITS = JSON.parse(h.e); ED.dial = null;
-  if (h.k != null && h.k < anim.n) ED.k = h.k; if (h.sel != null) ED.sel = h.sel;
-  if (ED.playing) edStop(); edSyncLocks(); edRefresh();
-  toast(`${label}${h.sel != null && h.sel >= 0 ? ': ' + (ED_NAMES[anim.rest.joints[h.sel].name] || '') : ''} · frame ${ED.k + 1}`);
+  edSyncLocks(); edRefresh(); toast(label);
 }
-$('edUndo').onclick = () => { if (!ED.undo.length) return; const h = ED.undo.pop(); ED.redo.push({ e: JSON.stringify(EDITS), k: h.k, sel: h.sel }); edJump(h, 'Undone'); };
-$('edRedo').onclick = () => { if (!ED.redo.length) return; const h = ED.redo.pop(); ED.undo.push({ e: JSON.stringify(EDITS), k: h.k, sel: h.sel }); edJump(h, 'Redone'); };
+// only real changes count: steps that didn't change anything (a tap, scrubbing frames) are skipped
+const edStep = (from, to, label) => { const cur = JSON.stringify(EDITS); let h; while (from.length && (h = from.pop()).e === cur) h = null; if (!h) { toast('Nothing to ' + label.toLowerCase().replace('ne', '')); edTimeline(); return; } to.push({ e: cur }); edJump(h, label); };
+$('edUndo').onclick = () => edStep(ED.undo, ED.redo, 'Undone');
+$('edRedo').onclick = () => edStep(ED.redo, ED.undo, 'Redone');
 function edSyncLocks() { $('edLockFeet').checked = $('mainPinFeet').checked = !!EDITS.pinFeet; $('edLockRot').checked = $('mainLockRot').checked = !!EDITS.lockRot; }
 $('edApply').onclick = e => { const b = e.target.closest('button'); if (!b) return; ED.apply = b.dataset.v; ED.dial = null; edTimeline(); toast(ED.apply === 'layer' ? 'Whole animation: your change is added to every frame, on top of the original motion.' : 'This moment: your change blends in around this frame only.'); };
 function mainLockChanged() { // the Refine-section boxes: same locks as in the editor
@@ -4138,7 +4377,8 @@ loadLearned();
 
 // ---------- exports ----------
 const outName = (ext, base) => `${base || videoName}_${$('naming').value}_${$('outFps').value}fps.${ext}`;
-function trimmedAnim(a) { if (a !== anim) return a; const [s, e] = trimRange(), t0 = animT0(); return S.sliceAnim(a, s - t0, e - t0); }
+const retime = (a, spd) => (a && spd && Math.abs(spd - 1) > 1e-3 ? { ...a, fps: a.fps * spd } : a); // same frames, played faster / slower
+function trimmedAnim(a) { if (a !== anim) return a; const [s, e] = trimRange(), t0 = animT0(); return retime(S.sliceAnim(a, s - t0, e - t0), +$('clipSpeed').value); }
 function exportBVH(a, base) { a = trimmedAnim(a); saveFile(S.toBVH(a, +$('outFps').value, $('naming').value), outName('bvh', base), 'text/plain'); toast('BVH exported.'); }
 $('exBVH').onclick = () => { if (anim) exportBVH(anim); };
 function exportFBX(a, base) { a = trimmedAnim(a); saveFile(new Blob([S.toFBX(a, +$('outFps').value, $('naming').value)], { type: 'application/octet-stream' }), outName('fbx', base)); toast('FBX exported.'); }
