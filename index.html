@@ -172,6 +172,27 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   .row{margin:12px 0}
   .toast{left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom));max-width:none}
 }
+
+/* ✏️ edit motion pop-up */
+#editModal{display:none;position:fixed;inset:0;z-index:70;background:var(--bg);flex-direction:column;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);overscroll-behavior:contain}
+#editModal .ehead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+#editModal .ehead b{color:var(--accent);font-size:16px}
+#editModal .sp{flex:1}
+#edView{position:relative;flex:1;min-height:200px;touch-action:none;overflow:hidden}
+#edView canvas{display:block}
+#edHint{position:absolute;left:0;right:0;top:10px;text-align:center;font-size:13px;color:var(--dim);pointer-events:none;transition:opacity .3s;padding:0 12px}
+#edJoint{position:absolute;left:10px;top:10px;font-weight:700;color:var(--accent);font-size:14px;pointer-events:none;text-shadow:0 1px 3px #000}
+#editModal .epanel{padding:8px 12px 12px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px;background:var(--panel)}
+#editModal .erow{display:flex;align-items:center;gap:8px}
+#editModal .seg{margin:0;flex:1}
+#editModal .seg button:disabled{opacity:.35}
+#editModal .etl{flex:1;position:relative;display:flex;flex-direction:column;gap:2px}
+#editModal .etl canvas{width:100%;height:12px}
+#editModal .etl input{width:100%}
+#editModal .btn{min-height:40px}
+#editModal .btn:disabled{opacity:.4}
+#editModal .small-txt{font-size:12px;color:var(--dim)}
+#editModal .btn.go{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:700}
 </style>
 <script type="importmap">
 { "imports": {
@@ -1571,6 +1592,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="time" id="tlabel">0.00s / 0.00s</div>
     <button class="btn" id="undoAll" title="Undo" disabled>↩️</button>
     <button class="btn" id="trimBtn" title="Trim">✂️</button>
+    <button class="btn" id="editBtn" title="Edit motion: move any joint" disabled>✏️ Edit</button>
     <span id="savedTag" style="font-size:11px;color:var(--accent);opacity:0;transition:opacity .4s;white-space:nowrap"></span>
     <button class="btn" id="pinBtn" title="Keep the video and 3D view on screen while scrolling">📌 Pin</button>
   </div>
@@ -1595,6 +1617,16 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <div class="mini" style="margin-top:4px">Tap again for a fresh variation of the same prompt · Enter = create</div>
   <div class="hint">Moves: walk, run, jump, jab, cross, hook, uppercut, kick, roundhouse, squat, wave, dance, spin, stance, idle. Styles change the whole body: boxing / fighter, tired, sneaky, proud, happy, angry, drunk, old. Add numbers ("3 jabs"), speed ("fast", "slowly"), time ("walk for 5 seconds") and chain them with "then" or commas.</div>
 </div></div>
+<div id="editModal">
+  <div class="ehead"><b>✏️ Edit motion</b><span class="sp"></span><button class="btn small" id="edUndo" title="Undo" disabled>↩️ Undo</button><button class="btn small" id="edRedo" title="Redo" disabled>↪️</button><button class="btn small go" id="edDone">Done</button></div>
+  <div id="edView"><div id="edHint">Tap a gold dot to pick a joint, then drag it.<br>Drag empty space to turn the view · pinch to zoom</div><div id="edJoint"></div></div>
+  <div class="epanel">
+    <div class="erow"><div class="seg" id="edMode"><button data-m="move">✋ Move</button><button data-m="rotate" class="on">🔄 Bend</button><button data-m="twist">🌀 Twist</button></div></div>
+    <div class="erow"><button class="btn small" id="edPrev" title="Previous frame">◀</button><button class="btn small" id="edPlay" title="Play">▶</button><div class="etl"><canvas id="edKeys"></canvas><input type="range" id="edScrub" min="0" max="1" step="1" value="0"></div><button class="btn small" id="edNext" title="Next frame">▶</button></div>
+    <div class="erow small-txt"><span id="edTime">frame 1</span><span class="sp"></span>Blend <input type="range" id="edSpread" min="0.1" max="2" step="0.1" value="0.5" style="width:90px"><span id="edSpreadV">0.5s</span></div>
+    <div class="erow"><button class="btn small" id="edClearKey" style="flex:1" disabled>Remove change here</button><button class="btn small" id="edClearAll" style="flex:1">Clear all</button></div>
+  </div>
+</div>
 <div class="modal" id="trimModal"><div class="box tbox">
   <div style="display:flex;align-items:center;margin-bottom:8px"><b style="font-size:16px">✂️ Trim video</b><span class="mini" style="margin-left:10px;display:inline">pick the part to capture</span><button class="btn small" id="tClose" style="margin-left:auto">✕</button></div>
   <div class="tview"><video id="tVid" muted playsinline webkit-playsinline preload="auto"></video><canvas id="tCv" style="display:none"></canvas></div>
@@ -1646,6 +1678,7 @@ for (const [id, out, f] of [['headTilt', 'headTiltV', v => (v > 0 ? '+' : '') + 
 
 // ---------- state ----------
 let videoURL = null, videoName = 'motion', frames = null, anim = null, meta = null;
+let baseAnim = null, EDITS = { keys: {}, root: {}, spread: 0.5 }; // AI result before your hand edits, and the edits themselves
 let playing = false, curTime = 0, cancelFlag = false, busy = false, needRender = true, uiReady = false;
 const vid = $('vid');
 let undoStack = [];
@@ -1996,7 +2029,7 @@ async function processVideo() {
   const status = m => (st.textContent = m);
   go.textContent = 'Cancel'; prog.style.display = 'block'; bar.style.width = '0%';
   try {
-    currentTakeId = Date.now();
+    currentTakeId = Date.now(); EDITS = { keys: {}, root: {}, spread: 0.5 };
     saveTakeStart().catch(e => toast('Library save failed: ' + e.message, true));
     let q = $('quality').value, pfps = +$('procFps').value; const wantHands = $('hands').checked;
     try { await loadModels(q, wantHands, status); }
@@ -2147,7 +2180,7 @@ function runTextMotion(txt, existingId, seed) {
   lastPrompt = txt; if ($('inPlace').checked) a.rootPos = a.rootPos.map(r => [0, r[1], 0]);
   if ($('ttmModal').style.display !== 'none') { $('ttmModal').style.display = 'none'; unlockPage(); } pause();
   if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; currentSource = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = [];
-  frames = null; meta = { fps: 30, dur: (a.n - 1) / 30, scans: 0 }; anim = a; videoName = txt.slice(0, 40).replace(/[^\w-]+/g, '_') || 'text_motion'; curTime = 0;
+  frames = null; meta = { fps: 30, dur: (a.n - 1) / 30, scans: 0 }; if (!existingId) EDITS = { keys: {}, root: {}, spread: 0.5 }; baseAnim = a; anim = applyEdits(a, EDITS); videoName = txt.slice(0, 40).replace(/[^\w-]+/g, '_') || 'text_motion'; curTime = 0;
   $('vEmpty').style.display = 'none'; ttmCaption = txt; $('bigPlay').style.display = 'none';
   buildCharacter(a.rest); setReady(true); drawContacts(); applyAt(0); requestRender(); updateRefineLabel();
   $('scrub').max = meta.dur; $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel();
@@ -2337,7 +2370,7 @@ function solve(rebuild = false) {
   try {
     const newAnim = S.solveAll(frames, opts());
     const restChanged = !anim || rebuild || JSON.stringify(anim.M) !== JSON.stringify(newAnim.M);
-    anim = newAnim;
+    baseAnim = newAnim; anim = applyEdits(newAnim, EDITS);
     if (restChanged) buildCharacter(anim.rest);
     setReady(true); drawContacts(); showStats(); applyAt(curTime); requestRender();
   } catch (e) { console.error(e); toast(e.message, true); setReady(false); }
@@ -2346,7 +2379,7 @@ $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) re
 for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('change', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 30); }); // update once you let go (no stutter while dragging)
 for (const id of ['footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
 
-function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON']) $(id).disabled = !on; }
+function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON', 'editBtn']) $(id).disabled = !on; }
 function showStats() {
   if (!frames) return;
   const M = anim.M, el = $('stats'); el.style.display = 'grid';
@@ -2673,8 +2706,8 @@ const LIB = {
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 const settingIds = ['smooth', 'contact', 'fov', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
-const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; return s; };
-const writeSettings = s => { if (!s) return; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); };
+const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; s.edits = JSON.parse(JSON.stringify(EDITS)); return s; };
+const writeSettings = s => { if (!s) return; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); EDITS = s.edits ? JSON.parse(JSON.stringify(s.edits)) : { keys: {}, root: {}, spread: 0.5 }; };
 const DEFAULT_SETTINGS = readSettings(); // the app's starting settings, used for anything a take never saved
 for (const id of settingIds) $(id).addEventListener('change', () => setTimeout(() => recordChange(), 0));
 $('fingerSeg').addEventListener('click', () => setTimeout(() => recordChange(), 0));
@@ -2744,13 +2777,13 @@ async function saveTake(cv) {
   await putTake({ id, name: videoName, date: old ? old.date : new Date().toISOString(), dur: meta.dur, frames, meta, settings: readSettings(), thumb, videoBuf: vb && vb.buf, videoType: vb && vb.type, videoName: currentSource && currentSource.name, status: 'done' });
   toast('Saved to your Library.');
 }
-function takeAnim(take) { const s = take.settings || {}; const o = { ...opts(), fps: take.meta.fps, W: take.meta.W, H: take.meta.H }; return S.solveAll(take.frames, o); }
+function takeAnim(take) { const s = take.settings || {}; const o = { ...opts(), fps: take.meta.fps, W: take.meta.W, H: take.meta.H }; return applyEdits(S.solveAll(take.frames, o), take.settings && take.settings.edits); }
 async function renderLibrary() {
   let takes = []; try { takes = (await LIB.all()).sort((a, b) => (+b.mod || +b.id || 0) - (+a.mod || +a.id || 0)); /* most recent first */ } catch (e) { $('libList').innerHTML = '<div class="hint">Library is not available in this browser mode.</div>'; return; }
   $('libCount').textContent = takes.length ? `${takes.length} saved` : '';
   if (!takes.length) { $('libList').innerHTML = '<div class="hint">Nothing saved yet. Generate a motion and it appears here.</div>'; return; }
   $('libList').innerHTML = takes.map(k => `<div class="take" data-id="${k.id}">${k.thumb ? `<img alt="" data-thumb="${k.id}">` : '<div class="ph"></div>'}<div><b>${(k.name || 'motion').replace(/[<>&]/g, '')}</b><small>${new Date(k.mod || k.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} · ${(+k.dur || 0).toFixed(1)}s${k.prompt ? ' · ✍️ text' : (k.videoBuf || k.video) ? '' : ' · motion only'}${k.status === 'processing' ? ' · <span style="color:var(--warn)">not finished</span>' : ''}</small>
-    <div class="acts"><button class="btn" data-a="open">▶ Open</button><button class="btn" data-a="fbx">FBX</button><button class="btn" data-a="bvh">BVH</button><button class="btn" data-a="glb">GLB</button><button class="btn" data-a="del" title="Delete">🗑</button></div></div></div>`).join('');
+    <div class="acts"><button class="btn" data-a="open">▶ Open</button><button class="btn" data-a="edit">✏️ Edit</button><button class="btn" data-a="fbx">FBX</button><button class="btn" data-a="bvh">BVH</button><button class="btn" data-a="glb">GLB</button><button class="btn" data-a="del" title="Delete">🗑</button></div></div></div>`).join('');
   for (const k of takes) if (k.thumb) { const img = $('libList').querySelector(`[data-thumb="${k.id}"]`); if (img) { img.src = URL.createObjectURL(k.thumb); img.onload = () => URL.revokeObjectURL(img.src); } }
 }
 let delArm = null;
@@ -2764,12 +2797,12 @@ $('libList').onclick = async e => {
   }
   if (b.dataset.a === 'bvh' || b.dataset.a === 'glb' || b.dataset.a === 'fbx') {
     if (!take.frames && !take.prompt) { toast('This take did not finish processing. Open it and tap Generate motion.', true); return; }
-    const mine = readSettings(); quiet = true; writeSettings(take.settings); let a; try { a = take.prompt ? S.textToMotion(take.prompt, 30, take.seed || 0) : takeAnim(take); } finally { writeSettings(mine); quiet = false; }
+    const mine = readSettings(); quiet = true; writeSettings(take.settings); let a; try { a = take.prompt ? applyEdits(S.textToMotion(take.prompt, 30, take.seed || 0), take.settings && take.settings.edits) : takeAnim(take); } finally { writeSettings(mine); quiet = false; }
     return b.dataset.a === 'bvh' ? exportBVH(a, base) : b.dataset.a === 'fbx' ? exportFBX(a, base) : exportGLB(a, base);
   }
-  if (b.dataset.a === 'open') {
+  if (b.dataset.a === 'open' || b.dataset.a === 'edit') {
     clearTimeout(autosaveT);
-    if (take.prompt) { quiet = true; writeSettings(take.settings); quiet = false; ttmSeeds[take.id] = take.seed || 0; runTextMotion(take.prompt, take.id, take.seed || 0); resetHistory(); return; }
+    if (take.prompt) { quiet = true; writeSettings(take.settings); quiet = false; ttmSeeds[take.id] = take.seed || 0; runTextMotion(take.prompt, take.id, take.seed || 0); resetHistory(); if (b.dataset.a === 'edit') openEditor(); return; }
     const vblob = take.videoBuf ? new Blob([take.videoBuf], { type: take.videoType || 'video/mp4' }) : take.video;
     if (vblob) await loadVideo(vblob, take.videoName || take.name, { fromLibrary: true });
     else { pause(); if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = []; }
@@ -2779,9 +2812,243 @@ $('libList').onclick = async e => {
     frames = take.frames; meta = take.meta; videoName = take.name || 'motion'; curTime = 0;
     solve(true); updateRefineLabel(); updateTimeLabel(); $('scrub').max = meta.dur; $('scrub').disabled = false; $('play').disabled = false;
     $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); toast('Opened from Library.');
+    if (b.dataset.a === 'edit') openEditor();
   }
 };
 renderLibrary();
+
+// ---------- ✏️ Edit motion: move any joint, the change is blended smoothly into the frames around it ----------
+const ssE = x => x * x * (3 - 2 * x);
+function hasEdits(E) { return !!E && (Object.values(E.keys || {}).some(m => Object.keys(m).length) || Object.keys(E.root || {}).length > 0); }
+function applyEdits(a, E) {
+  if (!a || !hasEdits(E)) return a;
+  const n = a.n, R = Math.max(1, Math.round((+E.spread || 0.5) * a.fps));
+  const locals = a.locals.map(l => l.slice()), rootPos = a.rootPos.map(r => r.slice());
+  // walk every frame: on a key -> that value; between two close keys -> smooth blend; near one key -> fade in/out over the Blend time
+  const curve = (map, fn) => {
+    const ks = Object.keys(map).map(Number).filter(k => k >= 0 && k < n).sort((x, y) => x - y); if (!ks.length) return; let i = 0;
+    for (let k = 0; k < n; k++) {
+      while (i < ks.length && ks[i] < k) i++;
+      const q = i < ks.length ? ks[i] : null, p = i > 0 ? ks[i - 1] : null;
+      if (q === k) { fn(k, map[k], map[k], 0); continue; }
+      if (p != null && q != null && q - p <= 2 * R) { fn(k, map[p], map[q], ssE((k - p) / (q - p))); continue; }
+      const dp = p != null ? k - p : 1e9, dq = q != null ? q - k : 1e9;
+      if (dp < dq) { if (dp < R) fn(k, null, map[p], ssE(1 - dp / R)); } else if (dq < R) fn(k, null, map[q], ssE(1 - dq / R));
+    }
+  };
+  const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), qd = new THREE.Quaternion(), ql = new THREE.Quaternion();
+  for (const js of Object.keys(E.keys || {})) {
+    const j = +js; if (!(j >= 0 && j < a.rest.joints.length)) continue;
+    curve(E.keys[js], (k, A, B, u) => {
+      A ? qa.set(A[0], A[1], A[2], A[3]) : qa.identity(); B ? qb.set(B[0], B[1], B[2], B[3]) : qb.identity();
+      qd.slerpQuaternions(qa, qb, u); const L = locals[k][j]; ql.set(L[0], L[1], L[2], L[3]).premultiply(qd).normalize();
+      locals[k][j] = [ql.x, ql.y, ql.z, ql.w];
+    });
+  }
+  curve(E.root || {}, (k, A, B, u) => { const a0 = A || [0, 0, 0], b0 = B || [0, 0, 0]; for (let c = 0; c < 3; c++) rootPos[k][c] += a0[c] + (b0[c] - a0[c]) * u; });
+  return { ...a, locals, rootPos };
+}
+
+const ED = { renderer: null, scene: null, camera: null, controls: null, rig: null, dots: [], sel: -1, k: 0, mode: 'rotate', undo: [], redo: [], playing: false, raf: 0, start: null, drag: null, lastT: 0, acc: 0 };
+const ED_NAMES = { Hips: 'Hips (whole body)', Spine1: 'Lower back', Spine2: 'Chest', Neck: 'Neck', Head: 'Head', LeftShoulder: 'Left collarbone', LeftArm: 'Left shoulder', LeftForeArm: 'Left elbow', LeftHand: 'Left hand', RightShoulder: 'Right collarbone', RightArm: 'Right shoulder', RightForeArm: 'Right elbow', RightHand: 'Right hand', LeftUpLeg: 'Left hip', LeftLeg: 'Left knee', LeftFoot: 'Left foot', LeftToeBase: 'Left toes', RightUpLeg: 'Right hip', RightLeg: 'Right knee', RightFoot: 'Right foot', RightToeBase: 'Right toes' };
+const ED_IK = { LeftHand: ['LeftArm', 'LeftForeArm'], RightHand: ['RightArm', 'RightForeArm'], LeftFoot: ['LeftUpLeg', 'LeftLeg'], RightFoot: ['RightUpLeg', 'RightLeg'] };
+const edJ = nm => anim.rest.index[nm];
+const edName = () => ED.sel >= 0 ? anim.rest.joints[ED.sel].name : '';
+const canMove = nm => nm === 'Hips' || !!ED_IK[nm];
+
+function initEditor() {
+  const view = $('edView');
+  const r = ED.renderer = new THREE.WebGLRenderer({ antialias: true });
+  r.setPixelRatio(Math.min(isPhone ? 1.75 : 2, devicePixelRatio)); r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping;
+  view.prepend(r.domElement); r.domElement.style.touchAction = 'none';
+  const sc = ED.scene = new THREE.Scene(); sc.background = new THREE.Color(TV('--scene-bg'));
+  sc.add(new THREE.HemisphereLight(0xcfe7ff, 0x1a1f2a, 1.0)); const d = new THREE.DirectionalLight(0xffffff, 2.0); d.position.set(3, 6, 4); sc.add(d);
+  const fl = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: TV('--floor'), roughness: 0.95 })); fl.rotation.x = -Math.PI / 2; sc.add(fl);
+  const g = new THREE.GridHelper(60, 120, TV('--grid1'), TV('--grid2')); g.position.y = 0.001; sc.add(g);
+  ED.camera = new THREE.PerspectiveCamera(40, 1, 0.02, 100);
+  // our touch handler goes first: a touch on a joint dot edits it, anywhere else turns the camera
+  r.domElement.addEventListener('pointerdown', edDown);
+  ED.controls = new OrbitControls(ED.camera, r.domElement);
+  Object.assign(ED.controls, { enableDamping: true, dampingFactor: 0.12, rotateSpeed: 0.5, zoomSpeed: 0.7, panSpeed: 0.5, minDistance: 0.6, maxDistance: 12, screenSpacePanning: true });
+  new ResizeObserver(edResize).observe(view);
+}
+function edResize() {
+  if (!ED.renderer) return; const r = $('edView').getBoundingClientRect(); if (!r.width) return;
+  ED.renderer.setSize(r.width, r.height, false); ED.renderer.domElement.style.width = '100%'; ED.renderer.domElement.style.height = '100%';
+  ED.camera.aspect = r.width / Math.max(1, r.height); ED.camera.updateProjectionMatrix();
+}
+function edBuild() {
+  if (ED.rig) { ED.scene.remove(ED.rig.group); ED.rig.mesh.geometry.dispose(); }
+  for (const d of ED.dots) ED.scene.remove(d.m); ED.dots = [];
+  ED.rig = makeRig(anim.rest); ED.scene.add(ED.rig.group);
+  const geo = new THREE.SphereGeometry(1, 16, 12);
+  for (const nm of Object.keys(ED_NAMES)) {
+    const j = anim.rest.index[nm]; if (j == null) continue;
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: TV('--accent'), depthTest: false, transparent: true, opacity: 0.95 }));
+    m.renderOrder = 999; m.scale.setScalar(nm === 'Hips' ? 0.038 : 0.026); ED.scene.add(m); ED.dots.push({ j, m, nm });
+  }
+}
+function edPose() {
+  if (!ED.rig) return; const b = ED.rig.bones, k = ED.k;
+  b[0].position.set(...anim.rootPos[k]); anim.locals[k].forEach((q, j) => b[j].quaternion.set(q[0], q[1], q[2], q[3]));
+  ED.rig.group.updateMatrixWorld(true); edDots();
+}
+function edDots() {
+  const keyed = j => !!(EDITS.keys[j] && EDITS.keys[j][ED.k]) || (j === 0 && EDITS.root[ED.k]);
+  for (const d of ED.dots) {
+    ED.rig.bones[d.j].getWorldPosition(d.m.position);
+    const s = d.j === ED.sel, base = d.nm === 'Hips' ? 0.038 : 0.026;
+    d.m.material.color.set(TV(s ? '--text' : keyed(d.j) ? '--accent3' : '--accent')); d.m.scale.setScalar(s ? base * 1.7 : base);
+  }
+}
+function edTimeline() {
+  const n = anim.n; $('edScrub').max = n - 1; $('edScrub').value = ED.k;
+  $('edTime').textContent = `frame ${ED.k + 1} / ${n} · ${(ED.k / anim.fps).toFixed(2)}s`;
+  const c = $('edKeys'), w = c.clientWidth || 300; c.width = w * 2; c.height = 24; const g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height);
+  const x = k => 14 + (k / Math.max(1, n - 1)) * (c.width - 28);
+  const all = new Set(), mine = new Set();
+  for (const js of Object.keys(EDITS.keys)) for (const k of Object.keys(EDITS.keys[js])) { all.add(+k); if (+js === ED.sel) mine.add(+k); }
+  for (const k of Object.keys(EDITS.root)) { all.add(+k); if (ED.sel === 0) mine.add(+k); }
+  g.fillStyle = TV('--line'); for (const k of all) g.fillRect(x(k) - 2, 4, 4, 16);
+  g.fillStyle = TV('--accent'); for (const k of mine) g.fillRect(x(k) - 3, 0, 6, 24);
+  $('edUndo').disabled = !ED.undo.length; $('edRedo').disabled = !ED.redo.length;
+  const nm = edName(); $('edJoint').textContent = nm ? ED_NAMES[nm] || nm : '';
+  $('edHint').style.opacity = nm ? 0 : 1;
+  document.querySelectorAll('#edMode button').forEach(b => { b.classList.toggle('on', b.dataset.m === ED.mode); b.disabled = b.dataset.m === 'move' && nm && !canMove(nm); });
+  $('edClearKey').disabled = !nm;
+}
+function edRefresh() { anim = applyEdits(baseAnim, EDITS); edPose(); edTimeline(); }
+function edPush() { ED.undo.push(JSON.stringify(EDITS)); if (ED.undo.length > 80) ED.undo.shift(); ED.redo = []; }
+const r4 = v => Math.round(v * 1e4) / 1e4;
+function edSetKey(j, k, local) { // store the change as an offset from the AI's own pose
+  const b = baseAnim.locals[k][j], qb = new THREE.Quaternion(b[0], b[1], b[2], b[3]).invert(), d = local.clone().multiply(qb).normalize();
+  (EDITS.keys[j] = EDITS.keys[j] || {})[k] = [r4(d.x), r4(d.y), r4(d.z), r4(d.w)];
+}
+function edPick(e) {
+  const rc = ED.renderer.domElement.getBoundingClientRect(), px = e.clientX - rc.left, py = e.clientY - rc.top;
+  let best = -1, bd = matchMedia('(pointer:coarse)').matches ? 34 : 20; const v = new THREE.Vector3();
+  for (const d of ED.dots) { v.copy(d.m.position).project(ED.camera); if (v.z > 1) continue; const sx = (v.x + 1) / 2 * rc.width, sy = (1 - v.y) / 2 * rc.height, dd = Math.hypot(sx - px, sy - py); if (dd < bd) { bd = dd; best = d.j; } }
+  return best;
+}
+function edRay(e, point) { // where the finger is, on a flat plane through `point` facing the camera
+  const rc = ED.renderer.domElement.getBoundingClientRect(), ndc = new THREE.Vector2((e.clientX - rc.left) / rc.width * 2 - 1, -((e.clientY - rc.top) / rc.height) * 2 + 1);
+  const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, ED.camera);
+  const n = new THREE.Vector3(); ED.camera.getWorldDirection(n); const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(n, point);
+  const out = new THREE.Vector3(); return ray.ray.intersectPlane(pl, out) ? out : null;
+}
+function edSelect(j) {
+  ED.sel = j; const nm = edName();
+  if (ED.mode === 'move' && !canMove(nm)) ED.mode = 'rotate';
+  if (ED_IK[nm] && ED.mode !== 'twist') ED.mode = 'move';
+  edDots(); edTimeline();
+}
+function edDown(e) {
+  if (!anim || ED.playing) return;
+  const hit = edPick(e); if (hit < 0) return; // empty space: the camera handles it
+  e.stopImmediatePropagation(); e.preventDefault();
+  if (hit !== ED.sel) edSelect(hit);
+  const b = ED.rig.bones, j = ED.sel, nm = edName(), wq = new THREE.Quaternion(), wp = new THREE.Vector3();
+  b[j].getWorldQuaternion(wq); b[j].getWorldPosition(wp);
+  const st = { x: e.clientX, y: e.clientY, j, nm, wq: wq.clone(), wp: wp.clone(), locals: b.map(x => x.quaternion.clone()), root: b[0].position.clone(), pushed: false, id: e.pointerId };
+  if (ED.mode === 'move' && ED_IK[nm]) { st.chain = ED_IK[nm].map(edJ); st.hit0 = edRay(e, wp); }
+  if (ED.mode === 'move' && nm === 'Hips') st.hit0 = edRay(e, wp);
+  ED.drag = st; try { ED.renderer.domElement.setPointerCapture(e.pointerId); } catch (er) {}
+  ED.renderer.domElement.addEventListener('pointermove', edMove); ED.renderer.domElement.addEventListener('pointerup', edUp); ED.renderer.domElement.addEventListener('pointercancel', edUp);
+}
+function edMove(e) {
+  const st = ED.drag; if (!st || e.pointerId !== st.id) return;
+  const dx = e.clientX - st.x, dy = e.clientY - st.y; if (!st.pushed) { if (Math.hypot(dx, dy) < 3) return; edPush(); st.pushed = true; }
+  const b = ED.rig.bones, j = st.j, k = ED.k;
+  b.forEach((x, i) => x.quaternion.copy(st.locals[i])); b[0].position.copy(st.root); ED.rig.group.updateMatrixWorld(true);
+  const parentW = q => { const p = b[q].parent, out = new THREE.Quaternion(); if (p && p.isBone) p.getWorldQuaternion(out); else ED.rig.group.getWorldQuaternion(out); return out; };
+  const setWorld = (q, w) => { b[q].quaternion.copy(parentW(q).invert().multiply(w)); b[q].updateMatrixWorld(true); };
+  if (ED.mode === 'move' && st.nm === 'Hips') {
+    const h = edRay(e, st.wp); if (!h || !st.hit0) return;
+    const p = st.root.clone().add(h.sub(st.hit0)); p.y = Math.max(0.05, p.y); b[0].position.copy(p);
+    const base = baseAnim.rootPos[k]; EDITS.root[k] = [r4(p.x - base[0]), r4(p.y - base[1]), r4(p.z - base[2])];
+  } else if (ED.mode === 'move' && st.chain) {
+    const T = edRay(e, st.wp); if (!T || !st.hit0) return; T.add(st.wp.clone().sub(st.hit0));
+    const [iu, il] = st.chain, S0 = new THREE.Vector3(), E0 = new THREE.Vector3(), W0 = new THREE.Vector3();
+    b[iu].getWorldPosition(S0); b[il].getWorldPosition(E0); b[j].getWorldPosition(W0);
+    const a = S0.distanceTo(E0), c = E0.distanceTo(W0), dir = T.clone().sub(S0), d = THREE.MathUtils.clamp(dir.length(), Math.abs(a - c) + 1e-3, (a + c) * 0.999); dir.normalize();
+    let pole = E0.clone().sub(S0); pole.sub(dir.clone().multiplyScalar(pole.dot(dir)));
+    if (pole.lengthSq() < 1e-8) { pole = new THREE.Vector3(); ED.camera.getWorldDirection(pole); pole.negate(); pole.sub(dir.clone().multiplyScalar(pole.dot(dir))); }
+    pole.normalize();
+    const x = (a * a - c * c + d * d) / (2 * d), hgt = Math.sqrt(Math.max(0, a * a - x * x)), E2 = S0.clone().add(dir.clone().multiplyScalar(x)).add(pole.multiplyScalar(hgt)), W2 = S0.clone().add(dir.clone().multiplyScalar(d));
+    const qu = new THREE.Quaternion(); b[iu].getWorldQuaternion(qu); setWorld(iu, new THREE.Quaternion().setFromUnitVectors(E0.clone().sub(S0).normalize(), E2.clone().sub(S0).normalize()).multiply(qu));
+    const W1 = new THREE.Vector3(); b[j].getWorldPosition(W1); const ql = new THREE.Quaternion(); b[il].getWorldQuaternion(ql);
+    setWorld(il, new THREE.Quaternion().setFromUnitVectors(W1.clone().sub(E2).normalize(), W2.clone().sub(E2).normalize()).multiply(ql));
+    setWorld(j, st.wq); // the hand / foot keeps the way it was facing
+    for (const q of [iu, il, j]) edSetKey(q, k, b[q].quaternion);
+  } else {
+    let R;
+    if (ED.mode === 'twist') {
+      const kid = b[j].children.find(c => c.isBone), axis = new THREE.Vector3();
+      if (kid) { kid.getWorldPosition(axis); axis.sub(st.wp).normalize(); } else axis.set(0, 1, 0).applyQuaternion(st.wq);
+      R = new THREE.Quaternion().setFromAxisAngle(axis, dx * 0.012);
+    } else {
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(ED.camera.quaternion), right = new THREE.Vector3(1, 0, 0).applyQuaternion(ED.camera.quaternion);
+      R = new THREE.Quaternion().setFromAxisAngle(up, dx * 0.01).premultiply(new THREE.Quaternion().setFromAxisAngle(right, dy * 0.01));
+    }
+    setWorld(j, R.multiply(st.wq)); edSetKey(j, k, b[j].quaternion);
+  }
+  ED.rig.group.updateMatrixWorld(true); edDots();
+}
+function edUp(e) {
+  const el = ED.renderer.domElement; el.removeEventListener('pointermove', edMove); el.removeEventListener('pointerup', edUp); el.removeEventListener('pointercancel', edUp);
+  const st = ED.drag; ED.drag = null; if (st && st.pushed) edRefresh();
+}
+function edGo(k) { ED.k = Math.max(0, Math.min(anim.n - 1, k)); edPose(); edTimeline(); }
+function edLoop(t) {
+  if ($('editModal').style.display === 'none') { ED.raf = 0; return; }
+  ED.raf = requestAnimationFrame(edLoop);
+  if (ED.playing) { ED.acc += Math.min(0.1, (t - (ED.lastT || t)) / 1000); const step = 1 / anim.fps; while (ED.acc >= step) { ED.acc -= step; ED.k = (ED.k + 1) % anim.n; } edPose(); $('edScrub').value = ED.k; $('edTime').textContent = `frame ${ED.k + 1} / ${anim.n} · ${(ED.k / anim.fps).toFixed(2)}s`; }
+  ED.lastT = t; ED.controls.update(); ED.renderer.render(ED.scene, ED.camera);
+}
+function edStop() { ED.playing = false; $('edPlay').textContent = '▶'; }
+function openEditor() {
+  if (!anim || !baseAnim || busy) { toast('Make or open a motion first.', true); return; }
+  pause(); ED.startEdits = JSON.stringify(EDITS); ED.undo = []; ED.redo = []; ED.sel = -1; ED.mode = 'rotate'; edStop();
+  $('editModal').style.display = 'flex'; lockPage();
+  if (!ED.renderer) initEditor();
+  ED.scene.background.set(TV('--scene-bg'));
+  edBuild(); edResize();
+  ED.k = Math.max(0, Math.min(anim.n - 1, Math.round((curTime - animT0()) * anim.fps)));
+  $('edSpread').value = EDITS.spread || 0.5; $('edSpreadV').textContent = (+$('edSpread').value).toFixed(1) + 's';
+  edPose();
+  const hp = new THREE.Vector3(); ED.rig.bones[0].getWorldPosition(hp);
+  ED.controls.target.set(hp.x, Math.max(0.6, hp.y), hp.z); ED.camera.position.copy(camera.position).sub(controls.target).add(ED.controls.target);
+  edTimeline(); if (!ED.raf) ED.raf = requestAnimationFrame(edLoop);
+}
+function closeEditor() {
+  edStop(); $('editModal').style.display = 'none'; unlockPage();
+  anim = applyEdits(baseAnim, EDITS);
+  if (JSON.stringify(EDITS) !== ED.startEdits) { recordChange(); toast(hasEdits(EDITS) ? 'Edits applied. Exports include them.' : 'Edits cleared.'); }
+  curTime = animT0() + ED.k / anim.fps; $('scrub').value = curTime; applyAt(curTime); drawContacts(); updateTimeLabel(); requestRender();
+}
+$('editBtn').onclick = openEditor;
+$('edDone').onclick = closeEditor;
+$('edUndo').onclick = () => { if (!ED.undo.length) return; ED.redo.push(JSON.stringify(EDITS)); EDITS = JSON.parse(ED.undo.pop()); edRefresh(); };
+$('edRedo').onclick = () => { if (!ED.redo.length) return; ED.undo.push(JSON.stringify(EDITS)); EDITS = JSON.parse(ED.redo.pop()); edRefresh(); };
+$('edMode').onclick = e => { const b = e.target.closest('button'); if (!b || b.disabled) return; ED.mode = b.dataset.m; edTimeline(); };
+$('edScrub').addEventListener('input', () => { edStop(); edGo(+$('edScrub').value); });
+$('edPrev').onclick = () => { edStop(); edGo(ED.k - 1); };
+$('edNext').onclick = () => { edStop(); edGo(ED.k + 1); };
+$('edPlay').onclick = () => { ED.playing = !ED.playing; ED.acc = 0; ED.lastT = 0; $('edPlay').textContent = ED.playing ? '⏸' : '▶'; if (!ED.playing) edTimeline(); };
+$('edSpread').addEventListener('input', () => { $('edSpreadV').textContent = (+$('edSpread').value).toFixed(1) + 's'; });
+$('edSpread').addEventListener('change', () => { edPush(); EDITS.spread = +$('edSpread').value; edRefresh(); });
+$('edClearKey').onclick = () => {
+  const nm = edName(); if (!nm) return; edPush();
+  for (const j of [ED.sel, ...(ED_IK[nm] || []).map(edJ)]) if (EDITS.keys[j]) { delete EDITS.keys[j][ED.k]; if (!Object.keys(EDITS.keys[j]).length) delete EDITS.keys[j]; }
+  if (ED.sel === 0) delete EDITS.root[ED.k];
+  edRefresh(); toast('Change removed at this frame.');
+};
+let edClearArm = 0;
+$('edClearAll').onclick = () => {
+  if (!hasEdits(EDITS)) return;
+  if (Date.now() - edClearArm > 3000) { edClearArm = Date.now(); $('edClearAll').textContent = 'Sure?'; setTimeout(() => ($('edClearAll').textContent = 'Clear all'), 3000); return; }
+  edPush(); EDITS = { keys: {}, root: {}, spread: EDITS.spread || 0.5 }; $('edClearAll').textContent = 'Clear all'; edRefresh();
+};
 
 // ---------- exports ----------
 const outName = (ext, base) => `${base || videoName}_${$('naming').value}_${$('outFps').value}fps.${ext}`;
