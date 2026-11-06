@@ -1,5 +1,5 @@
 // NoCap MoCap offline cache: everything is cached on first visit, then served even with no internet.
-const VERSION = 'nocap-v29';
+const VERSION = 'nocap-v30';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-512.png',
   'vendor/three/build/three.module.js',
@@ -7,6 +7,11 @@ const CORE = [
   'vendor/three/examples/jsm/exporters/GLTFExporter.js',
   'vendor/three/examples/jsm/utils/BufferGeometryUtils.js',
   'vendor/three/examples/jsm/utils/TextureUtils.js',
+  'vendor/three/examples/jsm/loaders/FBXLoader.js',
+  'vendor/three/examples/jsm/loaders/GLTFLoader.js',
+  'vendor/three/examples/jsm/libs/fflate.module.js',
+  'vendor/three/examples/jsm/curves/NURBSCurve.js',
+  'vendor/three/examples/jsm/curves/NURBSUtils.js',
   'vendor/tasks-vision/vision_bundle.mjs',
   'vendor/tasks-vision/wasm/vision_wasm_internal.js',
   'vendor/tasks-vision/wasm/vision_wasm_internal.wasm',
