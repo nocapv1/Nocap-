@@ -1,5 +1,5 @@
 // NoCap MoCap offline cache: everything is cached on first visit, then served even with no internet.
-const VERSION = 'nocap-v44';
+const VERSION = 'nocap-v45';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-512.png',
   'vendor/three/build/three.module.js',

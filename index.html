@@ -1086,6 +1086,32 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       }
       rootPos = out;
     }
+    // anti-float: turning side-on / pivoting fools the AI's distance guess, which can lift the whole body into the air. Unless the
+    // video shows the feet actually leaving the ground (a real jump), the lowest foot is kept on the floor.
+    if (opt.antiFloat !== false && n > 4 && !synthLegs) {
+      const lowY = rootPos.map((r, k) => Math.min(FL[k].Left.low, FL[k].Right.low) + r[1] - floor);
+      // in the picture: how far the lowest visible foot point rose above where the ground is around that moment
+      const imgLow = piF ? piF.map(p => { let m = -Infinity, c = 0; for (const i of [27, 28, 29, 30, 31, 32]) if ((p[i][2] ?? 1) >= 0.5) { m = Math.max(m, p[i][1]); c++; } return c >= 2 ? m : null; }) : rootPos.map(() => null);
+      const bodyH = piF ? median(piF.map(p => Math.abs((p[27][1] + p[28][1]) / 2 - (p[11][1] + p[12][1]) / 2)).filter(v => v > 1)) || opt.H * 0.5 : 1;
+      const win = Math.round(fps * 1.5);
+      const air = imgLow.map((y, k) => {
+        if (y == null) return false;
+        const nb = []; for (let q = k - win; q <= k + win; q++) if (q >= 0 && q < n && imgLow[q] != null) nb.push(imgLow[q]);
+        return nb.length >= 5 && (percentile(nb, 0.85) - y) / bodyH > 0.07; // lowest foot clearly higher in the picture than the ground line = really airborne
+      });
+      // a real jump is short: longer "airborne" stretches are tracking errors
+      for (let k = 0; k < n; k++) { if (!air[k]) continue; let e = k; while (e < n && air[e]) e++; if (e - k > fps * 1.0) for (let q = k; q < e; q++) air[q] = false; k = e; }
+      const over = lowY.map((h, k) => (air[k] ? Math.max(0, h - 0.6) : Math.max(0, h - 0.015))); // even a real jump: never higher than a person can jump
+      if (over.some(v => v > 0.01)) {
+        const w = Math.max(1, Math.round(fps * 0.08)), dil = over.map((_, k) => { let m = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n && !air[q]) m = Math.max(m, over[q] * (1 - Math.abs(q - k) / (w + 1))); return Math.max(m, over[k]); });
+        const sm = dil.map((_, k) => { let s0 = 0, c = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) { s0 += dil[q]; c++; } return Math.min(s0 / c, over[k] > 0 ? over[k] : s0 / c); });
+        rootPos = rootPos.map((r, k) => [r[0], r[1] - Math.min(sm[k], Math.max(0, lowY[k])), r[2]]);
+      }
+      // no impossible leaps: the hips can't shoot up faster than a real jump take-off
+      const vmax = 3.5 / fps; let changed = false; const rp = rootPos.map(r => r.slice()); // ~3.5 m/s = a strong real jump take-off
+      for (let k = 1; k < n; k++) if (rp[k][1] - rp[k - 1][1] > vmax) { rp[k][1] = rp[k - 1][1] + vmax; changed = true; }
+      if (changed) rootPos = rp;
+    }
     // floor to y=0, start at origin
     rootPos = rootPos.map(r => [r[0], r[1] - floor, r[2]]);
     const r0 = rootPos[0];
@@ -1983,6 +2009,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>Target rig naming</label><select id="naming"><option value="unity" selected>Unity (Humanoid)</option><option value="standard">Standard / Blender</option><option value="mixamo">Mixamo</option><option value="unreal">Unreal (UE mannequin)</option></select></div>
     <div class="row"><label>Frame rate</label><select id="outFps"><option>24</option><option selected>30</option><option>60</option><option>120</option></select></div>
     <div class="grid3" style="grid-template-columns:repeat(4,1fr)"><button class="btn" id="exFBX" disabled>FBX</button><button class="btn" id="exBVH" disabled>BVH</button><button class="btn" id="exGLB" disabled>GLB</button><button class="btn" id="exJSON" disabled>JSON</button></div>
+    <button class="btn small" id="exDebug" style="width:100%;margin-top:8px;opacity:.75">🛠 Save tracking data (send to Claude to fix a problem)</button>
     <div class="hint">
       <b style="color:var(--dim)">FBX</b> → drag straight into Unity (set Rig → Humanoid), also Blender, Maya, MotionBuilder, Unreal.<br>
       <b style="color:var(--dim)">BVH</b> → Blender (File › Import › BVH), MotionBuilder, Cascadeur, MMD (via Blender + mmd_tools), Mixamo-rig retarget.<br>
@@ -4116,6 +4143,14 @@ function exportBVH(a, base) { a = trimmedAnim(a); saveFile(S.toBVH(a, +$('outFps
 $('exBVH').onclick = () => { if (anim) exportBVH(anim); };
 function exportFBX(a, base) { a = trimmedAnim(a); saveFile(new Blob([S.toFBX(a, +$('outFps').value, $('naming').value)], { type: 'application/octet-stream' }), outName('fbx', base)); toast('FBX exported.'); }
 $('exFBX').onclick = () => { if (anim) exportFBX(anim); };
+$('exDebug').onclick = () => {
+  if (!frames) return toast('Generate motion first.', true);
+  const r = a => a && a.map(p => p.map(v => Math.round(v * 10000) / 10000));
+  const data = { app: 'nocap-debug', version: 1, name: videoName, meta, settings: (() => { try { return opts(); } catch (e) { return null; } })(),
+    frames: frames.map(f => ({ t: f.t, pw: r(f.pw), pi: r(f.pi), hl: r(f.hl), hr: r(f.hr), hil: r(f.hil), hir: r(f.hir) })) };
+  saveFile(JSON.stringify(data), (videoName || 'take').replace(/\.[^.]+$/, '') + '_tracking.json', 'application/json');
+  toast('Tracking data saved. Send me the file and I can see exactly what went wrong.');
+};
 $('exJSON').onclick = () => { if (!anim) return; saveFile(JSON.stringify(S.toJSON(trimmedAnim(anim), +$('outFps').value, $('naming').value)), outName('json'), 'application/json'); toast('JSON exported.'); };
 $('exGLB').onclick = () => { if (anim) exportGLB(anim); };
 function exportGLB(anim, base) { anim = trimmedAnim(anim);
