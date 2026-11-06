@@ -615,7 +615,24 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   // ---- body parts that are out of the picture ----
   const smooth01 = x => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
   // which landmarks were really seen (confident and inside the picture) in each frame
-  function seenMask(pw, pi) { return pi.map((a, k) => a && pw[k] ? a.map(p => (p[2] ?? 1) >= 0.35 && p[0] > -0.01 && p[0] < 1.01 && p[1] > -0.01 && p[1] < 1.01) : null); }
+  function seenMask(pw, pi, minVis = 0.35, m = -0.01) { return pi.map((a, k) => a && pw[k] ? a.map(p => (p[2] ?? 1) >= minVis && p[0] > m && p[0] < 1 - m && p[1] > m && p[1] < 1 - m) : null); }
+  // an arm only counts as in shot when its wrist is clearly visible inside the picture for a moment (not a split-second blip)
+  function armMask(pw, pi, fps, hands) {
+    const mask = seenMask(pw, pi, 0.6, 0.015), n = mask.length, minRun = Math.max(2, Math.round(fps * 0.25));
+    // still in shot if the hand tracker found that hand, or the elbow is clearly in view (e.g. hand raised past the top edge)
+    for (let k = 0; k < n; k++) if (mask[k]) for (const [i, el, S] of [[15, 13, 'Left'], [16, 14, 'Right']]) {
+      const e = pi[k][el];
+      if (hands && hands[S] && hands[S][k]) mask[k][i] = true;
+      else if (mask[k][el] && e[1] < 0.9) mask[k][i] = true;
+    }
+    for (const i of [15, 16]) for (let k = 0; k < n; k++) {
+      if (!(mask[k] && mask[k][i])) continue;
+      let e = k; while (e < n && mask[e] && mask[e][i]) e++;
+      if (e - k < minRun) for (let q = k; q < e; q++) mask[q][i] = false;
+      k = e;
+    }
+    return mask;
+  }
   // seconds from each frame to the nearest frame where landmark i was really seen (Infinity if never)
   function distToSeen(mask, i, fps) {
     const n = mask.length, d = new Array(n).fill(Infinity); let last = -Infinity;
@@ -679,23 +696,22 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     let rate = 1.8; if (kind === 'walk') { const b = bobRate(ys, fps); if (b.corr > 0.45 && b.rate > 1.2 && b.rate < 2.8) rate = b.rate; }
     const om = Math.PI * rate, A = 0.4; // one step = half a gait cycle
     const legAng = (k, sx) => { const ps = om * k / fps + (sx > 0 ? 0 : Math.PI); return [A * Math.sin(ps), 0.12 + 0.95 * Math.pow(Math.max(0, Math.cos(ps + 0.5)), 1.5)]; };
-    const relax = {};
+    const relax = {}, am = armMask(P.map(() => 1), opt._pi0 || [], fps, opt._hands);
     for (const [S, sx, i] of SIDES) {
-      const wE = distToSeen(mask, i.el, fps).map(d => smooth01((d - 0.6) / 0.6)), wW = distToSeen(mask, i.wr, fps).map(d => smooth01((d - 0.6) / 0.6));
+      // out of shot = the whole arm goes down by the side and stays still (the AI's guesses for it are ignored)
+      const wW = distToSeen(am.length ? am : mask, i.wr, fps).map(d => smooth01((d - 0.3) / 0.5)), wE = wW;
       relax[S] = wW;
       for (let k = 0; k < n; k++) {
         if (wE[k] <= 0 && wW[k] <= 0) continue;
         const p = P[k], lr = lrOf(p[11], p[12]), fwd = cross(lr, Y);
         const swing = kind === 'walk' ? -0.7 * legAng(k, sx)[0] : 0;
-        const ue = norm(add(add(sc(Y, -Math.cos(swing)), sc(fwd, Math.sin(swing))), sc(lr, sx * 0.12)));
+        const ue = norm(add(add(sc(Y, -Math.cos(swing)), sc(fwd, Math.sin(swing))), sc(lr, sx * (kind === 'sit' ? 0.2 : 0.12)))); // a touch out to clear the seat
         const el = lerp(p[i.el], add(p[i.sh], sc(ue, M.upper)), wE[k]);
-        let fd;
-        if (kind === 'sit') fd = norm(add(add(sc(fwd, 0.85), sc(Y, -0.45)), sc(lr, -sx * 0.15)));
-        else { const s2 = swing * 1.2 + 0.15; fd = norm(add(add(sc(Y, -Math.cos(s2)), sc(fwd, Math.sin(s2))), sc(lr, sx * 0.04))); }
+        const s2 = swing * 1.2 + 0.1, fd = norm(add(add(sc(Y, -Math.cos(s2)), sc(fwd, Math.sin(s2))), sc(lr, sx * (kind === 'sit' ? 0.1 : 0.04)))); // hanging by the side
         p[i.el] = el;
         if (wW[k] <= 0) continue;
         const wr = lerp(p[i.wr], add(el, sc(fd, M.fore)), wW[k]);
-        const d = norm(sub(wr, el)), sv = norm(perp(kind === 'sit' ? sc(lr, -sx) : fwd, d)), h = M.hand;
+        const d = norm(sub(wr, el)), sv = norm(perp(fwd, d)), h = M.hand;
         const want = { [i.ix]: add(add(wr, sc(d, 0.8 * h)), sc(sv, 0.025)), [i.pk]: sub(add(wr, sc(d, 0.75 * h)), sc(sv, 0.025)), [i.wr + 6]: add(add(wr, sc(d, 0.4 * h)), sc(sv, 0.035)) };
         p[i.wr] = wr;
         for (const j in want) p[j] = lerp(p[j], want[j], wW[k]);
@@ -843,6 +859,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     }
     // track clean-up: remove one-frame spikes, and bridge short stretches where a hand/foot was hidden (low visibility)
     const mask0 = seenMask(pw, pi); // what the camera really saw, before any bridging
+    opt = { ...opt, _pi0: pi.map((a, k) => (a && pw[k] ? a : null)), _hands: { Left: hl.map(Boolean), Right: hr.map(Boolean) } };
     if (opt.cleanTracks !== false) { const c = cleanTracks(pw, pi, fps); pw = c.pw; pi = c.pi; }
     // a hand in front of the face confuses the face points; don't let them steer the head or move the body
     const faceBlocked = opt.faceGuard === false ? pw.map(() => false) : faceCovered(frames, opt, fps);
