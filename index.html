@@ -736,22 +736,56 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
 
   // frames where a hand is over (or right next to) the face, padded a little either side
   function faceCovered(frames, opt, fps) {
-    const W = opt.W || 1280, H = opt.H || 720, n = frames.length, hit = new Array(n).fill(false);
+    const W = opt.W || 1280, H = opt.H || 720, n = frames.length, hit = new Array(n).fill(0);
     for (let k = 0; k < n; k++) {
       const p = frames[k].pi; if (!p) continue;
       const px = q => [q[0] * W, q[1] * H], ear = Math.hypot((p[7][0] - p[8][0]) * W, (p[7][1] - p[8][1]) * H), shw = Math.hypot((p[11][0] - p[12][0]) * W, (p[11][1] - p[12][1]) * H);
       const r = Math.max(ear * 1.1, shw * 0.45, 8), c = [(p[0][0] + (p[7][0] + p[8][0]) / 2) / 2 * W, (p[0][1] + (p[7][1] + p[8][1]) / 2) / 2 * H];
       const near = q => { const a = px(q); return Math.hypot(a[0] - c[0], a[1] - c[1]) < r; };
-      for (let i = 15; i <= 22 && !hit[k]; i++) if ((p[i][2] ?? 1) >= 0.3 && near(p[i])) hit[k] = true;
-      for (const h of [frames[k].hil, frames[k].hir]) if (h && !hit[k]) { let c2 = 0; for (const q of h) if (near(q)) c2++; if (c2 >= 4) hit[k] = true; }
+      for (let i = 15; i <= 22 && !hit[k]; i++) if ((p[i][2] ?? 1) >= 0.3 && near(p[i])) hit[k] = 1;
+      for (const h of [frames[k].hil, frames[k].hir]) if (h && !hit[k]) { let c2 = 0; for (const q of h) if (near(q)) c2++; if (c2 >= 4) hit[k] = 1; }
+      // a big hand (close to the lens) over the upper chest hides the shoulders too
+      const boxes = [];
+      for (const h of [frames[k].hil, frames[k].hir]) if (h) boxes.push(h.map(px));
+      for (const [w0, a0, b0] of [[15, 17, 19], [16, 18, 20]]) if ((p[w0][2] ?? 1) >= 0.3) { const q = [w0, a0, b0].map(i => px(p[i])); const cx = q.reduce((s, v) => s + v[0], 0) / 3, cy = q.reduce((s, v) => s + v[1], 0) / 3; const e = Math.max(...q.map(v => Math.hypot(v[0] - cx, v[1] - cy))) * 2.2; boxes.push([[cx - e, cy - e], [cx + e, cy + e]]); }
+      const sx0 = Math.min(p[11][0], p[12][0]) * W - 0.2 * shw, sx1 = Math.max(p[11][0], p[12][0]) * W + 0.2 * shw, sy0 = c[1], sy1 = Math.max(p[11][1], p[12][1]) * H + 0.3 * shw;
+      for (const b of boxes) {
+        const x0 = Math.min(...b.map(v => v[0])), x1 = Math.max(...b.map(v => v[0])), y0 = Math.min(...b.map(v => v[1])), y1 = Math.max(...b.map(v => v[1]));
+        const ox = Math.min(x1, sx1) - Math.max(x0, sx0), oy = Math.min(y1, sy1) - Math.max(y0, sy0);
+        if (Math.max(x1 - x0, y1 - y0) > 0.55 * shw && ox > 0.25 * shw && oy > 0.15 * shw) hit[k] = 2;
+      }
     }
     const pad = Math.max(1, Math.round(fps * 0.1)), out = hit.slice();
-    for (let k = 0; k < n; k++) if (hit[k]) for (let q = k - pad; q <= k + pad; q++) if (q >= 0 && q < n) out[q] = true;
+    for (let k = 0; k < n; k++) if (hit[k]) for (let q = k - pad; q <= k + pad; q++) if (q >= 0 && q < n) out[q] = Math.max(out[q] || 0, hit[k]);
     return out;
   }
   // rebuild the face points (0-10) of covered frames from the frames either side, kept relative to the shoulders
   function bridgeFace(pw, pi, blocked) {
     const n = pw.length; pw = pw.map(a => a && a.map(p => p.slice())); pi = pi.map(a => a && a.map(p => p.slice()));
+    { // shoulders hidden by a big hand: carry them smoothly from the frames either side; each arm stays attached (keeps its real movement)
+      const okT = k => k >= 0 && k < n && pw[k] && !blocked[k]; // anchor on frames with nothing in front at all
+      for (let k = 0; k < n; k++) {
+        if (!blocked[k]) continue;
+        let e = k; while (e < n && blocked[e]) e++;
+        let big = false; for (let q = k; q < e; q++) if (blocked[q] === 2) big = true;
+        if (!big) { k = e; continue; } // whole stretch the hand is in front, if at any point it hid the shoulders
+        let a = k - 1; while (a >= 0 && !okT(a)) a--; let b = e; while (b < n && !okT(b)) b++;
+        const hasA = a >= 0, hasB = b < n;
+        if (hasA || hasB) for (let q = k; q < e; q++) {
+          if (!pw[q]) continue;
+          const u = hasA && hasB ? (q - a) / (b - a) : hasA ? 0 : 1, s = u * u * (3 - 2 * u), A = hasA ? a : b, B = hasB ? b : a;
+          for (const [sh, arm] of [[11, [13, 15, 17, 19, 21]], [12, [14, 16, 18, 20, 22]]]) {
+            const nw = lerp(pw[A][sh], pw[B][sh], s), dw = sub(nw, pw[q][sh]); pw[q][sh] = nw;
+            for (const i of arm) pw[q][i] = add(pw[q][i], dw);
+            if (pi[q] && pi[A] && pi[B]) {
+              const ni = [pi[A][sh][0] + (pi[B][sh][0] - pi[A][sh][0]) * s, pi[A][sh][1] + (pi[B][sh][1] - pi[A][sh][1]) * s], dx = ni[0] - pi[q][sh][0], dy = ni[1] - pi[q][sh][1];
+              pi[q][sh] = [ni[0], ni[1], 0.25]; for (const i of arm) pi[q][i] = [pi[q][i][0] + dx, pi[q][i][1] + dy, pi[q][i][2]];
+            }
+          }
+        }
+        k = e;
+      }
+    }
     const ok = k => k >= 0 && k < n && pw[k] && !blocked[k];
     const ms = (a, k) => [(a[k][11][0] + a[k][12][0]) / 2, (a[k][11][1] + a[k][12][1]) / 2, (a[k][11][2] ?? 0) / 2 + (a[k][12][2] ?? 0) / 2];
     for (let k = 0; k < n; k++) {
@@ -1840,7 +1874,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     return { ...anim, n: i1 - i0 + 1, rootPos: anim.rootPos.slice(i0, i1 + 1), locals: anim.locals.slice(i0, i1 + 1), contacts: anim.contacts.slice(i0, i1 + 1) };
   }
 
-  g.Solver = { guessLowerBody, sliceAnim, textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, floorFinder, estimateFov, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
+  g.Solver = { faceCovered, guessLowerBody, sliceAnim, textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, floorFinder, estimateFov, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
