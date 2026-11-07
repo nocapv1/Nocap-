@@ -713,7 +713,9 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const om = Math.PI * rate, A = run ? 0.62 : 0.4; // one step = half a gait cycle
     const legAng = (k, sx) => { const ps = om * k / fps + (sx > 0 ? 0 : Math.PI); return [A * Math.sin(ps), (run ? 0.25 : 0.12) + (run ? 1.55 : 0.95) * Math.pow(Math.max(0, Math.cos(ps + 0.5)), 1.5)]; };
     const relax = {}, am = armMask(P.map(() => 1), opt._pi0 || [], fps, opt._hands);
+    const armOn = S => opt.armOut === 'both' || opt.armOut === S; // only the arm(s) you chose
     for (const [S, sx, i] of SIDES) {
+      if (!armOn(S)) { relax[S] = P.map(() => 0); continue; }
       // out of shot = the whole arm goes down by the side and stays still (the AI's guesses for it are ignored)
       const wW = distToSeen(am.length ? am : mask, i.wr, fps).map(d => smooth01((d - 0.5) / 0.5)), wE = wW; // short gaps (blur, hand passing the face) keep the real arm
       relax[S] = wW;
@@ -950,7 +952,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     opt = { ...opt, _pi0: pi.map((a, k) => (a && pw[k] ? a : null)), _hands: { Left: hl.map(Boolean), Right: hr.map(Boolean) } };
     if (opt.cleanTracks !== false) { const c = cleanTracks(pw, pi, fps); pw = c.pw; pi = c.pi; }
     // a hand in front of the face confuses the face points; don't let them steer the head or move the body
-    const faceBlocked = opt.faceGuard === false ? pw.map(() => false) : faceCovered(frames, opt, fps);
+    const faceBlocked = !opt.faceGuard ? pw.map(() => false) : faceCovered(frames, opt, fps); // only when switched on
     if (faceBlocked.some(Boolean)) { const c = bridgeFace(pw, pi, faceBlocked); pw = c.pw; pi = c.pi; }
     // torso consistency (turns / pivots): shoulders and hips must face the same way. If one half flipped left/right, flip it back.
     if (opt.fixSwaps !== false) {
@@ -1175,7 +1177,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     }
     // anti-float: turning side-on / pivoting fools the AI's distance guess, which can lift the whole body into the air. Unless the
     // video shows the feet actually leaving the ground (a real jump), the lowest foot is kept on the floor.
-    if (opt.antiFloat !== false && n > 4 && !synthLegs) {
+    if (opt.antiFloat && n > 4 && !synthLegs) { // only when switched on
       const lowY = rootPos.map((r, k) => Math.min(FL[k].Left.low, FL[k].Right.low) + r[1] - floor);
       // in the picture: how far the lowest visible foot point rose above where the ground is around that moment
       const imgLow = piF ? piF.map(p => { let m = -Infinity, c = 0; for (const i of [27, 28, 29, 30, 31, 32]) if ((p[i][2] ?? 1) >= 0.5) { m = Math.max(m, p[i][1]); c++; } return c >= 2 ? m : null; }) : rootPos.map(() => null);
@@ -2476,6 +2478,1393 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
 
 </script>
 <script>
+// ===== CLASSIC motion solver, frozen exactly as it was on 6 Nov 2026 (morning). Older saved takes use this so they never change. =====
+(function (g) {
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+  const sc = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const len = a => Math.hypot(a[0], a[1], a[2]);
+  const norm = a => { const l = len(a); return l > 1e-9 ? sc(a, 1 / l) : [0, 0, 0]; };
+  const mid = (a, b) => sc(add(a, b), 0.5);
+  const lerp = (a, b, t) => add(a, sc(sub(b, a), t));
+  const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+  const perp = (v, ax) => sub(v, sc(ax, dot(v, ax)));
+  const median = arr => { const s = arr.filter(Number.isFinite).sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
+  const percentile = (arr, p) => { const s = arr.filter(Number.isFinite).sort((a, b) => a - b); return s.length ? s[Math.floor(clamp(p, 0, 1) * (s.length - 1))] : 0; };
+
+  // ---- quaternions [x,y,z,w] ----
+  const qmul = (a, b) => [
+    a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+    a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+    a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+    a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]];
+  const qconj = q => [-q[0], -q[1], -q[2], q[3]];
+  const qnorm = q => { const l = Math.hypot(q[0], q[1], q[2], q[3]) || 1; return [q[0] / l, q[1] / l, q[2] / l, q[3] / l]; };
+  const qrot = (q, v) => { const p = qmul(qmul(q, [v[0], v[1], v[2], 0]), qconj(q)); return [p[0], p[1], p[2]]; };
+  function qslerp(a, b, t) {
+    let d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+    let bb = b; if (d < 0) { d = -d; bb = [-b[0], -b[1], -b[2], -b[3]]; }
+    if (d > 0.9995) return qnorm([a[0] + (bb[0] - a[0]) * t, a[1] + (bb[1] - a[1]) * t, a[2] + (bb[2] - a[2]) * t, a[3] + (bb[3] - a[3]) * t]);
+    const th = Math.acos(d), s = Math.sin(th), wa = Math.sin((1 - t) * th) / s, wb = Math.sin(t * th) / s;
+    return [a[0] * wa + bb[0] * wb, a[1] * wa + bb[1] * wb, a[2] * wa + bb[2] * wb, a[3] * wa + bb[3] * wb];
+  }
+  function quatToMat(q) {
+    const [x, y, z, w] = q;
+    return [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]];
+  }
+  function quatFromMat(m) {
+    const tr = m[0][0] + m[1][1] + m[2][2]; let x, y, z, w, s;
+    if (tr > 0) { s = Math.sqrt(tr + 1) * 2; w = 0.25 * s; x = (m[2][1] - m[1][2]) / s; y = (m[0][2] - m[2][0]) / s; z = (m[1][0] - m[0][1]) / s; }
+    else if (m[0][0] > m[1][1] && m[0][0] > m[2][2]) { s = Math.sqrt(1 + m[0][0] - m[1][1] - m[2][2]) * 2; w = (m[2][1] - m[1][2]) / s; x = 0.25 * s; y = (m[0][1] + m[1][0]) / s; z = (m[0][2] + m[2][0]) / s; }
+    else if (m[1][1] > m[2][2]) { s = Math.sqrt(1 + m[1][1] - m[0][0] - m[2][2]) * 2; w = (m[0][2] - m[2][0]) / s; x = (m[0][1] + m[1][0]) / s; y = 0.25 * s; z = (m[1][2] + m[2][1]) / s; }
+    else { s = Math.sqrt(1 + m[2][2] - m[0][0] - m[1][1]) * 2; w = (m[1][0] - m[0][1]) / s; x = (m[0][2] + m[2][0]) / s; y = (m[1][2] + m[2][1]) / s; z = 0.25 * s; }
+    return qnorm([x, y, z, w]);
+  }
+  function qFromTo(a, b) {
+    a = norm(a); b = norm(b); const d = dot(a, b);
+    if (d < -0.999999) { let ax = cross([1, 0, 0], a); if (len(ax) < 1e-6) ax = cross([0, 1, 0], a); ax = norm(ax); return [ax[0], ax[1], ax[2], 0]; }
+    const c = cross(a, b); return qnorm([c[0], c[1], c[2], 1 + d]);
+  }
+  // Euler for BVH channel order "Zrotation Xrotation Yrotation" (R = Rz*Rx*Ry), degrees [z,x,y]
+  function eulerZXY(q) {
+    const m = quatToMat(q); const D = 180 / Math.PI;
+    const x = Math.asin(clamp(m[2][1], -1, 1)); let y, z;
+    if (Math.abs(m[2][1]) < 0.9999999) { y = Math.atan2(-m[2][0], m[2][2]); z = Math.atan2(-m[0][1], m[1][1]); }
+    else { y = 0; z = Math.atan2(m[1][0], m[0][0]); }
+    return [z * D, x * D, y * D];
+  }
+
+  // Orthonormal frame from primary + secondary direction. Returns 3 column vectors.
+  function basis(p, s) {
+    p = norm(p); if (len(p) < 0.5) p = [0, 1, 0];
+    let s2 = perp(s, p);
+    if (len(s2) < 1e-6) s2 = perp(Math.abs(p[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0], p);
+    s2 = norm(s2);
+    return [p, s2, cross(p, s2)];
+  }
+  // rotation taking rest frame onto target frame
+  function rotBetween(rb, tb) {
+    const m = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    for (let k = 0; k < 3; k++) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) m[i][j] += tb[k][i] * rb[k][j];
+    return quatFromMat(m);
+  }
+
+  // ---- filtering ----
+  function oneEuro(x, dt, minCut, beta, dCut = 1.0) {
+    const n = x.length, out = new Array(n); if (!n) return out;
+    const alpha = c => { const tau = 1 / (2 * Math.PI * c); return 1 / (1 + tau / dt); };
+    let xp = x[0], dxp = 0; out[0] = xp;
+    for (let i = 1; i < n; i++) {
+      const dx = (x[i] - xp) / dt, ad = alpha(dCut), dxh = ad * dx + (1 - ad) * dxp;
+      const a = alpha(minCut + beta * Math.abs(dxh)); const xh = a * x[i] + (1 - a) * xp;
+      out[i] = xh; xp = xh; dxp = dxh;
+    }
+    return out;
+  }
+  // local quadratic regression (LOESS / Savitzky-Golay style): removes jitter but keeps the speed and peaks of fast moves
+  function loess(x, h) {
+    const n = x.length; if (h < 1 || n < 3) return x.slice();
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) {
+      let S0 = 0, S1 = 0, S2 = 0, S3 = 0, S4 = 0, T0 = 0, T1 = 0, T2 = 0;
+      const a = Math.max(0, i - h), b = Math.min(n - 1, i + h), hw = h + 1;
+      for (let j = a; j <= b; j++) {
+        const u = j - i, r = Math.abs(u) / hw, w = Math.pow(1 - r * r * r, 3), y = x[j];
+        S0 += w; S1 += w * u; S2 += w * u * u; S3 += w * u * u * u; S4 += w * u * u * u * u; T0 += w * y; T1 += w * u * y; T2 += w * u * u * y;
+      }
+      // solve 3x3 normal equations for the value at u = 0
+      const A = [[S0, S1, S2], [S1, S2, S3], [S2, S3, S4]], B = [T0, T1, T2];
+      const det = m => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+      const D = det(A);
+      out[i] = Math.abs(D) < 1e-12 ? T0 / S0 : det([[B[0], A[0][1], A[0][2]], [B[1], A[1][1], A[1][2]], [B[2], A[2][1], A[2][2]]]) / D;
+    }
+    return out;
+  }
+  // zero-lag: forward + backward pass averaged
+  function smoothSeries(x, dt, minCut, beta) {
+    if (minCut && minCut.loess !== undefined) return loess(x, minCut.loess);
+    if (minCut >= 999) return x.slice();
+    const f = oneEuro(x, dt, minCut, beta);
+    const b = oneEuro(x.slice().reverse(), dt, minCut, beta).reverse();
+    return f.map((v, i) => 0.5 * (v + b[i]));
+  }
+  // smooth an array (frames) of arrays of points
+  function smoothPoints(frames, dt, minCut, beta, perPoint) {
+    if (!frames.length || !frames[0]) return frames;
+    const nP = frames[0].length, out = frames.map(() => new Array(nP));
+    for (let p = 0; p < nP; p++) for (let c = 0; c < 3; c++) {
+      const [mc, bt] = perPoint ? perPoint(p, minCut, beta) : [minCut, beta];
+      const s = smoothSeries(frames.map(f => f[p][c]), dt, mc, bt);
+      for (let i = 0; i < frames.length; i++) { if (!out[i][p]) out[i][p] = [0, 0, 0]; out[i][p][c] = s[i]; }
+    }
+    return out;
+  }
+  // linear interpolation over missing (null) frames
+  function fillGaps(arr) {
+    const valid = []; arr.forEach((v, i) => { if (v) valid.push(i); });
+    if (!valid.length) return null;
+    const out = arr.slice();
+    // cubic Hermite: keeps the speed going into and out of the gap, so bridged frames don't look like a stop-start
+    const herm = (p0, p1, m0, m1, t) => { const t2 = t * t, t3 = t2 * t; return p0 * (2 * t3 - 3 * t2 + 1) + m0 * (t3 - 2 * t2 + t) + p1 * (-2 * t3 + 3 * t2) + m1 * (t3 - t2); };
+    const V3 = (a, b, c, d, t, span) => [0, 1, 2].map(q => (a ? herm(b[q], c[q], (b[q] - a[q]) * span, d ? (d[q] - c[q]) * span : (c[q] - b[q]), t) : b[q] + (c[q] - b[q]) * t));
+    for (let i = 0; i < arr.length; i++) {
+      if (out[i]) continue;
+      let a = -1, b = -1;
+      for (const v of valid) { if (v < i) a = v; else { b = v; break; } }
+      if (a < 0) out[i] = arr[b]; else if (b < 0) out[i] = arr[a];
+      else {
+        const t = (i - a) / (b - a), span = b - a, A0 = arr[a - 1] || null, B1 = arr[b + 1] || null;
+        if (Array.isArray(arr[a][0])) out[i] = arr[a].map((p, k) => { const r = V3(A0 && A0[k], p, arr[b][k], B1 && B1[k], t, span); return arr[a][k].length > 3 ? r.concat(arr[a][k].slice(3)) : r.concat(arr[a][k].length === 3 ? [] : []); });
+        else out[i] = V3(A0, arr[a], arr[b], B1, t, span);
+        if (Array.isArray(arr[a][0]) && arr[a][0].length === 3 && out[i][0].length === 3) { /* already xyz */ }
+      }
+    }
+    return out;
+  }
+
+  // ---- root translation: least-squares fit of metric 3D landmarks to 2D image landmarks ----
+  // world: 33x[x,y,z] (MediaPipe metric, hip-centred, y down, z away); img: 33x[u,v,vis] normalized
+  function solveRoot(world, img, W, H, fovDeg) {
+    const f = (Math.max(W, H) / 2) / Math.tan(fovDeg * Math.PI / 360), cx = W / 2, cy = H / 2;
+    const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], bv = [0, 0, 0];
+    const addRow = (r, b, w) => { for (let i = 0; i < 3; i++) { bv[i] += w * r[i] * b; for (let j = 0; j < 3; j++) A[i][j] += w * r[i] * r[j]; } };
+    for (let i = 0; i < 33; i++) {
+      const w = clamp(img[i][2] ?? 1, 0, 1); if (w < 0.3) continue;
+      const u = img[i][0] * W - cx, v = img[i][1] * H - cy, [X, Y, Z] = world[i];
+      addRow([f, 0, -u], u * Z - f * X, w);
+      addRow([0, f, -v], v * Z - f * Y, w);
+    }
+    const det = m => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    const D = det(A); if (Math.abs(D) < 1e-9) return null;
+    const t = [0, 1, 2].map(c => det(A.map((row, r) => row.map((v, k) => (k === c ? bv[r] : v)))) / D);
+    if (!(t[2] > 0.2) || !t.every(Number.isFinite)) return null;
+    return t;
+  }
+
+  // ---- camera field of view, found automatically ----
+  // A wrong FOV mostly shows up as feet that slide toward / away from the camera and a worse fit of the 3D pose to the picture,
+  // so try a range and keep the one where (a) the pose projects best and (b) the planted foot moves least. Falls back to a phone default.
+  function estimateFov(pw, pi, W, H) {
+    const ks = []; for (let k = 0; k < pw.length; k++) if (pw[k] && pi[k]) ks.push(k);
+    if (ks.length < 12) return 62;
+    const step = Math.max(1, Math.floor(ks.length / 120)), use = ks.filter((_, i) => i % step === 0);
+    const score = fov => {
+      const f = (Math.max(W, H) / 2) / Math.tan(fov * Math.PI / 360), cx = W / 2, cy = H / 2; let rep = 0, rc = 0, slide = 0, sc = 0, prev = null, pk = -9;
+      for (const k of use) {
+        const t = solveRoot(pw[k], pi[k], W, H, fov); if (!t) { prev = null; continue; }
+        for (const i of [0, 11, 12, 23, 24, 25, 26, 27, 28, 15, 16]) { const w = pi[k][i][2] ?? 1; if (w < 0.5) continue; const X = pw[k][i][0] + t[0], Y = pw[k][i][1] + t[1], Z = pw[k][i][2] + t[2]; if (Z < 0.1) continue;
+          rep += w * (Math.hypot(f * X / Z + cx - pi[k][i][0] * W, f * Y / Z + cy - pi[k][i][1] * H) / Math.max(W, H)); rc += w; }
+        const a = [27, 28].map(i => add(pw[k][i], t));
+        if (prev && k - pk <= 2 * step) { slide += Math.min(len(sub(a[0], prev[0])), len(sub(a[1], prev[1]))); sc++; }
+        prev = a; pk = k;
+      }
+      return (rc ? rep / rc : 1) * 40 + (sc ? slide / sc : 0) + 0.004 * ((fov - 62) / 20) ** 2;
+    };
+    let best = 62, bs = Infinity; for (let fv = 30; fv <= 100; fv += 5) { const v = score(fv); if (v < bs) { bs = v; best = fv; } }
+    for (let fv = best - 4; fv <= best + 4; fv += 1) { if (fv < 25 || fv > 105) continue; const v = score(fv); if (v < bs) { bs = v; best = fv; } }
+    return best;
+  }
+
+  // ---- skeleton definition ----
+  const FINGERS = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
+  const HAND_TEMPLATE = { // left hand, palm down, fingers +X, thumb toward +Z (front). metres for a 0.095 m palm
+    Thumb: { root: [0.025, -0.012, 0.022], dir: norm([0.65, -0.15, 0.75]), lens: [0.040, 0.032, 0.026], chain: [1, 2, 3, 4] },
+    Index: { root: [0.092, 0, 0.026], dir: [1, 0, 0], lens: [0.042, 0.025, 0.022], chain: [5, 6, 7, 8] },
+    Middle: { root: [0.095, 0, 0.004], dir: [1, 0, 0], lens: [0.046, 0.028, 0.023], chain: [9, 10, 11, 12] },
+    Ring: { root: [0.090, 0, -0.016], dir: [1, 0, 0], lens: [0.042, 0.027, 0.022], chain: [13, 14, 15, 16] },
+    Pinky: { root: [0.083, 0, -0.034], dir: [1, 0, 0], lens: [0.034, 0.020, 0.019], chain: [17, 18, 19, 20] },
+  };
+  const FOOTDIR = norm([0, -0.4, 1]);
+  const HEADFWD = norm([0, -0.3, 1]);
+  const SIDES = [
+    ['Left', 1, { sh: 11, el: 13, wr: 15, pk: 17, ix: 19, hip: 23, kn: 25, an: 27, he: 29, to: 31 }],
+    ['Right', -1, { sh: 12, el: 14, wr: 16, pk: 18, ix: 20, hip: 24, kn: 26, an: 28, he: 30, to: 32 }]];
+
+  function measure(P, HL, HR) {
+    const m = (fn) => median(P.map(fn));
+    const d = (a, b) => p => len(sub(p[a], p[b]));
+    const avg2 = (f1, f2) => p => 0.5 * (f1(p) + f2(p));
+    const handLenPose = p => 0.5 * (len(sub(mid(p[19], p[17]), p[15])) + len(sub(mid(p[20], p[18]), p[16])));
+    const hands = [HL, HR].filter(Boolean).flatMap(h => h.map(f => len(sub(f[9], f[0]))));
+    const M = {
+      hipW: m(d(23, 24)), shoulderW: m(d(11, 12)),
+      torso: m(p => len(sub(mid(p[11], p[12]), mid(p[23], p[24])))),
+      neckLen: m(p => len(sub(mid(p[7], p[8]), mid(p[11], p[12])))),
+      upper: m(avg2(d(11, 13), d(12, 14))), fore: m(avg2(d(13, 15), d(14, 16))),
+      thigh: m(avg2(d(23, 25), d(24, 26))), shin: m(avg2(d(25, 27), d(26, 28))),
+      foot: m(avg2(d(27, 31), d(28, 32))), ankleH: m(avg2(d(27, 29), d(28, 30))),
+      hand: hands.length ? median(hands) : m(handLenPose) * 1.1,
+    };
+    const def = { hipW: 0.2, shoulderW: 0.34, torso: 0.5, neckLen: 0.2, upper: 0.28, fore: 0.25, thigh: 0.42, shin: 0.4, foot: 0.15, ankleH: 0.07, hand: 0.095 };
+    for (const k in def) if (!(M[k] > 0.01)) M[k] = def[k];
+    M.hand = clamp(M.hand, 0.06, 0.13);
+    return M;
+  }
+
+  function buildRest(M) {
+    const J = [];
+    const addJ = (name, parent, offset, end = null) => J.push({ name, parent: parent ? J.findIndex(j => j.name === parent) : -1, offset, end });
+    const T = M.torso;
+    addJ('Hips', null, [0, 0, 0]);
+    addJ('Spine', 'Hips', [0, 0.1 * T, 0]);
+    addJ('Spine1', 'Spine', [0, 0.3 * T, 0]);
+    addJ('Spine2', 'Spine1', [0, 0.3 * T, 0]);
+    addJ('Neck', 'Spine2', [0, 0.3 * T, 0]);
+    addJ('Head', 'Neck', [0, 0.75 * M.neckLen, 0], [0, 0.2, 0]);
+    const hs = M.hand / 0.095;
+    for (const [S, sx] of SIDES) {
+      addJ(S + 'Shoulder', 'Spine2', [sx * 0.03, 0.27 * T, 0]);
+      addJ(S + 'Arm', S + 'Shoulder', [sx * Math.max(0.02, M.shoulderW / 2 - 0.03), 0.03 * T, 0]);
+      addJ(S + 'ForeArm', S + 'Arm', [sx * M.upper, 0, 0]);
+      addJ(S + 'Hand', S + 'ForeArm', [sx * M.fore, 0, 0]);
+      for (const F of FINGERS) {
+        const t = HAND_TEMPLATE[F], dir = [sx * t.dir[0], t.dir[1], t.dir[2]];
+        addJ(`${S}Hand${F}1`, S + 'Hand', [sx * t.root[0] * hs, t.root[1] * hs, t.root[2] * hs]);
+        addJ(`${S}Hand${F}2`, `${S}Hand${F}1`, sc(dir, t.lens[0] * hs));
+        addJ(`${S}Hand${F}3`, `${S}Hand${F}2`, sc(dir, t.lens[1] * hs), sc(dir, t.lens[2] * hs));
+      }
+    }
+    for (const [S, sx] of SIDES) {
+      addJ(S + 'UpLeg', 'Hips', [sx * M.hipW / 2, 0, 0]);
+      addJ(S + 'Leg', S + 'UpLeg', [0, -M.thigh, 0]);
+      addJ(S + 'Foot', S + 'Leg', [0, -M.shin, 0]);
+      addJ(S + 'ToeBase', S + 'Foot', sc(FOOTDIR, M.foot), [0, 0, 0.05]);
+    }
+    const index = {}; J.forEach((j, i) => (index[j.name] = i));
+    return { joints: J, index, M };
+  }
+
+  // ---- per-frame retarget: Y-up local landmarks -> global joint rotations -> local rotations ----
+  const BX = [1, 0, 0], BY = [0, 1, 0], BZ = [0, 0, 1], NY = [0, -1, 0];
+  function solveFrame(P, HL, HR, rest) {
+    const G = {};
+    const midSh = mid(P[11], P[12]), midHip = mid(P[23], P[24]), up = sub(midSh, midHip);
+    G.Hips = rotBetween(basis(BX, BY), basis(sub(P[23], P[24]), up));
+    const chest = rotBetween(basis(BX, BY), basis(sub(P[11], P[12]), up));
+    G.Spine = qslerp(G.Hips, chest, 1 / 3); G.Spine1 = qslerp(G.Hips, chest, 2 / 3); G.Spine2 = chest;
+    const midEar = mid(P[7], P[8]);
+    const head = rotBetween(basis(BX, rest.headFwd || HEADFWD), basis(sub(P[7], P[8]), sub(P[0], midEar)));
+    G.Neck = qslerp(chest, head, 0.5); G.Head = head;
+
+    for (const [S, sx, i] of SIDES) {
+      const H = S === 'Left' ? HL : HR;
+      let handDir, palmN;
+      if (H) { const w = H[0]; handDir = sub(H[9], w); const cr = cross(sub(H[5], w), sub(H[17], w)); palmN = sx > 0 ? sc(cr, -1) : cr; }
+      else { const w = P[i.wr]; handDir = sub(mid(P[i.ix], P[i.pk]), w); const cr = cross(sub(P[i.ix], w), sub(P[i.pk], w)); palmN = sx > 0 ? sc(cr, -1) : cr; }
+      if (len(palmN) < 1e-6) palmN = NY;
+      const a = norm(sub(P[i.el], P[i.sh])), f = norm(sub(P[i.wr], P[i.el]));
+      const bend = perp(f, a), bl = len(bend);
+      const fb = sx > 0 ? sc(cross(a, palmN), -1) : cross(a, palmN);
+      const w = clamp((bl - 0.05) * 4, 0, 1);
+      const armSec = add(sc(norm(bend), w), sc(norm(perp(fb, a)), 1 - w));
+      G[S + 'Arm'] = rotBetween(basis([sx, 0, 0], BZ), basis(a, armSec));
+      G[S + 'ForeArm'] = rotBetween(basis([sx, 0, 0], NY), basis(f, palmN));
+      G[S + 'Hand'] = rotBetween(basis([sx, 0, 0], NY), basis(handDir, palmN));
+      if (H) for (const F of FINGERS) {
+        const t = HAND_TEMPLATE[F], rd = [sx * t.dir[0], t.dir[1], t.dir[2]], rb = basis(rd, NY);
+        for (let k = 0; k < 3; k++) G[`${S}Hand${F}${k + 1}`] = rotBetween(rb, basis(sub(H[t.chain[k + 1]], H[t.chain[k]]), palmN));
+      }
+      // legs
+      const th = norm(sub(P[i.kn], P[i.hip])), sh = norm(sub(P[i.an], P[i.kn])), fv = sub(P[i.to], P[i.he]);
+      const kb = perp(sh, th), kl = len(kb), kw = clamp((kl - 0.05) * 4, 0, 1);
+      const thSec = add(sc(norm(sc(kb, -1)), kw), sc(norm(perp(fv, th)), 1 - kw));
+      G[S + 'UpLeg'] = rotBetween(basis(NY, BZ), basis(th, thSec));
+      G[S + 'Leg'] = rotBetween(basis(NY, BZ), basis(sh, fv));
+      // foot direction: the AI's toe point is noisy (and pulled toward the camera), so read it relative to where the knee points,
+      // with a natural ~8° toe-out, and only trust it within a human range (tibia/foot can't twist far from the knee)
+      const toeV = sub(P[i.to], P[i.an]); let fdir = toeV;
+      {
+        const tl = Math.hypot(toeV[0], toeV[2]); let kf = [thSec[0], 0, thSec[2]]; const kfl = Math.hypot(kf[0], kf[2]);
+        if (kfl > 0.2 && tl > 1e-4) {
+          kf = sc(kf, 1 / kfl);
+          const ov = S === 'Left' ? sub(P[23], P[24]) : sub(P[24], P[23]); let out = [ov[0], 0, ov[2]]; const ol = Math.hypot(out[0], out[2]) || 1; out = sc(out, 1 / ol);
+          let ref = add(kf, sc(out, 0.14)); const rl = Math.hypot(ref[0], ref[2]) || 1; ref = sc(ref, 1 / rl);
+          const t = [toeV[0] / tl, 0, toeV[2] / tl];
+          const ang = Math.atan2(ref[2] * t[0] - ref[0] * t[2], ref[0] * t[0] + ref[2] * t[2]);
+          const a = clamp(ang, -0.44, 0.44) * 0.7, ca = Math.cos(a), sa = Math.sin(a);
+          const nf = [ref[0] * ca + ref[2] * sa, 0, -ref[0] * sa + ref[2] * ca];
+          fdir = [nf[0] * tl, toeV[1], nf[2] * tl];
+        }
+      }
+      G[S + 'Foot'] = rotBetween(basis(FOOTDIR, BY), basis(fdir, sc(sh, -1)));
+    }
+    const J = rest.joints, glob = new Array(J.length), loc = new Array(J.length);
+    for (let j = 0; j < J.length; j++) {
+      const p = J[j].parent; glob[j] = G[J[j].name] || (p >= 0 ? glob[p] : [0, 0, 0, 1]);
+      loc[j] = p >= 0 ? qnorm(qmul(qconj(glob[p]), glob[j])) : glob[j];
+    }
+    return loc;
+  }
+
+  // forward kinematics: returns world positions & rotations of each joint (+ end sites)
+  function fk(rest, loc, rootPos = [0, 0, 0]) {
+    const J = rest.joints, pos = new Array(J.length), rot = new Array(J.length);
+    for (let j = 0; j < J.length; j++) {
+      const p = J[j].parent;
+      if (p < 0) { pos[j] = rootPos; rot[j] = loc[j]; }
+      else { pos[j] = add(pos[p], qrot(rot[p], J[j].offset)); rot[j] = qmul(rot[p], loc[j]); }
+    }
+    return { pos, rot };
+  }
+
+  // ---- full pipeline ----
+  // frames: [{pw:33x3 raw MP world | null, pi:33x3 [u,v,vis] | null, hl:21x3 | null, hr:21x3 | null}]
+  function solveAll(frames, opt) {
+    const n = frames.length, fps = opt.fps, dt = 1 / fps;
+    const toY = p => [p[0], -p[1], -p[2]];
+    let pw = frames.map(f => f.pw), pi = frames.map(f => f.pi), hl = frames.map(f => f.hl), hr = frames.map(f => f.hr);
+    if (opt.mirrored) {
+      const swap = a => a && a.map((_, k) => a[MIRROR[k]]);
+      pw = pw.map(a => a && swap(a.map(p => [-p[0], p[1], p[2]])));
+      pi = pi.map(a => a && swap(a.map(p => [1 - p[0], p[1], p[2]])));
+      const L = hl; hl = hr.map(a => a && a.map(p => [-p[0], p[1], p[2]])); hr = L.map(a => a && a.map(p => [-p[0], p[1], p[2]]));
+    }
+    // left/right swap repair: if swapping a limb pair matches the previous frame much better, swap it
+    if (opt.fixSwaps !== false) {
+      const LIMBS = [[[23, 24], [25, 26], [27, 28], [29, 30], [31, 32]], [[11, 12], [13, 14], [15, 16], [17, 18], [19, 20], [21, 22]], [[7, 8], [1, 4], [2, 5], [3, 6], [9, 10]]];
+      let prev = null, prevI = null;
+      for (let k = 0; k < pw.length; k++) {
+        const w = pw[k]; if (!w) continue;
+        if (prev) {
+          for (const pairs of LIMBS) {
+            let same = 0, swp = 0;
+            for (const [a, b] of pairs) { same += len(sub(w[a], prev[a])) + len(sub(w[b], prev[b])); swp += len(sub(w[a], prev[b])) + len(sub(w[b], prev[a])); }
+            if (swp < same * 0.55) {
+              const w2 = w.slice(), i2 = pi[k] && pi[k].slice();
+              for (const [a, b] of pairs) { w2[a] = w[b]; w2[b] = w[a]; if (i2) { i2[a] = pi[k][b]; i2[b] = pi[k][a]; } }
+              pw[k] = w2; if (i2) pi[k] = i2;
+              if (pairs[0][0] === 11) { const h = hl[k]; hl[k] = hr[k]; hr[k] = h; }
+            }
+          }
+        }
+        prev = pw[k]; prevI = pi[k];
+      }
+    }
+    // track clean-up: remove one-frame spikes, and bridge short stretches where a hand/foot was hidden (low visibility)
+    if (opt.cleanTracks !== false) { const c = cleanTracks(pw, pi, fps); pw = c.pw; pi = c.pi; }
+    // torso consistency (turns / pivots): shoulders and hips must face the same way. If one half flipped left/right, flip it back.
+    if (opt.fixSwaps !== false) {
+      const UP = [[11, 12], [13, 14], [15, 16], [17, 18], [19, 20], [21, 22], [7, 8], [1, 4], [2, 5], [3, 6], [9, 10]], LO = [[23, 24], [25, 26], [27, 28], [29, 30], [31, 32]];
+      const flat = v => { const l = Math.hypot(v[0], v[2]) || 1; return [v[0] / l, 0, v[2] / l]; };
+      let prevS = null, prevH = null;
+      for (let k = 0; k < pw.length; k++) {
+        const w = pw[k]; if (!w) continue;
+        let sh = flat(sub(w[11], w[12])), hp = flat(sub(w[23], w[24]));
+        if (dot(sh, hp) < -0.2) {
+          // which half flipped? the one that jumped most from the previous frame
+          const dS = prevS ? dot(sh, prevS) : 1, dH = prevH ? dot(hp, prevH) : 1;
+          const group = dS < dH ? UP : LO, w2 = w.slice(), i2 = pi[k] && pi[k].slice();
+          for (const [a, b] of group) { w2[a] = w[b]; w2[b] = w[a]; if (i2) { i2[a] = pi[k][b]; i2[b] = pi[k][a]; } }
+          pw[k] = w2; if (i2) pi[k] = i2; if (group === UP) { const h = hl[k]; hl[k] = hr[k]; hr[k] = h; }
+          sh = flat(sub(pw[k][11], pw[k][12])); hp = flat(sub(pw[k][23], pw[k][24]));
+        }
+        prevS = sh; prevH = hp;
+      }
+    }
+    // whole-body flips in the raw tracking (AI briefly loses which way is up / which way the body faces): drop those frames, they get bridged smoothly
+    if (opt.fixSwaps !== false) {
+      const n0 = pw.length, win = Math.max(3, Math.round(0.15 * fps)), maxRun = Math.round(0.6 * fps);
+      const upOf = w => norm(sub(mid(w[23], w[24]), mid(w[11], w[12]))), lrOf = w => { const v = sub(w[23], w[24]); return norm([v[0], 0, v[2]]); };
+      const bad = new Array(n0).fill(false);
+      for (let k = 0; k < n0; k++) {
+        if (!pw[k]) continue;
+        // compare against the frames just before and just after: a real turn passes *between* them, a flip jumps away from both
+        const side = (a, b) => { let su = [0, 0, 0], sl = [0, 0, 0], c = 0; for (let q = a; q <= b; q++) if (q >= 0 && q < n0 && q !== k && pw[q]) { su = add(su, upOf(pw[q])); sl = add(sl, lrOf(pw[q])); c++; } return c ? { u: norm(su), l: norm(sl), lc: len(sl) / c, c } : null; };
+        const B = side(k - win, k - 1), A = side(k + 1, k + win); if (!B && !A) continue;
+        const ang = (x, y) => Math.acos(clamp(dot(x, y), -1, 1)) * 180 / Math.PI;
+        const u = upOf(pw[k]), l = lrOf(pw[k]);
+        const detour = (key, cur) => (B && A) ? ang(cur, B[key]) + ang(cur, A[key]) - ang(B[key], A[key]) : ang(cur, (B || A)[key]);
+        const dU = detour('u', u), lOk = (!B || B.lc > 0.6) && (!A || A.lc > 0.6);
+        const dL = lOk ? detour('l', l) : 0;
+        if (dU > 60 || dL > 150) bad[k] = true;
+      }
+      for (let k = 0; k < n0; k++) { if (!bad[k]) continue; let e = k; while (e < n0 && bad[e]) e++; if (e - k <= maxRun) for (let q = k; q < e; q++) { pw[q] = null; } k = e; }
+    }
+    const valid = pw.filter(Boolean).length;
+    if (!valid) throw new Error('No person was detected in this video.');
+    if (!(+opt.fov > 0)) opt = { ...opt, fov: estimateFov(pw, pi, opt.W, opt.H) }; // 'auto'
+    let roots = pw.map((w, k) => (w && pi[k] ? solveRoot(w, pi[k], opt.W, opt.H, opt.fov) : null));
+    pw = fillGaps(pw); roots = fillGaps(roots) || pw.map(() => [0, 0, 3]);
+    const piF = fillGaps(pi.map(a => a && a.map(p => [p[0] * opt.W, p[1] * opt.H, p[2] ?? 1])));
+    const footStill = { Left: new Array(pw.length).fill(false), Right: new Array(pw.length).fill(false) };
+    if (piF) {
+      const bodyH = median(piF.map(p => len(sub(mid(p[11], p[12]), mid(p[27], p[28]))))) || 1;
+      for (const [S, ids] of [['Left', [27, 29, 31]], ['Right', [28, 30, 32]]]) {
+        const fp = piF.map(p => sc(add(add(p[ids[0]], p[ids[1]]), p[ids[2]]), 1 / 3));
+        const sp = fp.map((_, k) => { const a = fp[Math.max(0, k - 1)], b = fp[Math.min(fp.length - 1, k + 1)], st = Math.max(1, Math.min(fp.length - 1, k + 1) - Math.max(0, k - 1)); return Math.hypot(b[0] - a[0], b[1] - a[1]) / (st * dt) / bodyH; });
+        const sm = sp.map((_, k) => { let s = 0, c = 0; for (let q = k - 1; q <= k + 1; q++) if (q >= 0 && q < sp.length) { s += sp[q]; c++; } return s / c; });
+        footStill[S] = sm.map(v => v < 0.12); // under ~0.12 body-heights per second in the picture = not going anywhere
+      }
+    }
+    const hlF = fillGaps(hl), hrF = fillGaps(hr);
+
+    // convert to Y-up and smooth (zero-lag one-euro)
+    const s = clamp(opt.smooth, 0, 1);
+    // smoothing = how many neighbouring frames each frame is fitted against (0 = snappy/raw, 1 = very smooth). It never slows the motion down.
+    const win = Math.round((1 + s * 9) * fps / 30);
+    const mc = s <= 0 ? 999 : opt.legacySmooth ? 6 * Math.pow(0.06, s) : { loess: win };
+    // sharp mode: wrists, hands, elbows, ankles and feet follow fast moves (punches, kicks) instead of being rounded off
+    const EXTREME = new Set([13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 25, 26, 27, 28, 29, 30, 31, 32]);
+    const sharpFn = opt.sharp !== true ? null : (p, m, b) => (EXTREME.has(p) ? [m * 1.25, b * 5] : [m, b]);
+    let P = smoothPoints(pw.map(a => a.map(toY)), dt, mc, 0.4, sharpFn);
+    let R = smoothPoints(roots.map(r => [toY(r)]), dt, s <= 0 ? 999 : { loess: Math.round(win * 1.6) + 2 }, 0.2).map(a => a[0]); // root depth is the noisiest: a bit wider
+    const hmc = s <= 0 ? 999 : { loess: Math.max(1, Math.round(win * 0.8)) };
+    const HL = hlF ? smoothPoints(hlF.map(a => a.map(toY)), dt, hmc, 0.6) : null;
+    const HR = hrF ? smoothPoints(hrF.map(a => a.map(toY)), dt, hmc, 0.6) : null;
+
+    // ---- depth recovery: limbs pointing at / away from the camera look too short; restore true length along the camera axis ----
+    if (opt.depthFix !== false) P = recoverDepth(P, dt);
+    const M = measure(pw.map(a => a.map(toY)), hlF && hlF.map(a => a.map(toY)), hrF && hrF.map(a => a.map(toY))), rest = buildRest(M);
+    { // calibrate the face's neutral direction: on average the head faces where the chest faces
+      const pitches = P.map(p => {
+        const ch = rotBetween(basis(BX, BY), basis(sub(p[11], p[12]), sub(mid(p[11], p[12]), mid(p[23], p[24]))));
+        const f = qrot(qconj(ch), sub(p[0], mid(p[7], p[8]))); return Math.atan2(f[1], Math.hypot(f[2], 1e-6) * Math.sign(f[2] || 1));
+      }).filter(Number.isFinite);
+      const pm = clamp(median(pitches) || 0, -0.6, 0.35) + (opt.headTilt || 0) * Math.PI / 180;
+      rest.headFwd = [0, Math.sin(pm), Math.cos(pm)];
+    }
+    let locals = applyLimits(rest, forearmTwistFix(rest, P.map((p, k) => solveFrame(p, HL && HL[k], HR && HR[k], rest)), fps, HL, HR), { ...opt, hasHand: { Left: !!HL, Right: !!HR } });
+    // keep quaternion hemispheres continuous
+    for (let k = 1; k < n; k++) for (let j = 0; j < locals[k].length; j++) {
+      const a = locals[k - 1][j], b = locals[k][j];
+      if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0) locals[k][j] = b.map(v => -v);
+    }
+    if (opt.fixSwaps !== false) locals = hipsSpikeFix(locals, fps);
+    let rootPos = R.map((r, k) => add(r, mid(P[k][23], P[k][24])));
+    const ix = rest.index;
+    const feetLocal = () => locals.map(l => {
+      const { pos, rot } = fk(rest, l);
+      const out = {};
+      for (const S of ['Left', 'Right']) {
+        const an = pos[ix[S + 'Foot']], toe = pos[ix[S + 'ToeBase']];
+        const tip = add(toe, qrot(rot[ix[S + 'ToeBase']], [0, 0, 0.05]));
+        const heel = [an[0], an[1] - M.ankleH, an[2]];
+        out[S] = { heel, toe, tip, low: Math.min(heel[1], toe[1], tip[1]), c: mid(heel, toe) };
+      }
+      return out;
+    });
+    const contactsFrom = (FL, RP) => {
+      const lows = FL.map((f, k) => Math.min(f.Left.low, f.Right.low) + RP[k][1]);
+      const floor = percentile(lows, 0.12);
+      const C = FL.map(() => ({ Left: false, Right: false }));
+      for (const S of ['Left', 'Right']) {
+        const gp = FL.map((f, k) => add(f[S].c, RP[k]));
+        for (let k = 0; k < n; k++) {
+          const a = gp[Math.max(0, k - 1)], b = gp[Math.min(n - 1, k + 1)];
+          const sp = len(sub(b, a)) / (dt * Math.max(1, Math.min(n - 1, k + 1) - Math.max(0, k - 1)));
+          const h = FL[k][S].low + RP[k][1] - floor;
+          // planted if the 3D says so, OR the foot is still in the video picture and not clearly raised (3D height is easily fooled by shiny floors / reflections)
+          // hysteresis: easy to stay planted, harder to become planted -> no flicker / popping at the edges of a step
+          const was = k > 0 && C[k - 1][S], hk = was ? 1.3 : 1, vk = 1;
+          C[k][S] = (h < opt.contactHeight * hk && sp < opt.contactSpeed * vk) || (footStill[S][k] && h < opt.contactHeight * 2.2 * hk);
+        }
+        C.forEach((c, k) => (c['_v' + S] = gp[Math.min(n - 1, k + 1)].map((v, q) => (v - gp[Math.max(0, k - 1)][q]) / (dt * Math.max(1, Math.min(n - 1, k + 1) - Math.max(0, k - 1))))));
+        // debounce
+        const minRun = Math.max(3, Math.round(0.15 * fps)); // ignore flickers shorter than 0.15 s
+        for (const val of [false, true]) {
+          let k = 0;
+          while (k < n) { let e = k; while (e < n && C[e][S] === C[k][S]) e++; if (C[k][S] === val && e - k < minRun && k > 0 && e < n) for (let q = k; q < e; q++) C[q][S] = !val; k = e; }
+        }
+      }
+      if (opt.rideDetect !== false) { // both feet low and moving together = riding something
+        const rad = Math.max(2, Math.round(0.15 * fps)), ride = new Array(n).fill(false);
+        for (let k = 0; k < n; k++) {
+          const vl = C[k]._vLeft, vr = C[k]._vRight, vm = [(vl[0] + vr[0]) / 2, 0, (vl[2] + vr[2]) / 2];
+          const lowL = FL[k].Left.low + RP[k][1] - floor < opt.contactHeight * 1.8, lowR = FL[k].Right.low + RP[k][1] - floor < opt.contactHeight * 1.8;
+          ride[k] = lowL && lowR && Math.hypot(vm[0], vm[2]) > 0.35 && Math.hypot(vl[0] - vr[0], vl[2] - vr[2]) < 0.3 * Math.max(1, Math.hypot(vm[0], vm[2]));
+        }
+        for (let k = 0; k < n; k++) { let s = 0, c = 0; for (let q = k - rad; q <= k + rad; q++) if (q >= 0 && q < n) { s += ride[q]; c++; } if (s / c > 0.5) { C[k].Left = false; C[k].Right = false; C[k].ride = true; } }
+      }
+      C.forEach(c => { delete c._vLeft; delete c._vRight; });
+      return { C, floor };
+    };
+
+    let FL = feetLocal();
+    // auto-level the ground plane (removes camera tilt)
+    let levelQ = [0, 0, 0, 1];
+    if (opt.autoLevel) {
+      let acc = [0, 0, 0];
+      for (let k = 0; k < n; k++) {
+        const p = P[k], ms = mid(p[11], p[12]), ma = mid(p[27], p[28]), mh = mid(p[23], p[24]);
+        const legs = norm(sub(mh, ma)), torso = norm(sub(ms, mh));
+        // standing frames (straight-ish legs) are the best evidence of "up"
+        const knees = dot(norm(sub(p[25], p[23])), norm(sub(p[27], p[25]))) + dot(norm(sub(p[26], p[24])), norm(sub(p[28], p[26])));
+        const w = clamp((knees / 2 - 0.5) * 2, 0.05, 1);
+        acc = add(acc, sc(add(sc(legs, 0.6), sc(torso, 0.4)), w));
+      }
+      const upEst = norm(acc), tilt = Math.acos(clamp(dot(upEst, [0, 1, 0]), -1, 1)) * 180 / Math.PI;
+      if (tilt > 2 && tilt < 80) levelQ = qFromTo(upEst, [0, 1, 0]);
+      if (levelQ[3] < 0.99999) {
+        rootPos = rootPos.map(r => qrot(levelQ, r));
+        locals = locals.map(l => { const c = l.slice(); c[0] = qnorm(qmul(levelQ, l[0])); return c; });
+        FL = feetLocal();
+      }
+    }
+
+    // both feet well off the floor while the hips stay at standing height is impossible (he'd fall); it's the AI
+    // losing the legs (folding them up). Those moments get the legs bridged from the good frames around them.
+    if (opt.legSanity !== false && n > 4) {
+      const legsJ = ['Left', 'Right'].flatMap(S => [S + 'UpLeg', S + 'Leg', S + 'Foot', S + 'ToeBase']).map(nm => ix[nm]);
+      const lowW = FL.map((f, k) => [f.Left.low + rootPos[k][1], f.Right.low + rootPos[k][1]]);
+      const floorY = percentile(lowW.map(l => Math.min(l[0], l[1])), 0.15), standY = median(rootPos.map(r => r[1]));
+      const bad = lowW.map((l, k) => Math.min(l[0], l[1]) - floorY > 0.2 && rootPos[k][1] - standY < 0.12);
+      { const pad = Math.max(1, Math.round(fps * 0.07)), b0 = bad.slice(); for (let k = 0; k < n; k++) if (b0[k]) for (let q = k - pad; q <= k + pad; q++) if (q >= 0 && q < n && Math.min(lowW[q][0], lowW[q][1]) - floorY > 0.08 && rootPos[q][1] - standY < 0.12) bad[q] = true; } // include the ramp in/out
+      const maxRun = Math.round(fps * 1.5); let fixedLegs = 0;
+      for (let k = 0; k < n;) {
+        if (!bad[k]) { k++; continue; }
+        let e = k; while (e < n && bad[e]) e++;
+        if (e - k <= maxRun) {
+          const a = k - 1, b = e; // good frames either side
+          for (let q = k; q < e; q++) {
+            const u = a < 0 ? 1 : b >= n ? 0 : (q - a) / (b - a), A = locals[Math.max(0, a)], B = locals[Math.min(n - 1, b)];
+            for (const j of legsJ) locals[q][j] = a < 0 ? B[j].slice() : b >= n ? A[j].slice() : qslerp(A[j], B[j], u);
+          }
+          fixedLegs += e - k;
+        }
+        k = e;
+      }
+      if (fixedLegs) FL = feetLocal();
+    }
+    const { C, floor } = contactsFrom(FL, rootPos);
+    if (opt.footLock) {
+      let c = [0, 0, 0]; const anchor = { Left: null, Right: null };
+      const alpha = clamp(dt * 20, 0.05, 1);
+      const out = new Array(n);
+      for (let k = 0; k < n; k++) {
+        const r = rootPos[k]; const des = [];
+        for (const S of ['Left', 'Right']) {
+          if (C[k][S]) {
+            // with Foot lock the planted foot is laid flat, so the heel (not the toe) is what must reach the floor
+            const gx = FL[k][S].c[0] + r[0], gz = FL[k][S].c[2] + r[2], low = (opt.footIK !== false ? FL[k][S].heel[1] : FL[k][S].low) + r[1];
+            if (!anchor[S]) anchor[S] = [gx + c[0], gz + c[2]];
+            des.push([anchor[S][0] - gx, floor - low, anchor[S][1] - gz]);
+          } else anchor[S] = null;
+        }
+        if (des.length) {
+          const t = des.reduce((a, b) => add(a, b), [0, 0, 0]).map(v => v / des.length);
+          t[1] = Math.min(...des.map(d => d[1])); // hips low enough that EVERY planted foot can reach the floor (knees bend for the rest)
+          c = lerp(c, t, alpha);
+        }
+        out[k] = add(r, c);
+      }
+      rootPos = out;
+    }
+    // floor to y=0, start at origin
+    rootPos = rootPos.map(r => [r[0], r[1] - floor, r[2]]);
+    const r0 = rootPos[0];
+    if (opt.inPlace) {
+      // remove travel but keep the body's own sway / weight shifts (subtract a 1-second moving average)
+      const w = Math.max(2, Math.round(fps * 0.5));
+      const avg = rootPos.map((_, k) => { let sx = 0, sz = 0, c = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) { sx += rootPos[q][0]; sz += rootPos[q][2]; c++; } return [sx / c, sz / c]; });
+      rootPos = rootPos.map((r, k) => [r[0] - avg[k][0], r[1], r[2] - avg[k][1]]);
+    } else rootPos = rootPos.map(r => [r[0] - r0[0], r[1], r[2] - r0[2]]);
+    if (opt.lowerToFloor !== false) { // never let the feet sink below the floor
+      const FL2 = FL;
+      // only for moments with no planted foot (jumps etc.); planted feet are put exactly on the floor by the leg IK instead
+      rootPos = rootPos.map((r, k) => { if (opt.footIK !== false && (C[k].Left || C[k].Right)) return r; const low = Math.min(FL2[k].Left.low, FL2[k].Right.low) + r[1]; return low < -0.005 ? [r[0], r[1] - low, r[2]] : r; });
+    }
+    if (opt.inPlace) { // planted means "on the floor", whatever the speed; each foot keeps one fixed spot
+      for (let k = 0; k < n; k++) { const f = fk(rest, locals[k], rootPos[k]); for (const S of ['Left', 'Right']) C[k][S] = Math.min(f.pos[ix[S + 'Foot']][1] - M.ankleH, f.pos[ix[S + 'ToeBase']][1]) < opt.contactHeight * 1.6; }
+    }
+    if (opt.kneeGuard !== false) locals = kneeGuard(rest, locals, fps);
+    if (opt.elbowGuard !== false) locals = elbowGuard(rest, locals, fps);
+    if (opt.proLimits !== false) locals = proLimits(rest, locals);
+    if (opt.antiJitter !== false) locals = antiJitter(locals, fps, Math.max(1, Math.round((1 + 3 * clamp(opt.smooth, 0, 1)) * fps / 30)));
+    if (opt.footIK !== false || opt.inPlace) locals = footCleanup(rest, locals, rootPos, C, M, fps, !!opt.inPlace);
+    if (opt.footIK !== false || opt.inPlace) { // final pass: smooth the legs so planting a foot never makes the knee pop
+      const legs = ['Left', 'Right'].flatMap(S => [S + 'UpLeg', S + 'Leg', S + 'Foot']).map(nm => rest.index[nm]);
+      const sm = antiJitter(locals, fps, Math.max(1, Math.round(0.07 * fps)));
+      locals = locals.map((l, k) => { const c = l.slice(); for (const j of legs) c[j] = sm[k][j]; return c; });
+    }
+    if (opt.proLimits !== false) locals = proLimits(rest, locals, true); // final say: nothing leaves a human range of motion
+    rootPos = floorFinder(rest, locals, rootPos, C, M, fps, true);
+    return { rest, fps, n, rootPos, locals, contacts: C, hasHands: { Left: !!HL, Right: !!HR }, M, fov: opt.fov };
+  }
+
+  // ---- intelligent floor finder ----
+  // finds the real floor from the moments the feet are planted (so he never floats), then lifts the body just enough, smoothly,
+  // wherever any part of a foot (heel, ball or toe tip) would go below it. Nothing ever ends up under the floor.
+  function footLows(rest, loc, root, M) {
+    const { pos, rot } = fk(rest, loc, root), ix = rest.index, out = [];
+    for (const S of ['Left', 'Right']) {
+      const an = pos[ix[S + 'Foot']], toe = pos[ix[S + 'ToeBase']], tip = add(toe, qrot(rot[ix[S + 'ToeBase']], [0, 0, 0.05]));
+      const heel = add(an, qrot(rot[ix[S + 'Foot']], [0, -(M.ankleH || 0.07), -0.02]));
+      out.push(Math.min(heel[1], toe[1] - 0.012, tip[1] - 0.008));
+    }
+    return out;
+  }
+  function floorFinder(rest, locals, rootPos, C, M, fps, refit) {
+    const n = locals.length; if (!n) return rootPos;
+    const lows = locals.map((l, k) => footLows(rest, l, rootPos[k], M));
+    let shift = 0;
+    if (refit && C) { // planted feet should sit ON the floor: use them to find where the floor really is
+      const pl = []; for (let k = 0; k < n; k++) ['Left', 'Right'].forEach((S, i) => { if (C[k] && C[k][S]) pl.push(lows[k][i]); });
+      if (pl.length > Math.max(6, n * 0.1)) { const fl = percentile(pl, 0.3); if (Math.abs(fl) < 0.12) shift = -fl; }
+    }
+    const pen = lows.map(l => Math.min(0.1, Math.max(0, -(Math.min(l[0], l[1]) + shift)))); // never more than 10cm: a foot that deep is a bad reading, not a reason to float him
+    if (!pen.some(v => v > 1e-4) && !shift) return rootPos;
+    const w = Math.max(1, Math.round(fps * 0.1)), lift = pen.map((_, k) => { let m = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) m = Math.max(m, pen[q] * (1 - Math.abs(q - k) / (w + 1))); return m; });
+    const sm = lift.map((_, k) => { let s = 0, c = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) { s += lift[q]; c++; } return s / c; });
+    return rootPos.map((r, k) => [r[0], r[1] + shift + Math.max(sm[k], pen[k]), r[2]]);
+  }
+
+  function recoverDepth(P, dt) {
+    const n = P.length; if (n < 3) return P;
+    const CH = [[11, 13, [15, 17, 19, 21]], [13, 15, [17, 19, 21]], [12, 14, [16, 18, 20, 22]], [14, 16, [18, 20, 22]],
+                [23, 25, [27, 29, 31]], [25, 27, [29, 31]], [24, 26, [28, 30, 32]], [26, 28, [30, 32]]];
+    const out = P.map(p => p.map(q => q.slice()));
+    for (const [a, b, kids] of CH) {
+      const lens = P.map(p => len(sub(p[b], p[a]))), L = percentile(lens, 0.85);
+      let lastSign = 1;
+      for (let k = 0; k < n; k++) {
+        const p = out[k], d = sub(p[b], p[a]), planar = d[0] * d[0] + d[1] * d[1], cur = len(d);
+        if (cur >= L * 0.98) { if (Math.abs(d[2]) > 0.02) lastSign = Math.sign(d[2]); continue; }
+        const need = Math.sqrt(Math.max(0, L * L - planar));
+        // sign: trust the AI when it is clear, otherwise keep the previous frame's direction
+        const sgn = Math.abs(d[2]) > 0.03 ? Math.sign(d[2]) : lastSign; lastSign = sgn;
+        const dz = sgn * need - d[2], blend = clamp((L - cur) / (0.25 * L), 0, 1) * 0.85; // partial correction, strongest when badly foreshortened
+        const shift = dz * blend;
+        p[b] = [p[b][0], p[b][1], p[b][2] + shift];
+        for (const c of kids) p[c] = [p[c][0], p[c][1], p[c][2] + shift];
+      }
+    }
+    return out;
+  }
+
+  // anti-jitter: per-joint rotation filter that heavily steadies tiny wobbles but lets fast, real movement straight through (zero lag)
+  function antiJitter(locals, fps, h) {
+    const n = locals.length, J = locals[0].length; if (n < 5 || h < 1) return locals;
+    const res = locals.map(l => l.slice());
+    for (let j = 1; j < J; j++) {
+      const seq = locals.map(l => l[j].slice());
+      for (let k = 1; k < n; k++) { const a = seq[k - 1], b = seq[k]; if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0) seq[k] = b.map(v => -v); }
+      const comp = [0, 1, 2, 3].map(c => loess(seq.map(q => q[c]), h));
+      for (let k = 0; k < n; k++) res[k][j] = qnorm([comp[0][k], comp[1][k], comp[2][k], comp[3][k]]);
+    }
+    return res;
+  }
+
+  // knee guard: no backwards knees, a tiny natural bend instead of a dead-straight lock, and sudden one-off "snaps" straight are replaced from the good frames around them
+  function kneeGuard(rest, locals, fps) {
+    const n = locals.length, ix = rest.index, out = locals.map(l => l.slice());
+    const MIN = 3, win = Math.max(3, Math.round(0.15 * fps));
+    const flexOf = q => { const d = qrot(q, [0, -1, 0]); return Math.atan2(-d[2], -d[1]) * 180 / Math.PI; };
+    for (const S of ['Left', 'Right']) {
+      const iL = ix[S + 'Leg'], iU = ix[S + 'UpLeg'];
+      let flex = out.map(l => flexOf(l[iL]));
+      // 1) snaps: a knee much straighter than the frames around it, for only a short moment
+      const bad = new Array(n).fill(false);
+      for (let k = 0; k < n; k++) {
+        const nb = []; for (let q = k - win; q <= k + win; q++) if (q >= 0 && q < n && Math.abs(q - k) > 1) nb.push(flex[q]);
+        if (nb.length < 3) continue; const med = median(nb);
+        if (med - flex[k] > 18 && flex[k] < 12) bad[k] = true;
+      }
+      for (let k = 0; k < n; k++) {
+        if (!bad[k]) continue; let e = k; while (e < n && bad[e]) e++;
+        const a = k - 1, b = e;
+        if (e - k <= win * 2) for (let q = k; q < e; q++) {
+          if (a >= 0 && b < n) { const u = (q - a) / (b - a); out[q][iL] = qslerp(out[a][iL], out[b][iL], u); out[q][iU] = qslerp(out[a][iU], out[b][iU], u); }
+          else { const src = a >= 0 ? a : b; if (src >= 0 && src < n) { out[q][iL] = out[src][iL]; out[q][iU] = out[src][iU]; } }
+        }
+        k = e;
+      }
+      // 2) never backwards, never dead straight: keep at least a few degrees of natural bend
+      for (let k = 0; k < n; k++) {
+        const f = flexOf(out[k][iL]);
+        if (f < MIN) { const fix = qmul(axqS([1, 0, 0], MIN - f), out[k][iL]); out[k][iL] = qnorm(fix); }
+      }
+    }
+    return out;
+  }
+  // elbow guard: elbows bend naturally but never backwards, and the upper arm's twist stays continuous and within natural range (no spinning)
+  function elbowGuard(rest, locals, fps) {
+    const n = locals.length, ix = rest.index, out = locals.map(l => l.slice());
+    const maxStep = 360 / fps * 1.0; // at most ~360°/s of twist change
+    for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
+      const iA = ix[S + 'Arm'], iF = ix[S + 'ForeArm'], X = [sx, 0, 0];
+      // 1) upper-arm twist: unwrap, limit, rate-limit, smooth
+      const parts = out.map(l => { let q = l[iA]; if (q[3] < 0) q = q.map(v => -v); const p = sc(X, dot([q[0], q[1], q[2]], X)); let tw = [p[0], p[1], p[2], q[3]]; const tl = Math.hypot(...tw); tw = tl > 1e-9 ? tw.map(v => v / tl) : [0, 0, 0, 1]; const ang = 2 * Math.atan2(dot([tw[0], tw[1], tw[2]], X), tw[3]) * 180 / Math.PI; return { sw: qmul(q, qconj(tw)), ang }; });
+      let prev = parts[0].ang; const angs = parts.map((p, k) => { let a = p.ang; if (k) { while (a - prev > 180) a -= 360; while (a - prev < -180) a += 360; } prev = a; return a; });
+      for (let k = 0; k < n; k++) angs[k] = clamp(angs[k], -85, 85);
+      for (let k = 1; k < n; k++) angs[k] = clamp(angs[k], angs[k - 1] - maxStep, angs[k - 1] + maxStep);
+      for (let k = n - 2; k >= 0; k--) angs[k] = clamp(angs[k], angs[k + 1] - maxStep, angs[k + 1] + maxStep);
+      const sm = loess(angs, Math.max(1, Math.round(0.05 * fps)));
+      for (let k = 0; k < n; k++) out[k][iA] = qnorm(qmul(parts[k].sw, axqS(X, sm[k])));
+      // 2) elbow: bends forward (toward +Z of the upper arm) only, max ~155°
+      for (let k = 0; k < n; k++) {
+        const d = qrot(out[k][iF], X);
+        let nd = d.slice(); if (nd[2] < 0.02) nd[2] = 0.02 + Math.abs(nd[2]) * 0.3; // never backwards
+        const flex = Math.acos(clamp(dot(norm(nd), X), -1, 1)) * 180 / Math.PI;
+        if (flex > 140) { const ax = norm(cross(X, nd)); nd = qrot(axqS(ax, 140), X); } // a real elbow closes to ~140°
+        nd = norm(nd); if (len(sub(nd, norm(d))) > 1e-4) out[k][iF] = qnorm(qmul(qFromTo(d, nd), out[k][iF]));
+      }
+    }
+    return out;
+  }
+  // ---------- pro joint limits: every joint kept inside a human range of motion ----------
+  const D2R = Math.PI / 180;
+  // rotate direction d toward rest dir r so the angle never exceeds maxDeg; returns the correcting quaternion
+  function coneFix(d, r, maxDeg) {
+    const ang = Math.acos(clamp(dot(norm(d), norm(r)), -1, 1)) / D2R; if (ang <= maxDeg) return null;
+    let ax = cross(r, d); if (len(ax) < 1e-6) ax = Math.abs(r[0]) < 0.9 ? cross(r, [1, 0, 0]) : cross(r, [0, 1, 0]);
+    const target = qrot(axqS(norm(ax), maxDeg), norm(r)); return qFromTo(d, target);
+  }
+  // swing limit that depends on direction: lim(dir) gives the max angle for the way the bone is pointing
+  function swingLimit(q, rest, lim) { const d = qrot(q, rest), m = lim(d), fix = coneFix(d, rest, m); return fix ? qnorm(qmul(fix, q)) : q; }
+  function twistLimit(q, axis, maxDeg) { if (q[3] < 0) q = q.map(v => -v); const p = sc(axis, dot([q[0], q[1], q[2]], axis)); let tw = [p[0], p[1], p[2], q[3]]; const tl = Math.hypot(...tw); tw = tl > 1e-9 ? tw.map(v => v / tl) : [0, 0, 0, 1]; const sw = qmul(q, qconj(tw)); return qnorm(qmul(sw, clampQ(tw, maxDeg))); }
+  const twistOf = (q, axis) => { if (q[3] < 0) q = q.map(v => -v); return 2 * Math.atan2(dot([q[0], q[1], q[2]], axis), q[3]) / D2R; };
+  function proLimits(rest, locals, final = false) {
+    const ix = rest.index, Y = [0, 1, 0], NY = [0, -1, 0];
+    return locals.map(l0 => {
+      const l = l0.slice();
+      // spine / neck / head: each segment bends and twists a little, together they reach a natural full range
+      for (const [nm, sw, tw] of [['Spine', 22, 18], ['Spine1', 22, 18], ['Spine2', 20, 18], ['Neck', 35, 40], ['Head', 40, 45]]) { const i = ix[nm]; l[i] = twistLimit(swingLimit(l[i], Y, () => sw), Y, tw); }
+      for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
+        const X = [sx, 0, 0];
+        l[ix[S + 'Shoulder']] = clampQ(l[ix[S + 'Shoulder']], 15);
+        // shoulder: wide range, but not behind the back / across the body too far; twist limited
+        l[ix[S + 'Arm']] = twistLimit(swingLimit(l[ix[S + 'Arm']], X, d => (d[2] < -0.3 ? 70 : d[0] * sx < -0.2 ? 135 : 165)), X, 95);
+        // elbow = hinge: line the hinge up by turning the upper arm, then keep the forearm in the hinge plane
+        { const iA = ix[S + 'Arm'], iF = ix[S + 'ForeArm']; let d = qrot(l[iF], X);
+          if (Math.hypot(d[1], d[2]) > 0.05) { // only when actually bent
+            const need = -sx * Math.atan2(d[1], d[2]) / D2R, curTw = twistOf(l[iA], X), room = clamp(curTw + need, -85, 85) - curTw;
+            if (Math.abs(room) > 0.1) { l[iA] = qnorm(qmul(l[iA], axqS(X, room))); l[iF] = qnorm(qmul(axqS(X, -room), l[iF])); }
+            d = qrot(l[iF], X);
+            const maxOut = Math.sin(10 * D2R); // natural carrying angle tolerance
+            let nd = d.slice(); nd[1] = clamp(nd[1], -maxOut, maxOut); if (nd[2] < 0.02) nd[2] = 0.02; nd = norm(nd);
+            if (len(sub(nd, d)) > 1e-4) l[iF] = qnorm(qmul(qFromTo(d, nd), l[iF]));
+          }
+          l[iF] = twistLimit(swingLimit(l[iF], X, () => 140), X, 80); }
+        // wrist
+        l[ix[S + 'Hand']] = twistLimit(swingLimit(l[ix[S + 'Hand']], X, d => { const ay = Math.abs(d[1]), az = Math.abs(d[2]), f = az / (ay + az + 1e-9); return (d[1] < 0 ? 65 : 55) * (1 - f) + 25 * f; }), X, 30); // wrist: ~65° toward the palm, ~55° back, ~25° side to side, little twist
+        // fingers: curl into the palm freely, only a little sideways or backwards
+        for (const F of FINGERS) { const tp = HAND_TEMPLATE[F], fd = [sx * tp.dir[0], tp.dir[1], tp.dir[2]];
+          for (let k = 1; k <= 3; k++) { const i = ix[`${S}Hand${F}${k}`]; l[i] = twistLimit(swingLimit(l[i], fd, d => { const b = sub(norm(d), fd); return F === 'Thumb' ? 70 : (b[1] < -0.05 ? 105 : 22); }), fd, F === 'Thumb' ? 35 : 12); } }
+        // hip: far forward, less backward / outward / across
+        l[ix[S + 'UpLeg']] = twistLimit(swingLimit(l[ix[S + 'UpLeg']], NY, d => (d[2] > 0.2 ? 125 : d[2] < -0.2 ? (final ? 60 : 45) : d[0] * sx > 0.2 ? 65 : 35)), NY, final ? 50 : 40);
+        // knee = hinge: line it up by turning the thigh, then keep the shin in the hinge plane, bending backwards only
+        { const iU = ix[S + 'UpLeg'], iL = ix[S + 'Leg']; let d = qrot(l[iL], NY);
+          if (Math.hypot(d[0], d[2]) > 0.05) {
+            const need = Math.atan2(d[0], -d[2]) / D2R, curTw = twistOf(l[iU], NY), room = clamp(curTw + need, -40, 40) - curTw;
+            if (Math.abs(room) > 0.1) { l[iU] = qnorm(qmul(l[iU], axqS(NY, room))); l[iL] = qnorm(qmul(axqS(NY, -room), l[iL])); }
+            d = qrot(l[iL], NY);
+            let nd = d.slice(); const maxOut = Math.sin((final ? 15 : 8) * D2R); nd[0] = clamp(nd[0], -maxOut, maxOut); if (nd[2] > -0.02 && Math.hypot(nd[0], nd[2]) > 0.05) nd[2] = Math.min(nd[2], -0.02); nd = norm(nd);
+            if (len(sub(nd, d)) > 1e-4) l[iL] = qnorm(qmul(qFromTo(d, nd), l[iL]));
+          }
+          l[iL] = twistLimit(swingLimit(l[iL], NY, () => 150), NY, 10); }
+        // ankle and toes
+        if (!final) l[ix[S + 'Foot']] = twistLimit(swingLimit(l[ix[S + 'Foot']], FOOTDIR, d => (d[1] > dot(FOOTDIR, [0, 1, 0]) ? 40 : 50)), FOOTDIR, 15); // planted feet are laid flat by the foot clean-up
+        l[ix[S + 'ToeBase']] = clampQ(l[ix[S + 'ToeBase']], 40);
+      }
+      return l;
+    });
+  }
+  const axqS = (ax, deg) => { const h = deg * Math.PI / 360, s = Math.sin(h); return [ax[0] * s, ax[1] * s, ax[2] * s, Math.cos(h)]; };
+
+  // whole-body flips: if the hips suddenly tip far over (or spin round) for a moment and then come back, rebuild those frames from the steady ones
+  // ---- forearm twist (palm turning over) ----
+  // The twist is read from the knuckle points, and on a fist or an edge-on hand the AI often mixes them up, so the palm
+  // reads upside-down for a frame and the forearm spins. A real forearm can't turn 90°+ in one frame, so those jumps are
+  // flips and are undone; then the twist is smoothed (it is a slow, steady movement) and kept inside a human range.
+  function forearmTwistFix(rest, locals, fps, HL, HR) {
+    const n = locals.length; if (n < 3) return locals;
+    const out = locals.map(l => l.slice()), wrap = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+    for (const [S, sx, Hs] of [['Left', 1, HL], ['Right', -1, HR]]) {
+      const iF = rest.index[S + 'ForeArm']; if (iF == null) continue;
+      const th = [], sw = [];
+      for (let k = 0; k < n; k++) {
+        const q = out[k][iF], d = q[0] * sx, t = qnorm([sx * d, 0, 0, q[3]]);
+        th.push(2 * Math.atan2(d, q[3])); sw.push(qmul(q, qconj(t)));
+      }
+      // each frame's reading is either right or flipped by half a turn. Pick, over the whole clip at once, the choice that makes
+      // the forearm turn the least overall (Viterbi). Real fast turns (a punch's corkscrew) stay; one-off flips go.
+      const FLIP_COST = 0.35, cost = [[0, FLIP_COST]], from = [[0, 0]], val = k => [th[k], wrap(th[k] + Math.PI)];
+      for (let k = 1; k < n; k++) {
+        const c = [0, 0], f = [0, 0], cur = val(k), prv = val(k - 1);
+        for (let s2 = 0; s2 < 2; s2++) { let best = Infinity, bi = 0; for (let s1 = 0; s1 < 2; s1++) { const v = cost[k - 1][s1] + Math.abs(wrap(cur[s2] - prv[s1])); if (v < best) { best = v; bi = s1; } } c[s2] = best + (s2 ? FLIP_COST : 0); f[s2] = bi; }
+        cost.push(c); from.push(f);
+      }
+      const st = new Array(n); st[n - 1] = cost[n - 1][0] <= cost[n - 1][1] ? 0 : 1; for (let k = n - 1; k > 0; k--) st[k - 1] = from[k][st[k]];
+      let flips = 0; for (const x of st) flips += x; if (flips > n / 2) for (let k = 0; k < n; k++) st[k] = 1 - st[k]; // flips are the minority
+      const u = [val(0)[st[0]]]; for (let k = 1; k < n; k++) u.push(u[k - 1] + wrap(val(k)[st[k]] - u[k - 1]));
+      { const c0 = Math.round(median(u) / (2 * Math.PI)) * 2 * Math.PI; for (let k = 0; k < n; k++) u[k] -= c0; }
+      // median then weighted smoothing; frames without real hand landmarks count less
+      const w = Math.max(1, Math.round(fps * 0.05)), mf = u.map((_, k) => median(u.slice(Math.max(0, k - 1), k + 2)));
+      const conf = k => (Hs && Hs[k] ? 1 : 0.6);
+      const sm = mf.map((_, k) => { let a = 0, b = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) { const g = Math.exp(-((q - k) ** 2) / (2 * (w / 2) ** 2)) * conf(q); a += mf[q] * g; b += g; } return a / b; });
+      const c = median(sm), lim = 150 * Math.PI / 180;
+      for (let k = 0; k < n; k++) {
+        const a = clamp(sm[k], c - lim, c + lim);
+        out[k][iF] = qnorm(qmul(sw[k], [sx * Math.sin(a / 2), 0, 0, Math.cos(a / 2)]));
+      }
+    }
+    return out;
+  }
+
+  function hipsSpikeFix(locals, fps) {
+    const n = locals.length; if (n < 5) return locals;
+    const out = locals.map(l => l.slice()), win = Math.max(3, Math.round(0.15 * fps)), maxRun = Math.round(0.6 * fps);
+    const up = q => qrot(q, [0, 1, 0]), fw = q => { const f = qrot(q, [0, 0, 1]); return norm([f[0], 0, f[2]]); };
+    const U = out.map(l => up(l[0])), F = out.map(l => fw(l[0]));
+    const bad = new Array(n).fill(false);
+    for (let k = 0; k < n; k++) {
+      const side = (a, b) => { let su = [0, 0, 0], sf = [0, 0, 0], c = 0; for (let q = a; q <= b; q++) if (q >= 0 && q < n) { su = add(su, U[q]); sf = add(sf, F[q]); c++; } return c ? { u: norm(su), f: norm(sf), fc: len(sf) / c } : null; };
+      const B = side(k - win, k - 2), A = side(k + 2, k + win); if (!B && !A) continue;
+      const ang = (x, y) => Math.acos(clamp(dot(x, y), -1, 1)) * 180 / Math.PI;
+      const detour = (key, cur) => (B && A) ? ang(cur, B[key]) + ang(cur, A[key]) - ang(B[key], A[key]) : ang(cur, (B || A)[key]);
+      const dU = detour('u', U[k]), fOk = (!B || B.fc > 0.6) && (!A || A.fc > 0.6), dF = fOk ? detour('f', F[k]) : 0;
+      if (dU > 70 || dF > 120) bad[k] = true;
+    }
+    for (let k = 0; k < n; k++) {
+      if (!bad[k]) continue; let e = k; while (e < n && bad[e]) e++;
+      const a = k - 1, b = e;
+      if (e - k <= maxRun) for (let q = k; q < e; q++) {
+        if (a >= 0 && b < n) { const u = (q - a) / (b - a); out[q] = out[a].map((qa, j) => qslerp(qa, out[b][j], u)); } // the whole pose, not just the hips
+        else { const s = a >= 0 ? a : b; if (s >= 0 && s < n) out[q] = out[s].slice(); }
+      }
+      k = e;
+    }
+    return out;
+  }
+
+  function cleanTracks(pw, pi, fps) {
+    const n = pw.length; pw = pw.map(a => a && a.map(p => p.slice())); pi = pi.map(a => a && a.map(p => p.slice()));
+    const EXT = [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 25, 26, 27, 28, 29, 30, 31, 32], maxGap = Math.round(fps * 0.4);
+    for (let i = 0; i < 33; i++) {
+      // 1) spikes: a point that jumps away from both neighbours and comes straight back
+      for (let k = 1; k < n - 1; k++) {
+        const a = pw[k - 1], b = pw[k], c = pw[k + 1]; if (!a || !b || !c) continue;
+        const mid_ = lerp(a[i], c[i], 0.5), dev = len(sub(b[i], mid_)), span = len(sub(c[i], a[i]));
+        if (dev > 0.07 && dev > 1.5 * span) { b[i] = mid_; if (pi[k] && pi[k - 1] && pi[k + 1]) pi[k][i] = [(pi[k - 1][i][0] + pi[k + 1][i][0]) / 2, (pi[k - 1][i][1] + pi[k + 1][i][1]) / 2, Math.min(pi[k - 1][i][2], pi[k + 1][i][2])]; }
+      }
+    }
+    // 2) limbs out of view / hidden: rebuild them from the frames where they were seen, relative to the body so they still move with it
+    const LIMBS = [[23, [25, 27, 29, 31]], [24, [26, 28, 30, 32]], [11, [13, 15, 17, 19, 21]], [12, [14, 16, 18, 20, 22]]];
+    const seen = (k, i) => { const p = pi[k] && pi[k][i]; return !!(pw[k] && p && p[2] >= 0.45 && p[0] > -0.02 && p[0] < 1.02 && p[1] > -0.02 && p[1] < 1.02); };
+    const longGap = Math.round(fps * 1.5);
+    for (const [root, pts] of LIMBS) for (const i of pts) {
+      for (let k = 0; k < n; k++) {
+        if (!pw[k] || seen(k, i)) continue;
+        let e = k; while (e < n && pw[e] && !seen(e, i)) e++;
+        const a = k - 1, b = e, okA = a >= 0 && seen(a, i), okB = b < n && seen(b, i);
+        const offA = okA ? sub(pw[a][i], pw[a][root]) : null, offB = okB ? sub(pw[b][i], pw[b][root]) : null;
+        const iA = okA ? [pi[a][i][0] - pi[a][root][0], pi[a][i][1] - pi[a][root][1]] : null, iB = okB ? [pi[b][i][0] - pi[b][root][0], pi[b][i][1] - pi[b][root][1]] : null;
+        for (let q = k; q < e; q++) {
+          let off, io;
+          if (okA && okB && e - k <= longGap) { const u = (q - a) / (b - a), s = u * u * (3 - 2 * u); off = lerp(offA, offB, s); io = [iA[0] + (iB[0] - iA[0]) * s, iA[1] + (iB[1] - iA[1]) * s]; }
+          else if (okA && (!okB || q - a <= b - q)) { off = offA; io = iA; } // hold the last good position relative to the body
+          else if (okB) { off = offB; io = iB; }
+          else continue;
+          pw[q][i] = add(pw[q][root], off);
+          if (pi[q]) pi[q][i] = [pi[q][root][0] + io[0], pi[q][root][1] + io[1], 0.4];
+        }
+        k = e;
+      }
+    }
+    return { pw, pi };
+  }
+
+  // ---- natural joint limits (swing/twist clamp) ----
+  function clampQ(q, maxDeg) { const ang = 2 * Math.acos(clamp(Math.abs(q[3]), 0, 1)) * 180 / Math.PI; if (ang <= maxDeg || ang < 1e-6) return q; return qslerp([0, 0, 0, 1], q, maxDeg / ang); }
+  function limitSwingTwist(q, axis, maxTwist, maxSwing) {
+    if (q[3] < 0) q = q.map(v => -v);
+    const p = sc(axis, dot([q[0], q[1], q[2]], axis));
+    let tw = [p[0], p[1], p[2], q[3]]; const tl = Math.hypot(...tw); tw = tl > 1e-9 ? tw.map(v => v / tl) : [0, 0, 0, 1];
+    const sw = qmul(q, qconj(tw));
+    return qnorm(qmul(clampQ(sw, maxSwing), clampQ(tw, maxTwist)));
+  }
+  const FINGER_POSES = { // curl per joint (deg): [joint1, joint2, joint3]
+    fist: { Thumb: [20, 35, 45], Index: [85, 100, 65], Middle: [88, 100, 65], Ring: [88, 100, 62], Pinky: [85, 95, 60] },
+    relaxed: { Thumb: [8, 12, 12], Index: [14, 22, 12], Middle: [18, 26, 14], Ring: [22, 30, 16], Pinky: [26, 32, 18] },
+  };
+  // fist thumb: folds down and across the front of the index/middle fingers (directions in left-hand space)
+  const FIST_THUMB = [norm([0.75, -0.35, 0.35]), norm([0.55, -0.55, -0.35]), norm([0.2, -0.5, -0.85])];
+  function fingerCurl(rest, locals, side, pose) {
+    const ix = rest.index, sx = side === 'Left' ? 1 : -1, P = FINGER_POSES[pose];
+    if (pose === 'fist') {
+      const d0 = HAND_TEMPLATE.Thumb.dir, m = v => [sx * v[0], v[1], v[2]], rd = m(d0);
+      let parentG = [0, 0, 0, 1], prevDir = rd;
+      FIST_THUMB.forEach((g, k) => {
+        const tgt = m(g), G = qnorm(qmul(qFromTo(prevDir, tgt), parentG)); // global rotation in hand space
+        locals[ix[`${side}HandThumb${k + 1}`]] = qnorm(qmul(qconj(parentG), G));
+        parentG = G; prevDir = tgt;
+      });
+    }
+    for (const F of FINGERS) {
+      if (F === 'Thumb' && pose === 'fist') continue;
+      const tp = HAND_TEMPLATE[F], d = [sx * tp.dir[0], tp.dir[1], tp.dir[2]];
+      const ax = norm(cross(d, [0, -1, 0])); // rotating about d x palmNormal curls the finger toward the palm
+      for (let k = 0; k < 3; k++) { const a = P[F][k] * Math.PI / 360; locals[ix[`${side}Hand${F}${k + 1}`]] = [ax[0] * Math.sin(a), ax[1] * Math.sin(a), ax[2] * Math.sin(a), Math.cos(a)]; }
+    }
+  }
+  function applyLimits(rest, locals, opt) {
+    const ix = rest.index, hm = opt.handMode || 'limited';
+    return locals.map(l => {
+      const o = l.slice();
+      for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
+        const X = [sx, 0, 0], fm = opt.fingerMode || 'ai';
+        if (fm === 'fist' || fm === 'relaxed') fingerCurl(rest, o, S, fm);
+        else if (!(opt.hasHand && opt.hasHand[S])) fingerCurl(rest, o, S, 'relaxed'); // no finger data: natural relaxed hand
+        if (hm === 'locked') { o[ix[S + 'Hand']] = [0, 0, 0, 1]; o[ix[S + 'ForeArm']] = limitSwingTwist(o[ix[S + 'ForeArm']], X, 25, 160); }
+        else if (hm === 'limited') { o[ix[S + 'Hand']] = limitSwingTwist(o[ix[S + 'Hand']], X, 30, 65); o[ix[S + 'ForeArm']] = limitSwingTwist(o[ix[S + 'ForeArm']], X, 70, 160); }
+        if (opt.ankleLimit !== false) {
+          o[ix[S + 'Foot']] = limitSwingTwist(o[ix[S + 'Foot']], FOOTDIR, 15, 50);
+          o[ix[S + 'Leg']] = limitSwingTwist(o[ix[S + 'Leg']], [0, -1, 0], 10, 160);
+        }
+      }
+      return o;
+    });
+  }
+
+  // ---- AI foot clean-up: planted feet are pinned flat to the floor with leg IK; feet never sink below it ----
+  function footCleanup(rest, locals, rootPos, C, M, fps, oneSpot = false) {
+    const n = locals.length, ix = rest.index, J = rest.joints;
+    const out = locals.map(l => l.slice());
+    const rad = Math.max(2, Math.round(0.1 * fps)); // blend in/out over ~100 ms
+    for (const S of ['Left', 'Right']) {
+      const iU = ix[S + 'UpLeg'], iL = ix[S + 'Leg'], iF = ix[S + 'Foot'], iT = ix[S + 'ToeBase'];
+      // smooth contact weight
+      const raw = C.map(c => (c[S] ? 1 : 0)), w = raw.map((_, k) => { let s = 0, c = 0; for (let q = k - rad; q <= k + rad; q++) if (q >= 0 && q < n) { s += raw[q]; c++; } return s / c; });
+      // anchors: average ankle position over each contact run
+      const base = locals.map((l, k) => fk(rest, l, rootPos[k]));
+      const anchor = new Array(n).fill(null);
+      for (let k = 0; k < n;) {
+        if (!raw[k]) { k++; continue; }
+        let e = k, sx = 0, sz = 0; while (e < n && raw[e]) { sx += base[e].pos[iF][0]; sz += base[e].pos[iF][2]; e++; }
+        const a = [sx / (e - k), M.ankleH, sz / (e - k)];
+        for (let q = Math.max(0, k - rad); q < Math.min(n, e + rad); q++) if (!anchor[q] || raw[q]) anchor[q] = a;
+        k = e;
+      }
+      // planted feet keep ONE facing for the whole contact (no spinning / popping while on the floor)
+      const yawOf = k => { const f = qrot(base[k].rot[iF], [0, 0, 1]); return [f[0], f[2]]; };
+      const plantYaw = new Array(n).fill(null);
+      for (let k = 0; k < n;) {
+        if (!raw[k]) { k++; continue; }
+        let e = k, cx = 0, cz = 0; while (e < n && raw[e]) { const [x, z] = yawOf(e), l = Math.hypot(x, z) || 1; cx += x / l; cz += z / l; e++; }
+        const y = Math.atan2(cx, cz);
+        for (let q = Math.max(0, k - rad); q < Math.min(n, e + rad); q++) if (plantYaw[q] === null || raw[q]) plantYaw[q] = y;
+        k = e;
+      }
+      if (oneSpot) { // in-place: every planted moment uses the same spot for this foot
+        const xs = [], zs = []; for (let k = 0; k < n; k++) if (raw[k]) { xs.push(base[k].pos[iF][0]); zs.push(base[k].pos[iF][2]); }
+        if (xs.length) { const a = [median(xs), M.ankleH, median(zs)]; for (let k = 0; k < n; k++) if (anchor[k]) anchor[k] = a; }
+      }
+      // pass 1: where should the ankle be on every frame?  (smoothstep blending, never dragged far)
+      const ease = x => x * x * (3 - 2 * x);
+      const plan = new Array(n), wts = new Array(n), lifts = new Array(n).fill(-9);
+      for (let k = 0; k < n; k++) {
+        const { pos, rot } = fk(rest, out[k], rootPos[k]);
+        const A = pos[iF], toeTip = add(pos[iT], qrot(rot[iT], J[iT].end || [0, 0, 0.05]));
+        let wk = anchor[k] ? ease(w[k]) : 0;
+        if (wk > 0 && !oneSpot) { const dist = len(sub(anchor[k], A)); if (dist > 0.25) wk *= 0.25 / dist; } // a far-away spot is a bad anchor: don't drag the leg to it
+        let T = wk > 0 ? lerp(A, anchor[k], wk) : A.slice();
+        const low = wk > 0.97 ? A[1] - M.ankleH : Math.min(A[1] - M.ankleH, toeTip[1], pos[iT][1]);
+        if (low + (T[1] - A[1]) < 0) T[1] += -(low + (T[1] - A[1]));
+        plan[k] = sub(T, A); wts[k] = wk; lifts[k] = -low; // lowest allowed offset (keeps the foot on or above the floor)
+      }
+      // smooth the corrections over time so the knee never jumps when a foot plants or lifts
+      const sm = [0, 1, 2].map(c => loess(plan.map(p => p[c]), Math.max(1, Math.round(0.08 * fps))));
+      for (let k = 0; k < n; k++) {
+        const { pos, rot } = fk(rest, out[k], rootPos[k]);
+        const H = pos[iU], K = pos[iL], A = pos[iF];
+        const wk = wts[k], off = [sm[0][k], Math.max(sm[1][k], lifts[k]), sm[2][k]], T = add(A, off); // never lower than the floor needs
+        if (len(off) < 1e-4 && wk === 0) continue;
+        // two-bone IK hip -> knee -> ankle
+        const a = len(sub(K, H)), b = len(sub(A, K));
+        let dv = sub(T, H), dRaw = len(dv); const L = a + b, ds = L * 0.97; // soft IK: ease into full reach instead of locking the knee
+        if (dRaw > ds) dRaw = ds + (L * 0.998 - ds) * (1 - Math.exp(-(dRaw - ds) / (L * 0.998 - ds)));
+        const d = clamp(dRaw, Math.abs(a - b) + 1e-4, L * 0.998); const dir = norm(dv);
+        let pole = perp(sub(K, H), dir);
+        if (len(pole) < 1e-4) pole = perp(qrot(rot[iF], [0, 0, 1]), dir);
+        pole = norm(pole);
+        const x = (a * a - b * b + d * d) / (2 * d), h = Math.sqrt(Math.max(0, a * a - x * x));
+        const K2 = add(add(H, sc(dir, x)), sc(pole, h)), A2 = add(H, sc(dir, d));
+        const gU = qnorm(qmul(qFromTo(sub(K, H), sub(K2, H)), rot[iU]));
+        const shinAfter = qrot(qmul(gU, qconj(rot[iU])), sub(A, K));
+        const gL = qnorm(qmul(qFromTo(shinAfter, sub(A2, K2)), qmul(qmul(gU, qconj(rot[iU])), rot[iL])));
+        // foot: keep its world orientation, and lay it flat (yaw only) while planted
+        let gF = rot[iF];
+        if (wk > 0) {
+          const f = qrot(rot[iF], [0, 0, 1]); const yaw = plantYaw[k] !== null ? plantYaw[k] : Math.atan2(f[0], f[2]);
+          const flat = [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)];
+          gF = qslerp(rot[iF], flat, wk);
+        }
+        const pU = J[iU].parent;
+        out[k][iU] = qnorm(qmul(qconj(rot[pU]), gU));
+        out[k][iL] = qnorm(qmul(qconj(gU), gL));
+        out[k][iF] = qnorm(qmul(qconj(gL), gF));
+      }
+    }
+    return out;
+  }
+
+  // pose landmark left/right mirror map
+  const MIRROR = (() => { const m = [...Array(33).keys()]; const pairs = [[1, 4], [2, 5], [3, 6], [7, 8], [9, 10]]; for (let i = 11; i < 33; i += 2) pairs.push([i, i + 1]); for (const [a, b] of pairs) { m[a] = b; m[b] = a; } return m; })();
+
+  // sample animation at time t (seconds)
+  function sample(anim, t) {
+    const u = clamp(t * anim.fps, 0, anim.n - 1), i0 = Math.floor(u), i1 = Math.min(anim.n - 1, i0 + 1), a = u - i0;
+    return { root: lerp(anim.rootPos[i0], anim.rootPos[i1], a), locals: anim.locals[i0].map((q, j) => qslerp(q, anim.locals[i1][j], a)) };
+  }
+
+  // ---- exporters ----
+  const NAME_MAPS = {
+    standard: n => n,
+    mixamo: n => 'mixamorig:' + n,
+    unity: n => {
+      const fixed = { Hips: 'Hips', Spine: 'Spine', Spine1: 'Chest', Spine2: 'UpperChest', Neck: 'Neck', Head: 'Head' };
+      if (fixed[n]) return fixed[n];
+      const m = n.match(/^(Left|Right)(.*)$/); if (!m) return n; const s = m[1], b = m[2];
+      const parts = { Shoulder: 'Shoulder', Arm: 'UpperArm', ForeArm: 'LowerArm', Hand: 'Hand', UpLeg: 'UpperLeg', Leg: 'LowerLeg', Foot: 'Foot', ToeBase: 'Toes' };
+      if (parts[b]) return s + parts[b];
+      const f = b.match(/^Hand(Thumb|Index|Middle|Ring|Pinky)(\d)$/); if (f) return `${s}${f[1] === 'Pinky' ? 'Little' : f[1]}${['Proximal', 'Intermediate', 'Distal'][+f[2] - 1]}`;
+      return n;
+    },
+    unreal: n => {
+      const fixed = { Hips: 'pelvis', Spine: 'spine_01', Spine1: 'spine_02', Spine2: 'spine_03', Neck: 'neck_01', Head: 'head' };
+      if (fixed[n]) return fixed[n];
+      const m = n.match(/^(Left|Right)(.*)$/); if (!m) return n; const s = m[1] === 'Left' ? 'l' : 'r', b = m[2];
+      const parts = { Shoulder: 'clavicle', Arm: 'upperarm', ForeArm: 'lowerarm', Hand: 'hand', UpLeg: 'thigh', Leg: 'calf', Foot: 'foot', ToeBase: 'ball' };
+      if (parts[b]) return `${parts[b]}_${s}`;
+      const f = b.match(/^Hand(Thumb|Index|Middle|Ring|Pinky)(\d)$/); if (f) return `${f[1].toLowerCase()}_0${f[2]}_${s}`;
+      return n;
+    },
+  };
+  function toBVH(anim, outFps, naming = 'standard', unit = 100) {
+    const J = anim.rest.joints, nm = NAME_MAPS[naming] || NAME_MAPS.standard, f = v => (v * unit).toFixed(4);
+    const kids = J.map((_, i) => J.map((j, k) => (j.parent === i ? k : -1)).filter(k => k >= 0));
+    let s = 'HIERARCHY\n';
+    const order = [];
+    const emit = (j, d) => {
+      const ind = '  '.repeat(d), o = J[j].offset; order.push(j);
+      s += `${ind}${d === 0 ? 'ROOT' : 'JOINT'} ${nm(J[j].name)}\n${ind}{\n`;
+      s += `${ind}  OFFSET ${f(o[0])} ${f(o[1])} ${f(o[2])}\n`;
+      s += `${ind}  CHANNELS ${d === 0 ? '6 Xposition Yposition Zposition ' : '3 '}Zrotation Xrotation Yrotation\n`;
+      for (const k of kids[j]) emit(k, d + 1);
+      if (!kids[j].length) { const e = J[j].end || sc(norm(o), 0.03); s += `${ind}  End Site\n${ind}  {\n${ind}    OFFSET ${f(e[0])} ${f(e[1])} ${f(e[2])}\n${ind}  }\n`; }
+      s += `${ind}}\n`;
+    };
+    emit(0, 0);
+    const dur = (anim.n - 1) / anim.fps, N = Math.max(1, Math.round(dur * outFps) + 1);
+    s += `MOTION\nFrames: ${N}\nFrame Time: ${(1 / outFps).toFixed(6)}\n`;
+    let prev = null;
+    for (let k = 0; k < N; k++) {
+      const smp = sample(anim, k / outFps), row = [];
+      const cur = order.map(j => eulerZXY(smp.locals[j]));
+      if (prev) cur.forEach((e, q) => e.forEach((v, c) => { let d = v - prev[q][c]; while (d > 180) { v -= 360; d -= 360; } while (d < -180) { v += 360; d += 360; } e[c] = v; }));
+      prev = cur;
+      row.push(f(smp.root[0]), f(smp.root[1]), f(smp.root[2]));
+      for (const e of cur) row.push(e[0].toFixed(4), e[1].toFixed(4), e[2].toFixed(4));
+      s += row.join(' ') + '\n';
+    }
+    return s;
+  }
+  function toJSON(anim, outFps, naming = 'standard') {
+    const J = anim.rest.joints, nm = NAME_MAPS[naming] || NAME_MAPS.standard;
+    const dur = (anim.n - 1) / anim.fps, N = Math.max(1, Math.round(dur * outFps) + 1), frames = [];
+    for (let k = 0; k < N; k++) {
+      const smp = sample(anim, k / outFps), { pos, rot } = fk(anim.rest, smp.locals, smp.root);
+      frames.push({ t: +(k / outFps).toFixed(5), root: smp.root.map(v => +v.toFixed(5)), joints: J.map((_, j) => ({ p: pos[j].map(v => +v.toFixed(5)), q: rot[j].map(v => +v.toFixed(6)), lq: smp.locals[j].map(v => +v.toFixed(6)) })) });
+    }
+    return { format: 'mocap-studio/1', units: 'meters', up: 'Y', forward: '+Z (faces camera)', fps: outFps, joints: J.map(j => ({ name: nm(j.name), parent: j.parent, offset: j.offset })), frames };
+  }
+
+  // ---- FBX 7.4 binary exporter (skeleton + animation; Unity / Blender / Maya / MotionBuilder) ----
+  function eulerXYZ(q) { // FBX default rotation order XYZ: R = Rz * Ry * Rx, degrees [x,y,z]
+    const m = quatToMat(q), D = 180 / Math.PI, y = Math.asin(-clamp(m[2][0], -1, 1)); let x, z;
+    if (Math.abs(m[2][0]) < 0.9999999) { x = Math.atan2(m[2][1], m[2][2]); z = Math.atan2(m[1][0], m[0][0]); } else { x = 0; z = Math.atan2(-m[0][1], m[1][1]); }
+    return [x * D, y * D, z * D];
+  }
+  function toFBX(anim, outFps, naming = 'unity') {
+    const nm = NAME_MAPS[naming] || NAME_MAPS.standard, J = anim.rest.joints, CM = 100, TICKS = 46186158000;
+    const dur = (anim.n - 1) / anim.fps, N = Math.max(2, Math.round(dur * outFps) + 1);
+    // ---- sample animation ----
+    const times = [], rot = J.map(() => [[], [], []]), rootT = [[], [], []];
+    let prev = null;
+    for (let k = 0; k < N; k++) {
+      const s = sample(anim, k / outFps); times.push(Math.round((k / outFps) * TICKS));
+      const e = s.locals.map(eulerXYZ);
+      if (prev) e.forEach((v, j) => v.forEach((a, c) => { let d = a - prev[j][c]; while (d > 180) { a -= 360; d -= 360; } while (d < -180) { a += 360; d += 360; } v[c] = a; }));
+      prev = e; e.forEach((v, j) => v.forEach((a, c) => rot[j][c].push(a)));
+      s.root.forEach((v, c) => rootT[c].push(v * CM));
+    }
+    // ---- binary node writer ----
+    const enc = new TextEncoder(); const chunks = []; let size = 0;
+    const out = { u8: [], push(b) { chunks.push(b); size += b.length; } };
+    const P = { // property encoders -> Uint8Array
+      S: s => { const b = typeof s === 'string' ? enc.encode(s) : s; const r = new Uint8Array(5 + b.length); r[0] = 83; new DataView(r.buffer).setUint32(1, b.length, true); r.set(b, 5); return r; },
+      R: b => { const r = new Uint8Array(5 + b.length); r[0] = 82; new DataView(r.buffer).setUint32(1, b.length, true); r.set(b, 5); return r; },
+      I: v => { const r = new Uint8Array(5); r[0] = 73; new DataView(r.buffer).setInt32(1, v, true); return r; },
+      D: v => { const r = new Uint8Array(9); r[0] = 68; new DataView(r.buffer).setFloat64(1, v, true); return r; },
+      L: v => { const r = new Uint8Array(9); r[0] = 76; new DataView(r.buffer).setBigInt64(1, BigInt(Math.round(v)), true); return r; },
+      C: v => new Uint8Array([67, v ? 1 : 0]),
+      arr: (code, list, bytes, setter) => { const r = new Uint8Array(13 + list.length * bytes), dv = new DataView(r.buffer); r[0] = code.charCodeAt(0); dv.setUint32(1, list.length, true); dv.setUint32(5, 0, true); dv.setUint32(9, list.length * bytes, true); list.forEach((v, i) => setter(dv, 13 + i * bytes, v)); return r; },
+      f: l => P.arr('f', l, 4, (dv, o, v) => dv.setFloat32(o, v, true)),
+      d: l => P.arr('d', l, 8, (dv, o, v) => dv.setFloat64(o, v, true)),
+      i: l => P.arr('i', l, 4, (dv, o, v) => dv.setInt32(o, v, true)),
+      l: l => P.arr('l', l, 8, (dv, o, v) => dv.setBigInt64(o, BigInt(Math.round(v)), true)),
+    };
+    // node: [name, props(Uint8Array[]), children[]]
+    const node = (name, props = [], kids = []) => ({ name, props, kids });
+    const SENT = new Uint8Array(13);
+    function write(n, isLast) {
+      const nameB = enc.encode(n.name), propLen = n.props.reduce((a, b) => a + b.length, 0);
+      const head = new Uint8Array(13 + nameB.length), dv = new DataView(head.buffer);
+      const startSize = size; out.push(head);
+      dv.setUint32(4, n.props.length, true); dv.setUint32(8, propLen, true); head[12] = nameB.length; head.set(nameB, 13);
+      n.props.forEach(p => out.push(p));
+      if (n.kids.length) { n.kids.forEach(k => write(k)); out.push(SENT); }
+      else if (!n.props.length) out.push(SENT);
+      dv.setUint32(0, size, true); // absolute end offset (file header counted below)
+      n._start = startSize;
+    }
+    const p70 = list => node('Properties70', [], list.map(a => node('P', a)));
+    const pvx = (name, type, sub, flags, ...vals) => [P.S(name), P.S(type), P.S(sub), P.S(flags), ...vals];
+    const pv = (name, type, sub, ...vals) => pvx(name, type, sub, '', ...vals);
+    const v3 = (n, x, y, z, t = 'Lcl Translation') => pvx(n, t, '', 'A', P.D(x), P.D(y), P.D(z));
+    let nextId = 1000000;
+    const id = () => nextId++;
+    const objects = [], conns = [];
+    const C = (type, a, b, prop) => conns.push(node('C', prop ? [P.S(type), P.L(a), P.L(b), P.S(prop)] : [P.S(type), P.L(a), P.L(b)]));
+    const modelIds = J.map(() => id());
+    J.forEach((j, i) => {
+      const na = id(), name = nm(j.name), o = j.offset;
+      objects.push(node('NodeAttribute', [P.L(na), P.S(name + '\x00\x01NodeAttribute'), P.S('LimbNode')], [p70([pv('Size', 'double', 'Number', P.D(1))]), node('TypeFlags', [P.S('Skeleton')])]));
+      objects.push(node('Model', [P.L(modelIds[i]), P.S(name + '\x00\x01Model'), P.S('LimbNode')], [node('Version', [P.I(232)]),
+        p70([pv('RotationActive', 'bool', '', P.I(1)), pv('InheritType', 'enum', '', P.I(1)), pv('ScalingMax', 'Vector3D', 'Vector', P.D(0), P.D(0), P.D(0)), pv('DefaultAttributeIndex', 'int', 'Integer', P.I(0)),
+          v3('Lcl Translation', o[0] * CM, o[1] * CM, o[2] * CM), v3('Lcl Rotation', 0, 0, 0, 'Lcl Rotation'), v3('Lcl Scaling', 1, 1, 1, 'Lcl Scaling')]),
+        node('Shading', [P.C(1)]), node('Culling', [P.S('CullingOff')])]));
+      C('OO', na, modelIds[i]); C('OO', modelIds[i], j.parent >= 0 ? modelIds[j.parent] : 0);
+    });
+    const stack = id(), layer = id(), stopT = times[times.length - 1];
+    objects.push(node('AnimationStack', [P.L(stack), P.S('Take 001\x00\x01AnimStack'), P.S('')], [p70([pv('LocalStop', 'KTime', 'Time', P.L(stopT)), pv('ReferenceStop', 'KTime', 'Time', P.L(stopT))])]));
+    objects.push(node('AnimationLayer', [P.L(layer), P.S('BaseLayer\x00\x01AnimLayer'), P.S('')]));
+    C('OO', layer, stack);
+    const keyData = P.f([0, 0, new Float32Array(new Uint32Array([218434821]).buffer)[0], 0]);
+    let nCN = 0, nCurve = 0;
+    const addChannel = (modelId, prop, short, xyz) => {
+      const cn = id(); nCN++;
+      objects.push(node('AnimationCurveNode', [P.L(cn), P.S(short + '\x00\x01AnimCurveNode'), P.S('')], [p70(['X', 'Y', 'Z'].map((a, c) => pvx('d|' + a, 'Number', '', 'A', P.D(xyz[c][0]))))]));
+      C('OO', cn, layer); C('OP', cn, modelId, prop);
+      ['X', 'Y', 'Z'].forEach((a, c) => {
+        const cv = id(); nCurve++;
+        objects.push(node('AnimationCurve', [P.L(cv), P.S('\x00\x01AnimCurve'), P.S('')], [node('Default', [P.D(xyz[c][0])]), node('KeyVer', [P.I(4008)]), node('KeyTime', [P.l(times)]), node('KeyValueFloat', [P.f(xyz[c])]), node('KeyAttrFlags', [P.i([24836])]), node('KeyAttrDataFloat', [keyData]), node('KeyAttrRefCount', [P.i([times.length])])]));
+        C('OP', cv, cn, 'd|' + a);
+      });
+    };
+    J.forEach((j, i) => { addChannel(modelIds[i], 'Lcl Rotation', 'R', rot[i]); if (i === 0) addChannel(modelIds[0], 'Lcl Translation', 'T', rootT); });
+    const tm = { 24: 11, 30: 6, 60: 3, 120: 1 }[outFps] ?? 14;
+    const top = [
+      node('FBXHeaderExtension', [], [node('FBXHeaderVersion', [P.I(1003)]), node('FBXVersion', [P.I(7400)]), node('EncryptionType', [P.I(0)]),
+        node('CreationTimeStamp', [], [node('Version', [P.I(1000)]), node('Year', [P.I(1970)]), node('Month', [P.I(1)]), node('Day', [P.I(1)]), node('Hour', [P.I(10)]), node('Minute', [P.I(0)]), node('Second', [P.I(0)]), node('Millisecond', [P.I(0)])]),
+        node('Creator', [P.S('NoCap MoCap')])]),
+      node('FileId', [P.R(new Uint8Array([0x28, 0xb3, 0x2a, 0xeb, 0xb6, 0x24, 0xcc, 0xc2, 0xbf, 0xc8, 0xb0, 0x2a, 0xa9, 0x2b, 0xfc, 0xf1]))]),
+      node('CreationTime', [P.S('1970-01-01 10:00:00:000')]),
+      node('Creator', [P.S('NoCap MoCap')]),
+      node('GlobalSettings', [], [node('Version', [P.I(1000)]), p70([
+        pv('UpAxis', 'int', 'Integer', P.I(1)), pv('UpAxisSign', 'int', 'Integer', P.I(1)), pv('FrontAxis', 'int', 'Integer', P.I(2)), pv('FrontAxisSign', 'int', 'Integer', P.I(1)),
+        pv('CoordAxis', 'int', 'Integer', P.I(0)), pv('CoordAxisSign', 'int', 'Integer', P.I(1)), pv('OriginalUpAxis', 'int', 'Integer', P.I(1)), pv('OriginalUpAxisSign', 'int', 'Integer', P.I(1)),
+        pv('UnitScaleFactor', 'double', 'Number', P.D(1)), pv('OriginalUnitScaleFactor', 'double', 'Number', P.D(1)),
+        pv('TimeMode', 'enum', '', P.I(tm)), pv('TimeSpanStart', 'KTime', 'Time', P.L(0)), pv('TimeSpanStop', 'KTime', 'Time', P.L(stopT)), pv('CustomFrameRate', 'double', 'Number', P.D(outFps))])]),
+      node('Documents', [], [node('Count', [P.I(1)]), node('Document', [P.L(id()), P.S('Scene'), P.S('Scene')], [p70([pv('ActiveAnimStackName', 'KString', '', P.S('Take 001'))]), node('RootNode', [P.L(0)])])]),
+      node('References', []),
+      node('Definitions', [], [node('Version', [P.I(100)]), node('Count', [P.I(6)]),
+        ...[['GlobalSettings', 1], ['NodeAttribute', J.length], ['Model', J.length], ['AnimationStack', 1], ['AnimationLayer', 1], ['AnimationCurveNode', nCN], ['AnimationCurve', nCurve]].map(([t, c]) => node('ObjectType', [P.S(t)], [node('Count', [P.I(c)])]))]),
+      node('Objects', [], objects),
+      node('Connections', [], conns),
+      node('Takes', [], [node('Current', [P.S('Take 001')]), node('Take', [P.S('Take 001')], [node('FileName', [P.S('Take_001.tak')]), node('LocalTime', [P.L(0), P.L(stopT)]), node('ReferenceTime', [P.L(0), P.L(stopT)])])]),
+    ];
+    // header
+    const header = new Uint8Array(27); header.set(enc.encode('Kaydara FBX Binary  '), 0); header[20] = 0; header[21] = 0x1a; header[22] = 0; new DataView(header.buffer).setUint32(23, 7400, true);
+    out.push(header);
+    top.forEach(n => write(n)); out.push(SENT);
+    // footer (as written by Blender / FBX SDK)
+    out.push(new Uint8Array([0xfa, 0xbc, 0xab, 0x09, 0xd0, 0xc8, 0xd4, 0x66, 0xb1, 0x76, 0xfb, 0x83, 0x1c, 0xf7, 0x26, 0x7e]));
+    out.push(new Uint8Array(4));
+    let pad = ((size + 15) & ~15) - size; if (pad === 0) pad = 16; out.push(new Uint8Array(pad));
+    const ver = new Uint8Array(4); new DataView(ver.buffer).setUint32(0, 7400, true); out.push(ver);
+    out.push(new Uint8Array(120));
+    out.push(new Uint8Array([0xf8, 0x5a, 0x8c, 0x6a, 0xde, 0xf5, 0xd9, 0x7e, 0xec, 0xe9, 0x0c, 0xe3, 0x75, 0x8f, 0x29, 0x0b]));
+    const res = new Uint8Array(size); let o = 0; for (const c of chunks) { res.set(c, o); o += c.length; }
+    return res;
+  }
+
+  // ================= TEXT TO MOTION (procedural motion library driven by your words) =================
+  const DEFAULT_M = { hipW: 0.2, shoulderW: 0.36, torso: 0.5, neckLen: 0.2, upper: 0.28, fore: 0.26, thigh: 0.43, shin: 0.42, foot: 0.15, ankleH: 0.07, hand: 0.095 };
+  const V = (x, y, z) => norm([x, y, z]);
+  const ss = x => x * x * (3 - 2 * x); // smoothstep
+  const lerpN = (a, b, t) => norm(lerp(a, b, t));
+  const axq = (ax, deg) => { const h = deg * Math.PI / 360, s = Math.sin(h); return [ax[0] * s, ax[1] * s, ax[2] * s, Math.cos(h)]; };
+  // limb directions are in the body's own frame (x = character's left, y = up, z = forward)
+  const BASE = { // relaxed standing
+    LeftArm: V(0.25, -1, 0.05), LeftForeArm: V(0.15, -1, 0.25), RightArm: V(-0.25, -1, 0.05), RightForeArm: V(-0.15, -1, 0.25),
+    LeftUpLeg: V(0.03, -1, 0), LeftLeg: V(0, -1, -0.02), RightUpLeg: V(-0.03, -1, 0), RightLeg: V(0, -1, -0.02),
+  };
+  const GUARD = { LeftArm: V(0.3, -0.8, 0.5), LeftForeArm: V(-0.25, 0.85, 0.55), RightArm: V(-0.3, -0.85, 0.4), RightForeArm: V(0.25, 0.9, 0.5),
+    // fighting stance: lead (left) foot forward, rear foot back, both knees bent, weight on the balls of the feet
+    LeftUpLeg: V(0.14, -0.92, 0.42), LeftLeg: V(0.06, -1, -0.04), RightUpLeg: V(-0.12, -1, -0.12), RightLeg: V(-0.04, -0.95, -0.42) };
+  const GUARD_LOW = { LeftUpLeg: V(0.15, -0.85, 0.52), LeftLeg: V(0.06, -1, -0.12), RightUpLeg: V(-0.12, -0.97, -0.05), RightLeg: V(-0.04, -0.9, -0.5) };
+  const pose = (dirs = {}, o = {}) => ({ dirs: { ...BASE, ...dirs }, hipsYaw: 0, hipsPitch: 0, chestYaw: 0, chestPitch: 0, headPitch: 0, rootY: 0, ...o });
+  const guardP = (extra = {}, o = {}) => pose({ ...GUARD, ...extra }, { hipsYaw: -38, chestYaw: -8, chestPitch: 8, headPitch: 14, ...o, guard: 1 });
+  // each move: dur (s), keys [[time 0..1, pose]], optional travel (m/s forward), loop flag
+  const MOVES = {
+    idle: { dur: 2, loop: true, keys: [[0, pose({}, { chestPitch: 0 })], [0.5, pose({ LeftArm: V(0.27, -1, 0.06), RightArm: V(-0.27, -1, 0.06) }, { chestPitch: -2, rootY: -0.005 })], [1, pose()]] },
+    stance: { dur: 1.2, loop: true, keys: [[0, guardP()], [0.5, guardP({}, { rootY: -0.02 })], [1, guardP()]] },
+    jab: { dur: 0.55, keys: [[0, guardP()], [0.35, guardP({ LeftArm: V(0.05, 0.05, 1), LeftForeArm: V(0, 0.05, 1) }, { chestYaw: -12, hipsYaw: -45, chestPitch: 12 })], [0.55, guardP({ LeftArm: V(0.05, 0.05, 1), LeftForeArm: V(0, 0.05, 1) }, { chestYaw: -12, hipsYaw: -45, chestPitch: 12 })], [1, guardP()]] },
+    cross: { dur: 0.65, keys: [[0, guardP()], [0.4, guardP({ RightArm: V(-0.05, 0.05, 1), RightForeArm: V(0, 0.05, 1), RightUpLeg: V(-0.2, -1, 0.0), RightLeg: V(-0.1, -1, -0.3) }, { chestYaw: 28, hipsYaw: 5, chestPitch: 12 })], [0.6, guardP({ RightArm: V(-0.05, 0.05, 1), RightForeArm: V(0, 0.05, 1), RightUpLeg: V(-0.2, -1, 0.0), RightLeg: V(-0.1, -1, -0.3) }, { chestYaw: 28, hipsYaw: 5, chestPitch: 12 })], [1, guardP()]] },
+    hook: { dur: 0.7, keys: [[0, guardP()], [0.25, guardP({}, { chestYaw: -25 })], [0.55, guardP({ LeftArm: V(0.7, 0.1, 0.7), LeftForeArm: V(-0.9, 0.05, 0.4) }, { chestYaw: 35, hipsYaw: 10 })], [1, guardP()]] },
+    uppercut: { dur: 0.7, keys: [[0, guardP()], [0.3, guardP({ RightArm: V(-0.3, -0.9, 0.3), RightForeArm: V(0, -0.2, 1) }, { chestYaw: 10, rootY: -0.08, chestPitch: 8 })], [0.6, guardP({ RightArm: V(-0.15, -0.2, 0.95), RightForeArm: V(0, 1, 0.15) }, { chestYaw: 25, chestPitch: -10 })], [1, guardP()]] },
+    kick: { dur: 1.1, keys: [[0, guardP()], [0.3, guardP({ RightUpLeg: V(-0.05, 0.1, 1), RightLeg: V(0, -1, 0.2) }, { chestPitch: -10 })], [0.5, guardP({ RightUpLeg: V(-0.05, 0.25, 1), RightLeg: V(0, 0.2, 1) }, { chestPitch: -15 })], [0.75, guardP({ RightUpLeg: V(-0.05, 0.1, 1), RightLeg: V(0, -1, 0.2) })], [1, guardP()]] },
+    roundhouse: { dur: 1.2, keys: [[0, guardP()], [0.3, guardP({ RightUpLeg: V(-0.8, -0.2, 0.6), RightLeg: V(-0.6, -0.7, -0.2) }, { hipsYaw: 50, chestYaw: -20, chestPitch: -10 })], [0.5, guardP({ RightUpLeg: V(-0.3, 0.45, 0.85), RightLeg: V(0.3, 0.4, 0.85) }, { hipsYaw: 80, chestYaw: -40, chestPitch: -20 })], [0.75, guardP({ RightUpLeg: V(-0.8, -0.2, 0.6), RightLeg: V(-0.6, -0.7, -0.2) }, { hipsYaw: 45 })], [1, guardP()]] },
+    squat: { dur: 2, keys: [[0, pose()], [0.45, pose({ LeftUpLeg: V(0.2, -0.35, 1), LeftLeg: V(0.05, -1, -0.25), RightUpLeg: V(-0.2, -0.35, 1), RightLeg: V(-0.05, -1, -0.25), LeftArm: V(0.1, 0, 1), RightArm: V(-0.1, 0, 1), LeftForeArm: V(0, 0, 1), RightForeArm: V(0, 0, 1) }, { chestPitch: 30, rootY: -0.38 })], [0.55, pose({ LeftUpLeg: V(0.2, -0.35, 1), LeftLeg: V(0.05, -1, -0.25), RightUpLeg: V(-0.2, -0.35, 1), RightLeg: V(-0.05, -1, -0.25), LeftArm: V(0.1, 0, 1), RightArm: V(-0.1, 0, 1), LeftForeArm: V(0, 0, 1), RightForeArm: V(0, 0, 1) }, { chestPitch: 30, rootY: -0.38 })], [1, pose()]] },
+    wave: { dur: 2, keys: [[0, pose()], [0.15, pose({ RightArm: V(-1, 0.3, 0.15), RightForeArm: V(-0.3, 1, 0.1) })], [0.3, pose({ RightArm: V(-1, 0.3, 0.15), RightForeArm: V(0.25, 1, 0.1) })], [0.45, pose({ RightArm: V(-1, 0.3, 0.15), RightForeArm: V(-0.45, 1, 0.1) })], [0.6, pose({ RightArm: V(-1, 0.3, 0.15), RightForeArm: V(0.25, 1, 0.1) })], [0.75, pose({ RightArm: V(-1, 0.3, 0.15), RightForeArm: V(-0.3, 1, 0.1) })], [1, pose()]] },
+    jump: { dur: 1.2, keys: [[0, pose()], [0.25, pose({ LeftUpLeg: V(0.05, -0.75, 0.7), LeftLeg: V(0, -1, -0.5), RightUpLeg: V(-0.05, -0.75, 0.7), RightLeg: V(0, -1, -0.5), LeftArm: V(0.3, -0.7, -0.6), RightArm: V(-0.3, -0.7, -0.6) }, { chestPitch: 25, rootY: -0.22 })], [0.5, pose({ LeftArm: V(0.3, 1, 0.2), RightArm: V(-0.3, 1, 0.2), LeftForeArm: V(0.2, 1, 0.1), RightForeArm: V(-0.2, 1, 0.1) }, { rootY: 0.45, air: 1 })], [0.75, pose({ LeftUpLeg: V(0.05, -0.8, 0.6), LeftLeg: V(0, -1, -0.4), RightUpLeg: V(-0.05, -0.8, 0.6), RightLeg: V(0, -1, -0.4) }, { chestPitch: 20, rootY: -0.18 })], [1, pose()]] },
+    spin: { dur: 1.2, keys: [[0, pose()], [0.5, pose({ LeftArm: V(1, -0.2, 0), RightArm: V(-1, -0.2, 0), LeftForeArm: V(1, -0.2, 0), RightForeArm: V(-1, -0.2, 0) }, { hipsYaw: 180 })], [1, pose({}, { hipsYaw: 360 })]] },
+    dance: { dur: 2, loop: true, keys: [0, 0.25, 0.5, 0.75, 1].map((tt, i) => [tt, pose({ LeftArm: V(0.6, i % 2 ? 0.6 : -0.2, 0.5), LeftForeArm: V(0, 1, 0.3), RightArm: V(-0.6, i % 2 ? -0.2 : 0.6, 0.5), RightForeArm: V(0, 1, 0.3), LeftUpLeg: V(0.08, -1, i % 2 ? 0.25 : 0), LeftLeg: V(0, -1, i % 2 ? -0.3 : 0), RightUpLeg: V(-0.08, -1, i % 2 ? 0 : 0.25), RightLeg: V(0, -1, i % 2 ? 0 : -0.3) }, { hipsYaw: i % 2 ? 15 : -15, chestYaw: i % 2 ? -10 : 10, rootY: i % 2 ? -0.06 : 0 })]) },
+  };
+  // walk / run are generated as cycles
+  function cyclePose(t, run) {
+    const ph = t * 2 * Math.PI, a = run ? 0.75 : 0.45, s = Math.sin(ph), c = Math.cos(ph);
+    const leg = (sg) => { const sw = sg * s; const knee = Math.max(0, sg * c) * (run ? 1.4 : 0.9) + 0.08;
+      return [V(sg * 0.03, -1, Math.tan(sw * a)), lerpN(V(0, -1, Math.tan(sw * a)), V(0, -0.2, -1), clamp(knee / 2, 0, 0.8))]; };
+    const [lu, ll] = leg(1), [ru, rl] = leg(-1);
+    const arm = (sg, x) => run ? [V(x * 0.2, -0.8, -sg * s * 0.9), V(0, 0.2, 1)] : [V(x * 0.25, -1, -sg * s * 0.5), V(x * 0.1, -1, 0.3 - sg * s * 0.2)];
+    const [la, lf] = arm(1, 1), [ra, rf] = arm(-1, -1);
+    return pose({ LeftUpLeg: lu, LeftLeg: ll, RightUpLeg: ru, RightLeg: rl, LeftArm: la, LeftForeArm: lf, RightArm: ra, RightForeArm: rf },
+      { chestPitch: run ? 14 : 3, chestYaw: s * (run ? 10 : 6), hipsYaw: -s * (run ? 8 : 5), rootY: (run ? 0.05 : 0.02) * Math.abs(Math.sin(ph * 2)) - (run ? 0.06 : 0.01) });
+  }
+  MOVES.walk = { dur: 1.1, loop: true, travel: 1.3, cycle: false };
+  MOVES.run = { dur: 0.7, loop: true, travel: 3.6, cycle: true };
+  const WORDS = [
+    [/\b(walk|walking|stroll)/, 'walk'], [/\b(run|running|sprint|jog)/, 'run'], [/\b(jump|jumping|hop|leap)/, 'jump'],
+    [/\b(jab|jabs|punch|punches|punching)/, 'jab'], [/\b(cross|straight|right hand)/, 'cross'], [/\b(hook|hooks)/, 'hook'], [/\b(uppercut|upper cut)/, 'uppercut'],
+    [/\b(roundhouse|round house|round kick)/, 'roundhouse'], [/\b(kick|kicks|kicking)/, 'kick'], [/\b(squat|squats|crouch)/, 'squat'],
+    [/\b(wave|waving|hello|hi\b)/, 'wave'], [/\b(dance|dancing|groove)/, 'dance'], [/\b(spin|turn around|twirl)/, 'spin'],
+    [/\b(stance|guard|fight stance|boxing stance|bounce)/, 'stance'], [/\b(idle|stand|standing|wait|breath)/, 'idle'],
+  ];
+  const NUMS = { one: 1, once: 1, two: 2, twice: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  const STYLE_WORDS = {
+    boxing: /\b(box|boxer|boxing|fight|fighter|fighting|jab|cross|hook|uppercut|punch|punches|stance|guard|spar|sparring|mma|kickbox|kickboxing|muay|karate)/,
+    tired: /\b(tired|exhausted|sleepy|weak|sad|depressed)/, proud: /\b(proud|confident|strut|swagger|cool)/,
+    sneaky: /\b(sneak|sneaky|sneaking|stealth|creep|creeping|crouch(ed)?)\b/, happy: /\b(happy|excited|joyful|cheerful|bouncy)/,
+    angry: /\b(angry|aggressive|furious|mad|rage)/, drunk: /\b(drunk|dizzy|wobbly|stumbl)/, old: /\b(old|elderly|old man|old woman)/,
+  };
+  function detectStyles(text) { const s = {}; for (const k in STYLE_WORDS) if (STYLE_WORDS[k].test(text.toLowerCase())) s[k] = true; return s; }
+  function parsePrompt(text) {
+    const segs = text.toLowerCase().split(/\bthen\b|,|;|\.|\band then\b|\bfollowed by\b|\band\b/).map(s => s.trim()).filter(Boolean);
+    const plan = [], unknown = [];
+    for (const s of segs) {
+      const hits = []; for (const [re, m] of WORDS) { const mm = s.match(re); if (mm && !hits.some(h => h.m === m)) hits.push({ m, at: mm.index }); }
+      // "jab cross hook" in one segment = combo in written order
+      if (!hits.length) { unknown.push(s); continue; }
+      if (hits.some(h => h.m === 'roundhouse')) { const i = hits.findIndex(h => h.m === 'kick'); if (i >= 0) hits.splice(i, 1); }
+      hits.sort((a, b) => a.at - b.at);
+      const nm = s.match(/(\d+)\s*(x|times)?/) || s.match(/\b(one|once|two|twice|three|four|five|six|seven|eight|nine|ten)\b/);
+      let count = nm ? (+nm[1] || NUMS[nm[1]] || 1) : 1; const secs = s.match(/(\d+(\.\d+)?)\s*(s|sec|secs|seconds)\b/);
+      const st = detectStyles(text), speed = (/\b(slow|slowly|gentle)/.test(s) ? 0.65 : /\b(fast|quick|quickly|rapid|explosive)/.test(s) ? 1.5 : 1) * (st.tired || st.old ? 0.7 : st.sneaky ? 0.6 : st.angry || st.happy ? 1.15 : 1);
+      if (secs) count = 1;
+      const boxing = detectStyles(text).boxing;
+      for (let r = 0; r < Math.min(count, 20); r++) for (const h of hits) plan.push({ move: boxing && h.m === 'idle' ? 'stance' : h.m, speed, secs: secs ? +secs[1] : null });
+    }
+    return { plan, unknown };
+  }
+  function samplePlan(plan, t) { // returns pose at global time t
+    let acc = 0;
+    for (let i = 0; i < plan.length; i++) {
+      const p = plan[i], d = p.len;
+      if (t <= acc + d || i === plan.length - 1) { const lt = clamp(t - acc, 0, d); return { p, pose: movePose(p, lt), lt, i }; }
+      acc += d;
+    }
+  }
+  function movePose(p, lt) {
+    const M_ = MOVES[p.move], cyc = M_.dur / p.speed;
+    if (p.move === 'walk' || p.move === 'run') return cyclePose((lt % cyc) / cyc, p.move === 'run');
+    let u = M_.loop ? (lt % cyc) / cyc : clamp(lt / cyc, 0, 1);
+    const K = M_.keys; let k = 0; while (k < K.length - 2 && u > K[k + 1][0]) k++;
+    const [t0, a] = K[k], [t1, b] = K[k + 1], w = ss(clamp((u - t0) / Math.max(1e-6, t1 - t0), 0, 1));
+    return blendPose(a, b, w);
+  }
+  function blendPose(a, b, w) {
+    const dirs = {}; for (const j in a.dirs) dirs[j] = lerpN(a.dirs[j], b.dirs[j] || a.dirs[j], w);
+    const o = { dirs }; for (const k of ['hipsYaw', 'hipsPitch', 'hipsRoll', 'chestYaw', 'chestPitch', 'headPitch', 'rootY', 'guard']) o[k] = (a[k] || 0) * (1 - w) + (b[k] || 0) * w;
+    o.air = Math.max(a.air || 0, b.air || 0) * (w > 0.05 && w < 0.95 ? 1 : 0); return o;
+  }
+  function textToMotion(text, fps = 30, seed = 0) {
+    let sd = (seed * 9301 + 49297) % 233280 || 1; const rnd = () => { sd = (sd * 9301 + 49297) % 233280; return sd / 233280; }; // repeatable variation per seed
+    const { plan, unknown } = parsePrompt(text || ''), style = detectStyles(text || '');
+    if (!plan.length && style.boxing) plan.push({ move: 'stance', speed: 1, secs: 3 });
+    if (!plan.length) throw new Error('I didn\'t recognise any moves. Try words like: walk, run, jump, jab, cross, hook, uppercut, kick, roundhouse, squat, wave, dance, spin, stance, idle.');
+    if (seed) for (const p of plan) p.speed *= 0.88 + rnd() * 0.24; // each new take varies the timing a little
+    const vYaw = seed ? (rnd() - 0.5) * 14 : 0, vBounce = seed ? 1.4 + rnd() * 0.7 : 1.7, vLean = seed ? (rnd() - 0.5) * 8 : 0;
+    for (const p of plan) { const M_ = MOVES[p.move]; p.len = p.secs || (M_.loop && !p.secs ? M_.dur * (p.move === 'walk' || p.move === 'run' ? 3 : 1) : M_.dur) / (p.secs ? 1 : p.speed); }
+    const total = plan.reduce((a, p) => a + p.len, 0), n = Math.max(2, Math.round(total * fps) + 1), rest = buildRest({ ...DEFAULT_M }), ix = rest.index, J = rest.joints;
+    const BLEND = 0.18; const locals = [], rootPos = [], contacts = []; let z = 0, yaw = 0;
+    for (let k = 0; k < n; k++) {
+      const t = k / fps, cur = samplePlan(plan, t); let P_ = cur.pose;
+      // smooth hand-over between moves
+      if (cur.i > 0 && cur.lt < BLEND) { const prev = plan[cur.i - 1]; P_ = blendPose(movePose(prev, prev.len), P_, ss(cur.lt / BLEND)); }
+      P_ = { ...P_, dirs: { ...P_.dirs } };
+      const mv = cur.p.move, kicking = mv === 'kick' || mv === 'roundhouse';
+      if (style.boxing) {
+        if (mv === 'walk' || mv === 'run') { // footwork with the hands up
+          for (const j of ['LeftArm', 'LeftForeArm', 'RightArm', 'RightForeArm']) P_.dirs[j] = GUARD[j];
+          P_.chestPitch += 8; P_.headPitch += 12; P_.chestYaw += -10;
+        }
+        if ((P_.guard || 0) > 0.5 && !kicking) { // light bounce on the balls of the feet
+          const b = (Math.sin(t * 2 * Math.PI * vBounce) + 1) / 2 * 0.8;
+          for (const j in GUARD_LOW) P_.dirs[j] = lerpN(P_.dirs[j], lerpN(GUARD[j], GUARD_LOW[j], 1), b * 0.6);
+          P_.headPitch += Math.sin(t * 2 * Math.PI * 0.6) * 4; P_.chestYaw += Math.sin(t * 2 * Math.PI * 0.45) * 5; // head & shoulder movement
+        }
+      }
+      if (style.tired) { P_.chestPitch += 18; P_.headPitch += 14; for (const j of ['LeftArm', 'RightArm']) P_.dirs[j] = lerpN(P_.dirs[j], BASE[j], 0.5); }
+      if (style.old) { P_.chestPitch += 22; P_.headPitch -= 8; for (const S of ['Left', 'Right']) { P_.dirs[S + 'UpLeg'] = lerpN(P_.dirs[S + 'UpLeg'], V(0, -0.9, 0.35), 0.35); P_.dirs[S + 'Leg'] = lerpN(P_.dirs[S + 'Leg'], V(0, -1, -0.15), 0.35); } }
+      if (style.proud) { P_.chestPitch -= 8; P_.headPitch -= 8; P_.chestYaw += Math.sin(t * 2 * Math.PI) * 4; }
+      if (style.sneaky) { P_.chestPitch += 20; P_.headPitch -= 10; for (const S of ['Left', 'Right']) { P_.dirs[S + 'UpLeg'] = lerpN(P_.dirs[S + 'UpLeg'], V(0, -0.7, 0.75), 0.55); P_.dirs[S + 'Leg'] = lerpN(P_.dirs[S + 'Leg'], V(0, -1, -0.45), 0.55); } }
+      if (style.angry) { P_.chestPitch += 10; P_.headPitch += 6; }
+      if (style.happy) { for (const j of ['LeftArm', 'RightArm']) P_.dirs[j] = lerpN(P_.dirs[j], V(j[0] === 'L' ? 0.6 : -0.6, 0.2, 0.4), 0.25); P_.chestPitch -= 4; }
+      if (style.drunk) { P_.hipsRoll = (P_.hipsRoll || 0) + Math.sin(t * 2 * Math.PI * 0.5) * 7; P_.chestYaw += Math.sin(t * 2 * Math.PI * 0.35) * 10; P_.headPitch += Math.sin(t * 2 * Math.PI * 0.7) * 10; }
+      P_.chestPitch += vLean; const hy = P_.hipsYaw + yaw + vYaw, Hq = qmul(qmul(axq([0, 1, 0], hy), axq([1, 0, 0], P_.hipsPitch)), axq([0, 0, 1], P_.hipsRoll || 0));
+      const Cq = qmul(Hq, qmul(axq([0, 1, 0], P_.chestYaw), axq([1, 0, 0], P_.chestPitch)));
+      const G = {}; G.Hips = Hq; G.Spine = qslerp(Hq, Cq, 1 / 3); G.Spine1 = qslerp(Hq, Cq, 2 / 3); G.Spine2 = Cq; G.Neck = Cq; G.Head = qmul(Cq, axq([1, 0, 0], P_.headPitch - P_.chestPitch * 0.6));
+      for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
+        G[S + 'Shoulder'] = Cq;
+        G[S + 'Arm'] = qmul(Cq, qFromTo([sx, 0, 0], P_.dirs[S + 'Arm'])); G[S + 'ForeArm'] = qmul(Cq, qFromTo([sx, 0, 0], P_.dirs[S + 'ForeArm'])); G[S + 'Hand'] = G[S + 'ForeArm'];
+        G[S + 'UpLeg'] = qmul(Hq, qFromTo([0, -1, 0], P_.dirs[S + 'UpLeg'])); G[S + 'Leg'] = qmul(Hq, qFromTo([0, -1, 0], P_.dirs[S + 'Leg'])); G[S + 'Foot'] = axq([0, 1, 0], hy);
+      }
+      const glob = [], loc = [];
+      for (let j = 0; j < J.length; j++) { const p = J[j].parent; glob[j] = G[J[j].name] || glob[p]; loc[j] = p >= 0 ? qnorm(qmul(qconj(glob[p]), glob[j])) : glob[j]; }
+      const fist = style.boxing || /jab|cross|hook|uppercut|stance/.test(cur.p.move) || style.angry; fingerCurl(rest, loc, 'Left', fist ? 'fist' : 'relaxed'); fingerCurl(rest, loc, 'Right', fist ? 'fist' : 'relaxed');
+      // root: feet on the ground (unless airborne), forward travel for walk/run
+      const f0 = fk(rest, loc, [0, 0, 0]);
+      const low = Math.min(...['Left', 'Right'].flatMap(S => [f0.pos[ix[S + 'Foot']][1] - DEFAULT_M.ankleH, f0.pos[ix[S + 'ToeBase']][1]]));
+      const travel = MOVES[cur.p.move].travel ? MOVES[cur.p.move].travel * (cur.p.speed || 1) : 0;
+      if (k > 0) z += travel / fps;
+      const fwd = qrot(axq([0, 1, 0], yaw), [0, 0, 1]);
+      const y = -low + (P_.air ? Math.max(0, P_.rootY) : Math.min(0, P_.rootY) * 0 + 0);
+      rootPos.push([fwd[0] * z, y + (P_.air ? 0 : 0), fwd[2] * z]);
+      locals.push(loc);
+      contacts.push({ Left: !P_.air && f0.pos[ix.LeftFoot][1] - low < 0.1, Right: !P_.air && f0.pos[ix.RightFoot][1] - low < 0.1 });
+    }
+    for (let k = 1; k < n; k++) for (let j = 0; j < locals[k].length; j++) { const a = locals[k - 1][j], b = locals[k][j]; if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0) locals[k][j] = b.map(v => -v); }
+    return { rest, fps, n, rootPos, locals, contacts, hasHands: { Left: false, Right: false }, M: rest.M, unknown, plan: plan.map(p => p.move), styles: Object.keys(style), text };
+  }
+
+  // cut an animation down to [a, b] seconds (relative to its own start)
+  function sliceAnim(anim, a, b) {
+    const i0 = clamp(Math.round(a * anim.fps), 0, anim.n - 1), i1 = clamp(Math.round(b * anim.fps), i0 + 1, anim.n - 1);
+    if (i0 === 0 && i1 === anim.n - 1) return anim;
+    return { ...anim, n: i1 - i0 + 1, rootPos: anim.rootPos.slice(i0, i1 + 1), locals: anim.locals.slice(i0, i1 + 1), contacts: anim.contacts.slice(i0, i1 + 1) };
+  }
+
+  g.SolverClassic = { sliceAnim, textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, floorFinder, estimateFov, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
 // show a visible message if the app fails to start (instead of silently doing nothing)
 window.__appStarted=false;
 function __fail(msg){ if(window.__appStarted) return; var d=document.getElementById('bootErr'); if(!d){ d=document.createElement('div'); d.id='bootErr'; d.style.cssText='position:fixed;left:10px;right:10px;top:10px;z-index:200;background:#3b1d1d;color:#fff;border:1px solid #fc8181;border-radius:10px;padding:12px;font:14px system-ui'; document.body.appendChild(d);} d.textContent='The app could not start: '+msg+' — try pulling down to refresh. If it keeps happening, screenshot this.'; }
@@ -2513,6 +3902,8 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>AI model</label><select id="quality"><option value="heavy" selected>Heavy (best)</option><option value="full">Full</option><option value="lite">Lite (fast)</option></select></div>
     <div class="row"><label>Analysis rate</label><select id="procFps"><option>15</option><option>24</option><option selected>30</option><option>60</option></select></div>
     <input type="checkbox" id="hands" checked hidden>
+    <div class="row"><label>Fix dark / flat lighting <span class="mini">brightens and sharpens contrast before tracking (only when the video needs it)</span></label><input type="checkbox" id="lightFix" checked></div>
+    <div class="row"><label>Extra accuracy <span class="mini">re-checks blurry or unsure moments zoomed in on the person (slower)</span></label><input type="checkbox" id="extraAcc" checked></div>
     <div class="row"><label>Mirrored (selfie) video</label><input type="checkbox" id="mirrored"></div>
     <input type="range" id="fov" min="25" max="100" value="55" hidden><span id="fovV" hidden></span>
     <button class="btn primary" id="go" disabled>Generate motion</button>
@@ -2531,6 +3922,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       <div id="armPart" style="margin-top:10px">
       <div class="lp-title">💪 Arms out of shot</div>
       <div class="mini" id="armPickWhy">What should an arm do while it's out of the picture?</div>
+      <div class="seg" id="armOutSeg" style="grid-template-columns:repeat(4,1fr);margin-bottom:6px"><button data-v="">Off</button><button data-v="Left">Left</button><button data-v="Right">Right</button><button data-v="both">Both</button></div>
       <div class="seg" id="armSeg" style="grid-template-columns:repeat(2,1fr)"><button data-v="side">🧍 Down by side</button><button data-v="guard">🥊 Boxing guard</button></div>
       </div>
     </div>
@@ -2540,21 +3932,25 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <h2><span class="n">3</span>Refine <span style="margin-left:auto;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400">applies instantly</span></h2>
     <div class="row"><label>Smoothing <span class="mini">left = snappy · right = very smooth</span></label><span><input type="range" id="smooth" min="0" max="1" step="0.01" value="0.6"></span><span class="val" id="smoothV">0.60</span></div>
     <div class="sub">Feet</div>
-    <div class="row"><label>Anti-slide <span class="mini">applied while processing</span></label><input type="checkbox" id="footLock" checked></div>
+    <div class="row"><label>Anti-slide <span class="mini">applied while processing</span></label><input type="checkbox" id="footLock"></div>
     <input type="checkbox" id="antiJitter" checked hidden>
     <div class="row"><label>Foot lock <span class="mini">plant &amp; flatten on the floor</span></label><input type="checkbox" id="footIK"></div>
     <div class="row"><label>Contact sensitivity</label><span><input type="range" id="contact" min="0.02" max="0.15" step="0.005" value="0.07"></span><span class="val" id="contactV">7cm</span></div>
-    <div class="row"><label>Knee guard <span class="mini">no locked, snapping or backwards knees</span></label><input type="checkbox" id="kneeGuard" checked></div>
-    <div class="row"><label>Ankle limits <span class="mini">no over-twist</span></label><input type="checkbox" id="ankleLimit" checked></div>
+    <div class="row"><label>Knee guard <span class="mini">no locked, snapping or backwards knees</span></label><input type="checkbox" id="kneeGuard"></div>
+    <div class="row"><label>Ankle limits <span class="mini">no over-twist</span></label><input type="checkbox" id="ankleLimit"></div>
     <div class="sub">Hands options</div>
     <div class="seg" id="fingerSeg"><button data-v="ai" class="on">🤖 AI tracked</button><button data-v="fist">✊ Closed</button><button data-v="relaxed">🖐 Open</button></div>
     <div class="mini" style="margin:-2px 0 6px">AI tracked follows the real fingers from the video; Closed / Open sets a fixed hand shape.</div>
     <input type="checkbox" id="elbowGuard" checked hidden><input type="checkbox" id="proLimits" checked hidden>
     <div class="row"><label>Wrist rotation</label><select id="handMode"><option value="limited" selected>Natural limits</option><option value="locked">Locked to forearm</option><option value="free">Free (raw)</option></select></div>
     <div class="sub">Body</div>
+    <div class="row"><label>AI version <span class="mini">older saved takes use Classic, so they look exactly as they did</span></label><select id="solverVer"><option value="latest" selected>Latest</option><option value="classic">Classic (6 Nov)</option></select></div>
     <div class="row"><label>Legs <span class="mini">for videos without the full body</span></label><select id="lowerBody"><option value="ai" selected>Tracked from video</option><option value="walk">Walking</option><option value="run">Running</option><option value="sit">Sitting</option><option value="idle">Standing idle</option></select></div>
-    <div class="row"><label>Arms out of shot</label><select id="armPose"><option value="side" selected>🧍 Down by side</option><option value="guard">🥊 Boxing guard</option></select></div>
-    <div class="row"><label>Auto-upright <span class="mini">fix tilt</span></label><input type="checkbox" id="autoLevel" checked></div>
+    <div class="row"><label>Arms out of shot <span class="mini">replace an arm the camera can't see</span></label><select id="armOut"><option value="" selected>Off</option><option value="Left">Left arm</option><option value="Right">Right arm</option><option value="both">Both arms</option></select></div>
+    <div class="row"><label>…pose for that arm</label><select id="armPose"><option value="side" selected>🧍 Down by side</option><option value="guard">🥊 Boxing guard</option></select></div>
+    <div class="row"><label>Hand over face fix <span class="mini">a hand in front of the face won't move the head / body</span></label><input type="checkbox" id="faceGuard"></div>
+    <div class="row"><label>Keep on the floor <span class="mini">no floating unless the video shows a real jump</span></label><input type="checkbox" id="antiFloat"></div>
+    <div class="row"><label>Auto-upright <span class="mini">fix tilt</span></label><input type="checkbox" id="autoLevel"></div>
     <input type="range" id="headTilt" min="-25" max="25" step="1" value="0" hidden><span id="headTiltV" hidden></span>
     <div class="row"><label>In-place <span class="mini">feet stay on one spot, body keeps moving</span></label><input type="checkbox" id="inPlace"></div>
     <div class="sub">Locks</div>
@@ -2609,7 +4005,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
         <button class="btn small" id="tPhys" title="Add physics: follow-through, overshoot and settling">⚛️ Physics</button>
       </div>
       <div class="physpanel" id="physPanel">
-        <select id="propMode" hidden><option value="auto" selected>auto</option><option value="none">none</option><option value="gloves">gloves</option><option value="golf">golf</option><option value="bat">bat</option><option value="racket">racket</option><option value="basketball">basketball</option><option value="football">football</option><option value="bike">bike</option></select>
+        <select id="propMode" hidden><option value="auto">auto</option><option value="none" selected>none</option><option value="gloves">gloves</option><option value="golf">golf</option><option value="bat">bat</option><option value="racket">racket</option><option value="basketball">basketball</option><option value="football">football</option><option value="bike">bike</option></select>
         <label class="pp-row"><input type="checkbox" id="physOn"> <b>Physics on</b></label>
         <div class="pp-row"><span>Strength</span><input type="range" id="physStr" min="0" max="100" step="1" value="55"><b id="physStrV">55</b></div>
         <div class="pp-row"><span>Bounce</span><input type="range" id="physBounce" min="0" max="100" step="1" value="55"><b id="physBounceV">55</b></div>
@@ -2725,6 +4121,8 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       </div>
     </div>
     <div class="erow2"><button class="ebtn" id="edClearKey" disabled>↺ Reset limb here</button><button class="ebtn" id="edClearAll">Clear all</button></div>
+    <div class="efix" style="display:flex;gap:6px;margin-top:8px"><input id="edFixTxt" type="text" enterkeyhint="done" placeholder="✨ Type a fix: “raise left arm a bit”, “bend right knee more throughout”" style="flex:1;min-width:0;padding:9px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.18);background:rgba(0,0,0,.25);color:inherit;font-size:16px"><button class="ebtn" id="edFixGo">Fix</button></div>
+    <div class="ehelp" id="edFixMsg" style="margin-top:4px">Only the limb you name changes. Say “throughout” for the whole clip, otherwise it fixes around this frame. Undo ↶ takes it back.</div>
     <div class="emeta"><label>Blend changes over <input type="range" id="edSpread" min="0.1" max="2" step="0.1" value="0.5"></label><span id="edSpreadV">0.5s</span></div>
   </div>
 </div>
@@ -3125,7 +4523,27 @@ async function loadModels(q, wantHands, status) {
 }
 
 let tsClock = 0, procVideo = null;
+// lighting: measured once per video (so every frame gets the same correction, no flicker), applied before the AI looks at the frame
+let LIGHT = null;
+function lightLUT(cv) {
+  try {
+    const S_ = 96, c = document.createElement('canvas'); c.width = c.height = S_; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(cv, 0, 0, S_, S_);
+    const d = x.getImageData(0, 0, S_, S_).data, h = new Array(256).fill(0); let n = 0, sum = 0;
+    for (let i = 0; i < d.length; i += 4) { const l = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]); h[l]++; n++; sum += l; }
+    const pct = q => { let a = 0; for (let v = 0; v < 256; v++) { a += h[v]; if (a >= q * n) return v; } return 255; };
+    const lo = pct(0.02), hi = pct(0.98), mean = sum / n / 255;
+    if (hi - lo > 190 && mean > 0.32) return null; // already well exposed
+    const g = mean < 0.3 ? 0.65 : mean < 0.42 ? 0.8 : 1, lut = new Uint8ClampedArray(256);
+    for (let v = 0; v < 256; v++) lut[v] = 255 * Math.pow(Math.min(1, Math.max(0, (v - lo) / Math.max(24, hi - lo))), g);
+    return lut;
+  } catch (e) { return null; }
+}
+function applyLight(cv) {
+  if (!LIGHT) return; try { const x = cv.getContext('2d', { willReadFrequently: true }), im = x.getImageData(0, 0, cv.width, cv.height), d = im.data, L = LIGHT;
+    for (let i = 0; i < d.length; i += 4) { d[i] = L[d[i]]; d[i + 1] = L[d[i + 1]]; d[i + 2] = L[d[i + 2]]; } x.putImageData(im, 0, 0); } catch (e) {}
+}
 async function processVideo() {
+  if (!frames) { BAKE = null; if ($('solverVer').value !== 'latest') { quiet = true; $('solverVer').value = 'latest'; quiet = false; } } // a new capture always uses the latest AI
   if (busy) { cancelFlag = true; return; }
   busy = true; cancelFlag = false; pause();
   const preVid = codecSrc ? null : hiddenVideoEl(videoURL); if (preVid) { const p = preVid.play(); if (p) p.catch(() => {}); } // must happen synchronously in the tap
@@ -3193,10 +4611,11 @@ async function processVideo() {
       const [pw, ph] = previewSize(cv.width, cv.height), pc = document.createElement('canvas'); pc.width = pw; pc.height = ph; const pctx = pc.getContext('2d');
       const N = Math.max(2, Math.floor((tE - tS) * pfps));
       { let got = false; await codecIterate(codecSrc, 1 / pfps, (f, t) => { if (!got && t >= tS - 0.5 / pfps) { drawCodecFrame(ctx, f, codecSrc, cv.width, cv.height); got = true; } }, () => got); }
+      LIGHT = $('lightFix').checked ? lightLUT(cv) : null; applyLight(cv);
       target = await choosePerson(cv, status);
       await codecIterate(codecSrc, 1 / pfps, (f, t) => {
         if (t < tS - 0.5 / pfps || t > tE + 0.5 / pfps) return;
-        drawCodecFrame(ctx, f, codecSrc, cv.width, cv.height);
+        drawCodecFrame(ctx, f, codecSrc, cv.width, cv.height); applyLight(cv);
         const fr = detect(cv, t); fr.dup = isDuplicate(cv, fr.pi); const idx = out.length; out.push(fr);
         if (idx % 2 === 0) report(idx, N);
       }, () => cancelFlag);
@@ -3213,13 +4632,14 @@ async function processVideo() {
       const hasRVFC = 'requestVideoFrameCallback' in pv;
       const seek = async t => { pv.currentTime = t; await waitEvent(pv, 'seeked', 5000); if (hasRVFC) await Promise.race([new Promise(r => pv.requestVideoFrameCallback(() => r())), sleep(60)]); };
       const N = Math.max(2, Math.floor((tE - tS) * pfps));
-      nativeFrame = async t => { await seek(t); ctx.drawImage(pv, 0, 0, cv.width, cv.height); };
+      nativeFrame = async t => { await seek(t); ctx.drawImage(pv, 0, 0, cv.width, cv.height); applyLight(cv); };
       await seek(tS); ctx.drawImage(pv, 0, 0, cv.width, cv.height);
+      LIGHT = $('lightFix').checked ? lightLUT(cv) : null; applyLight(cv);
       target = await choosePerson(cv, status);
       for (let k = 0; k < N; k++) {
         if (cancelFlag) throw new Error('cancelled');
         const t = Math.min(dur - 0.001, tS + k / pfps);
-        await seek(t); ctx.drawImage(pv, 0, 0, cv.width, cv.height);
+        await seek(t); ctx.drawImage(pv, 0, 0, cv.width, cv.height); applyLight(cv);
         const fr = detect(cv, t); fr.dup = isDuplicate(cv, fr.pi); out.push(fr);
         if (k % 2 === 0) { report(k, N); await sleep(0); }
       }
@@ -3233,12 +4653,13 @@ async function processVideo() {
 
     // ---- refine pass: re-scan every frame zoomed in on the person, then fuse with the first pass ----
     meta = { W: cv.width, H: cv.height, fps: pfps, dur, scans: 1, t0: tS };
-    if (false) {
+    const hard = $('extraAcc').checked ? trickyFrames(grid, 1) : null;
+    if (hard && hard.size) { // look again, zoomed in on the person, only where hands / feet / elbows / knees were unsure or jumped
+      status(`Extra accuracy: re-checking ${hard.size} hard frame${hard.size > 1 ? 's' : ''}…`);
       const iterate = codecSrc
-        ? cb => codecIterate(codecSrc, 1 / pfps, (f, t) => { drawCodecFrame(cv.getContext('2d'), f, codecSrc, cv.width, cv.height); cb(t); }, () => cancelFlag)
-        : async cb => { for (let k = 0; k < grid.length; k++) { if (cancelFlag) break; const t = Math.min(dur - 0.001, tS + k / pfps); await nativeFrame(t); cb(t); if (k % 2 === 0) await sleep(0); } };
-      await zoomPass(grid, cv, pfps, iterate, 1.45, 1, wantHands, status, bar, tS);
-      meta.scans = 2;
+        ? cb => codecIterate(codecSrc, 1 / pfps, (f, t) => { drawCodecFrame(cv.getContext('2d'), f, codecSrc, cv.width, cv.height); applyLight(cv); cb(t); }, () => cancelFlag)
+        : async cb => { for (let k = 0; k < grid.length; k++) { if (cancelFlag) break; if (!hard.has(k)) continue; const t = Math.min(dur - 0.001, tS + k / pfps); await nativeFrame(t); cb(t); if (k % 2 === 0) await sleep(0); } };
+      try { const res = await zoomPass(grid, cv, pfps, iterate, 1.45, 1, wantHands, status, bar, tS, hard); if (res && res.fused) meta.scans = 2; } catch (e) { if (e.message === 'cancelled') throw e; console.warn('extra accuracy pass skipped', e); }
     }
     const N = grid.length;
     out.length = 0; out.push(...grid);
@@ -3247,9 +4668,9 @@ async function processVideo() {
     const found = out.filter(f => f.pw).length, hf = out.filter(f => f.hl || f.hr).length;
     status(`Tracked ${found}/${N} frames with a person${wantHands ? ` · hands in ${hf}` : ''}. Solving…`);
     bar.style.width = '100%';
-    const lg = legGuess(true);
+    BAKE = null; const lg = legGuess(false); // a suggestion only: nothing is switched on for you
     solve(true); updateRefineLabel(); resetHistory();
-    if (lg && lg.partial) toast(`No full body in shot, so I gave the legs a ${{ walk: 'walking', run: 'running', sit: 'sitting', idle: 'standing' }[lg.kind]} pose. Change it in step 2.`, false, 7000);
+    if (lg && lg.partial) toast(`No full body in shot. If you want, pick a leg pose (my guess: ${{ walk: 'walking', run: 'running', sit: 'sitting', idle: 'standing' }[lg.kind]}) in the box under Generate.`, false, 7000);
     const bridged = out.filter(f => !f.pw).length;
     if (bridged > N * 0.15) toast(`The person was lost in ${bridged} of ${N} frames, so those were bridged. Try Refine again, or film with the full body in frame.`, true, 9000);
     status(`Done · ${found}/${N} frames tracked${wantHands ? ` · fingers in ${Math.round(100 * hf / N)}%` : ''}. Tweak step 3 or export.`);
@@ -3282,7 +4703,9 @@ $('ttmText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shif
 $('ttmGo').onclick = () => { const txt = $('ttmText').value.trim(); if (!txt) { toast('Type what the character should do.', true); return; } runTextMotion(txt); };
 function runTextMotion(txt, existingId, seed) {
   if (seed == null) seed = existingId ? (ttmSeeds[existingId] || 0) : Math.floor(Math.random() * 1e6) + 1;
-  let a; try { a = smartTextMotion(txt, seed); } catch (e) { toast(e.message, true, 9000); return; }
+  const tkey = 'ttm|' + txt + '|' + seed; let a;
+  if (existingId && BAKE && BAKE.key === tkey && BAKE.anim) a = { ...BAKE.anim, rootPos: BAKE.anim.rootPos.map(r => r.slice()) }; // exactly as it was made
+  else { try { a = smartTextMotion(txt, seed); } catch (e) { toast(e.message, true, 9000); return; } BAKE = { key: tkey, anim: { ...a, rootPos: a.rootPos.map(r => r.slice()) }, fresh: true }; }
   lastPrompt = txt; if ($('inPlace').checked) a.rootPos = a.rootPos.map(r => [0, r[1], 0]);
   if ($('ttmModal').style.display !== 'none') { $('ttmModal').style.display = 'none'; unlockPage(); } pause();
   if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; currentSource = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = [];
@@ -3295,7 +4718,8 @@ function runTextMotion(txt, existingId, seed) {
   if (a.unknown.length) toast(`Made: ${a.plan.join(', ')}${sty}. Skipped: "${a.unknown.join('", "')}"`, false, 7000); else toast(`Made: ${a.plan.join(', ')}${sty}`);
   const id = existingId || Date.now(); currentTakeId = id; ttmSeeds[id] = seed; lastSeed = seed;
   if (!existingId) resetHistory();
-  if (!existingId) putTake({ id, name: videoName, date: new Date().toISOString(), dur: meta.dur, prompt: txt, seed, frames: null, meta, settings: readSettings(), thumb: null, status: 'done' }).catch(e => toast('Library save failed: ' + e.message, true));
+  if (existingId && BAKE && BAKE.fresh) autosave();
+  if (!existingId) { BAKE.fresh = false; } if (!existingId) putTake({ id, name: videoName, date: new Date().toISOString(), dur: meta.dur, prompt: txt, seed, frames: null, meta, settings: readSettings(), thumb: null, status: 'done', baked: BAKE ? { key: BAKE.key, anim: BAKE.anim } : null }).catch(e => toast('Library save failed: ' + e.message, true));
 }
 $('refineBtn').onclick = refineAgain;
 
@@ -3398,11 +4822,12 @@ async function refineAgain() {
     await loadModels($('quality').value, $('hands').checked, status);
     const W = meta.W, H = meta.H, pfps = meta.fps, dur = meta.dur, cv = document.createElement('canvas'); cv.width = W; cv.height = H; const ctx = cv.getContext('2d');
     let iterate;
-    if (codecSrc) iterate = cb => codecIterate(codecSrc, 1 / pfps, (f, t) => { drawCodecFrame(ctx, f, codecSrc, W, H); cb(t); }, () => cancelFlag);
+    let lightSet = false;
+    if (codecSrc) iterate = cb => codecIterate(codecSrc, 1 / pfps, (f, t) => { drawCodecFrame(ctx, f, codecSrc, W, H); if (!lightSet) { LIGHT = $('lightFix').checked ? lightLUT(cv) : null; lightSet = true; } applyLight(cv); cb(t); }, () => cancelFlag);
     else {
       preVid.pause(); const pv = await makeHiddenVideo(videoURL, preVid); if (!pv) throw new Error('Video could not be decoded'); procVideo = pv;
       const seek = async t => { pv.currentTime = t; await waitEvent(pv, 'seeked', 5000); if ('requestVideoFrameCallback' in pv) await Promise.race([new Promise(r => pv.requestVideoFrameCallback(() => r())), sleep(60)]); };
-      iterate = async cb => { for (let k = 0; k < frames.length; k++) { if (cancelFlag) break; if (only && !only.has(k)) continue; const t = Math.min(dur - 0.001, (meta.t0 || 0) + k / pfps); await seek(t); ctx.drawImage(pv, 0, 0, W, H); cb(t); if (k % 2 === 0) await sleep(0); } };
+      iterate = async cb => { for (let k = 0; k < frames.length; k++) { if (cancelFlag) break; if (only && !only.has(k)) continue; const t = Math.min(dur - 0.001, (meta.t0 || 0) + k / pfps); await seek(t); ctx.drawImage(pv, 0, 0, W, H); if (!lightSet) { LIGHT = $('lightFix').checked ? lightLUT(cv) : null; lightSet = true; } applyLight(cv); cb(t); if (k % 2 === 0) await sleep(0); } };
     }
     const scans = meta.scans || 1, zoom = [1.3, 1.6, 1.38, 1.52, 1.25, 1.7][(scans - 1) % 6];
     const only = trickyFrames(frames, scans);
@@ -3517,8 +4942,9 @@ function legPickUI() {
   if (box.style.display === 'none') return;
   $('legPart').style.display = legsOn ? 'block' : 'none'; $('armPart').style.display = armsOn ? 'block' : 'none'; $('armPart').style.marginTop = legsOn ? '10px' : '0';
   const which = out.Left > 0.2 && out.Right > 0.2 ? 'Both arms are' : out.Left > 0.2 ? 'Your left arm is' : out.Right > 0.2 ? 'Your right arm is' : 'An arm is';
-  $('armPickWhy').textContent = `${which} out of the picture for part of the clip. Pick what it does then${v === 'walk' || v === 'run' ? ' (down by the side swings as you move)' : ''}.`;
+  $('armPickWhy').textContent = `${which} out of the picture for part of the clip. Off by default: pick which arm to replace, and its pose${v === 'walk' || v === 'run' ? ' (down by the side swings as you move)' : ''}.`;
   document.querySelectorAll('#armSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === av));
+  document.querySelectorAll('#armOutSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === $('armOut').value));
   $('legPickWhy').textContent = g && g.partial ? `Pick what the legs should do. My guess: ${{ walk: 'walking', run: 'running', sit: 'sitting', idle: 'standing' }[g.kind]} (${g.why}).` : 'Pick what the legs should do.';
   document.querySelectorAll('#legSeg button').forEach(b => { b.classList.toggle('on', b.dataset.v === v); b.classList.toggle('guess', !!(g && g.partial && g.kind === b.dataset.v)); });
   $('legRaw').classList.toggle('primary', v === 'ai');
@@ -3527,17 +4953,23 @@ $('legSeg').onclick = e => { const b = e.target.closest('button'); if (!b) retur
 $('legRaw').onclick = () => { $('lowerBody').value = 'ai'; $('lowerBody').dispatchEvent(new Event('change')); };
 $('lowerBody').addEventListener('change', legPickUI);
 $('armSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; $('armPose').value = b.dataset.v; $('armPose').dispatchEvent(new Event('change')); };
-$('armPose').addEventListener('change', legPickUI);
+$('armPose').addEventListener('change', legPickUI); $('armOut').addEventListener('change', legPickUI);
+$('armOutSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; $('armOut').value = b.dataset.v; $('armOut').dispatchEvent(new Event('change')); };
 
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, lowerBody: $('lowerBody').value, armPose: $('armPose').value, contactHeight: +$('contact').value, contactSpeed: 0.6 };
+  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, lowerBody: $('lowerBody').value, armPose: $('armPose').value, armOut: $('armOut').value, faceGuard: $('faceGuard').checked, antiFloat: $('antiFloat').checked, contactHeight: +$('contact').value, contactSpeed: 0.6 };
 }
 let solveT;
+let BAKE = null; // { key, anim } – the motion exactly as it was made for the open take
+const SOLVER = () => ($('solverVer').value === 'classic' && window.SolverClassic ? window.SolverClassic : S);
+const bakeKey = () => JSON.stringify([$('solverVer').value, opts(), frames ? frames.length : 0, meta && meta.scans]);
 function solve(rebuild = false) {
   if (!frames) { if (baseAnim && baseAnim.plan) { anim = applyEdits(baseAnim, EDITS); applyAt(curTime); requestRender(); } return; } // text motion: re-smooth
   try {
-    const newAnim = S.solveAll(frames, opts());
+    const key = bakeKey(), reuse = BAKE && BAKE.key === key && BAKE.anim;
+    const newAnim = reuse ? BAKE.anim : SOLVER().solveAll(frames, opts());
+    if (!reuse) { BAKE = { key, anim: newAnim, fresh: true }; autosave(); }
     const restChanged = !anim || rebuild || JSON.stringify(anim.M) !== JSON.stringify(newAnim.M);
     baseAnim = newAnim; anim = applyEdits(newAnim, EDITS);
     if (restChanged) buildCharacter(anim.rest);
@@ -3546,7 +4978,7 @@ function solve(rebuild = false) {
 }
 $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#fingerSeg button').forEach(x => x.classList.toggle('on', x === b)); solve(); };
 for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('change', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 30); }); // update once you let go (no stutter while dragging)
-for (const id of ['armPose', 'lowerBody', 'footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
+for (const id of ['armOut', 'faceGuard', 'antiFloat', 'solverVer', 'armPose', 'lowerBody', 'footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
 
 function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON', 'editBtn']) $(id).disabled = !on; if (on && !MODEL.obj) setTimeout(() => restoreModel(), 0); else if (on && MODEL.obj) { if (MODEL.on && CHARS[MODEL.id]) useChar(CHARS[MODEL.id], MODEL.id); else scene.add(MODEL.prep.wrap); } } // re-fit the character to the new motion's skeleton
 function showStats() {
@@ -3890,7 +5322,7 @@ const LIB = {
   all() { return this.run('readonly', s => s.getAll()); }, del(id) { return this.run('readwrite', s => s.delete(id)); },
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
-const settingIds = ['propMode', 'physOn', 'physStr', 'physBounce', 'physArms', 'physBody', 'physLegs', 'clipSpeed', 'armPose', 'lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
+const settingIds = ['armOut', 'faceGuard', 'antiFloat', 'solverVer', 'propMode', 'physOn', 'physStr', 'physBounce', 'physArms', 'physBody', 'physLegs', 'clipSpeed', 'armPose', 'lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
 const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; s.edits = JSON.parse(JSON.stringify(EDITS)); return s; };
 const writeSettings = s => { if (!s) return; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); EDITS = s.edits ? JSON.parse(JSON.stringify(s.edits)) : { keys: {}, root: {}, spread: 0.5 }; try { edSyncLocks(); } catch (e) {} };
 const DEFAULT_SETTINGS = readSettings(); // the app's starting settings, used for anything a take never saved
@@ -3929,6 +5361,7 @@ function autosave() {
       const ns = readSettings(), before = JSON.stringify(take.settings || null) + '|' + ((take.meta && take.meta.scans) || 0) + '|' + ((take.frames && take.frames.length) || 0);
       take.settings = ns;
       if (frames && take.frames !== undefined && !take.prompt) { take.frames = frames; take.meta = meta; }
+      if (BAKE && BAKE.fresh) { take.baked = { key: BAKE.key, anim: BAKE.anim }; BAKE.fresh = false; } // keep the result itself: future app updates never change it
       const after = JSON.stringify(ns) + '|' + ((take.meta && take.meta.scans) || 0) + '|' + ((take.frames && take.frames.length) || 0);
       const changed = before !== after; if (changed) take.mod = Date.now(); // edited takes move to the top of the Library
       await LIB.put(take); flashSaved(); if (changed) renderLibrary();
@@ -3962,7 +5395,9 @@ async function saveTake(cv) {
   await putTake({ id, name: videoName, date: old ? old.date : new Date().toISOString(), dur: meta.dur, frames, meta, settings: readSettings(), thumb, videoBuf: vb && vb.buf, videoType: vb && vb.type, videoName: currentSource && currentSource.name, status: 'done' });
   toast('Saved to your Library.');
 }
-function takeAnim(take) { const s = take.settings || {}; const o = { ...opts(), fps: take.meta.fps, W: take.meta.W, H: take.meta.H }; return applyEdits(S.solveAll(take.frames, o), take.settings && take.settings.edits); }
+function takeAnim(take) { const s = take.settings || {}; const o = { ...opts(), fps: take.meta.fps, W: take.meta.W, H: take.meta.H };
+  const SV = (s.solverVer || 'classic') === 'classic' && window.SolverClassic ? window.SolverClassic : S;
+  const base = take.baked && take.baked.anim && !take.prompt ? take.baked.anim : SV.solveAll(take.frames, o); return applyEdits(base, s.edits); }
 async function renderLibrary() {
   let takes = []; try { takes = (await LIB.all()).sort((a, b) => (+b.mod || +b.id || 0) - (+a.mod || +a.id || 0)); /* most recent first */ } catch (e) { $('libList').innerHTML = '<div class="hint">Library is not available in this browser mode.</div>'; return; }
   $('libCount').textContent = takes.length ? `${takes.length} saved` : '';
@@ -3988,7 +5423,7 @@ $('libList').onclick = async e => {
   }
   if (b.dataset.a === 'open' || b.dataset.a === 'edit') {
     clearTimeout(autosaveT);
-    if (take.prompt) { quiet = true; writeSettings(take.settings); quiet = false; ttmSeeds[take.id] = take.seed || 0; runTextMotion(take.prompt, take.id, take.seed || 0); resetHistory(); if (b.dataset.a === 'edit') openEditor(); return; }
+    if (take.prompt) { quiet = true; writeSettings(take.settings); quiet = false; ttmSeeds[take.id] = take.seed || 0; BAKE = take.baked || null; runTextMotion(take.prompt, take.id, take.seed || 0); resetHistory(); if (b.dataset.a === 'edit') openEditor(); return; }
     const vblob = take.videoBuf ? new Blob([take.videoBuf], { type: take.videoType || 'video/mp4' }) : take.video;
     if (vblob) await loadVideo(vblob, take.videoName || take.name, { fromLibrary: true });
     else { pause(); if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = []; }
@@ -3996,6 +5431,8 @@ $('libList').onclick = async e => {
     if (take.settings && take.settings.trim) { trim = { ...take.settings.trim }; renderTrim(); }
     if (!take.frames) { toast('Video opened. This take was not finished: tap Generate motion.'); return; }
     frames = take.frames; meta = take.meta; videoName = take.name || 'motion'; curTime = 0;
+    if (!take.settings || !take.settings.solverVer) { quiet = true; $('solverVer').value = 'classic'; quiet = false; } // made before AI versions existed: use the AI it was made with
+    BAKE = take.baked || null;
     legGuess(false); solve(true); updateRefineLabel(); $('scrub').disabled = false; updateTimeLabel(); $('play').disabled = false;
     $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); toast('Opened from Library.');
     if (b.dataset.a === 'edit') openEditor();
@@ -4459,6 +5896,112 @@ $('edClearAll').onclick = () => {
   if (Date.now() - edClearArm > 3000) { edClearArm = Date.now(); $('edClearAll').textContent = 'Tap again to clear'; setTimeout(() => ($('edClearAll').textContent = 'Clear all'), 3000); return; }
   edPush(); EDITS = { keys: {}, root: {}, spread: EDITS.spread || 0.5, pinFeet: EDITS.pinFeet, pinSide: EDITS.pinSide, pinFrame: EDITS.pinFrame, lockRot: EDITS.lockRot }; $('edClearAll').textContent = 'Clear all'; ED.dial = null; edRefresh();
 };
+// ----- ✨ text fixes: type what to change, only that limb moves (undoable) -----
+const FIX_PART = [
+  [/\b(upper ?arms?|arms?|shoulders?)\b/, 'Arm'], [/\b(fore ?arms?|elbows?|lower ?arms?)\b/, 'ForeArm'], [/\b(hands?|wrists?|fists?|gloves?)\b/, 'Hand'],
+  [/\b(knees?|shins?|calf|calves|lower ?legs?)\b/, 'Leg'], [/\b(legs?|thighs?|upper ?legs?)\b/, 'UpLeg'], [/\b(feet|foot|ankles?|toes?)\b/, 'Foot'],
+  [/\b(head|face|chin)\b/, 'Head'], [/\bneck\b/, 'Neck'], [/\b(chest|torso|spine|upper ?body|back|body|trunk)\b/, 'Spine'], [/\b(hips?|pelvis|waist|bum)\b/, 'Hips'],
+];
+const FIX_CHILD = { Arm: 'ForeArm', ForeArm: 'Hand', UpLeg: 'Leg', Leg: 'Foot', Foot: 'ToeBase' };
+function fixParse(txt) {
+  const t = ' ' + txt.toLowerCase().replace(/[’']/g, '').replace(/\s+/g, ' ') + ' ';
+  let scope = /\b(whole|entire|throughout|always|all the time|every ?frame|all frames|whole clip|whole animation|the whole way)\b/.test(t) ? 'layer' : /\b(here|this frame|this moment|right now|at this point)\b/.test(t) ? 'moment' : ED.apply;
+  const clauses = t.split(/,|\band then\b|\bthen\b|\band\b|\.|;/).map(s => ' ' + s.trim() + ' ').filter(s => s.trim());
+  const out = []; let last = null;
+  for (const c of clauses) {
+    let part = null, cw = c; for (const [re, nm] of FIX_PART) if (re.test(c)) { part = nm; cw = c.replace(new RegExp(re.source, 'g'), ' '); break; }
+    let side = /\b(both|arms|legs|hands|feet|knees|elbows|shoulders|wrists|ankles)\b/.test(c) ? 'both' : /\b(left|lft|l)\b/.test(c) ? 'Left' : /\b(right|rght|r)\b/.test(c) && !/\b(turn|twist|rotate|look|tilt|lean)\b.*\bright\b/.test(c) ? 'Right' : null;
+    if (!part && last) { part = last.part; side = side || last.side; }
+    if (!side && last && last.side && last.side !== 'both' && /^(Arm|ForeArm|Hand|UpLeg|Leg|Foot)$/.test(part) && /^(Arm|ForeArm|Hand|UpLeg|Leg|Foot)$/.test(last.part) && /Arm|Hand/.test(part) === /Arm|Hand/.test(last.part)) side = last.side; // "raise left arm and bend the elbow" = left elbow
+    if (!part && /\b(lean|bow|hunch|slouch|bend over)\b/.test(c)) { part = 'Spine'; cw = c; }
+    if (!part && /\b(look|nod|chin)\b/.test(c)) { part = 'Head'; cw = c; }
+    if (!part) continue;
+    const dir = s => new RegExp('\\b(' + s + ')\\b').test(cw);
+    let act = null;
+    if (dir('straighten|straighter|straight|extend|unbend|open up|lock out')) act = 'straight';
+    else if (dir('bend|bent|bendier|flex|curl|tuck|more bend')) act = 'bend';
+    else if (dir('twist|turn|rotate|look|face')) act = dir('right') ? 'turnR' : 'turnL';
+    else if (dir('tilt|cock')) act = dir('right') ? 'tiltR' : 'tiltL';
+    else if (dir('nod|chin down|look down')) act = 'nodDown';
+    else if (dir('chin up|look up')) act = 'nodUp';
+    else if (dir('lean|bow|hunch|slouch')) act = /\b(back|backward|backwards|upright)\b/.test(c) ? 'leanB' : 'leanF';
+    else if (dir('raise|raised|lift|higher|up|upward|upwards')) act = 'up';
+    else if (dir('lower|drop|down|downward|lower down|relax')) act = 'down';
+    else if (dir('forward|forwards|front|reach|extend out|in front')) act = 'fwd';
+    else if (dir('back|backward|backwards|behind')) act = 'back';
+    else if (dir('out|outward|outwards|away|wider|wide|apart|spread')) act = 'out';
+    else if (dir('in|inward|inwards|across|closer|together|narrower|tighter')) act = 'in';
+    if (!act) continue;
+    let deg = 20; const m = c.match(/(\d+(?:\.\d+)?)\s*(?:°|deg|degree|degrees)/);
+    if (m) deg = +m[1]; else if (dir('slightly|slight|a bit|a little|little|tiny|touch|bit')) deg = 10; else if (dir('a lot|lots|loads|much|way|really|very|heaps|massively')) deg = 35; else if (dir('fully|all the way|completely|max')) deg = 80;
+    if (/^(Arm|ForeArm|Hand|UpLeg|Leg|Foot)$/.test(part) && !side) {
+      const sel = edName(); side = sel.startsWith('Left') ? 'Left' : sel.startsWith('Right') ? 'Right' : 'both';
+    }
+    last = { part, side };
+    out.push({ part, side, act, deg: Math.min(170, deg), text: c.trim() });
+  }
+  return { scope, cmds: out };
+}
+function fixApply(txt) {
+  if (!ED.rig || !baseAnim) return 'Open a clip first.';
+  const P = fixParse(txt); if (!P.cmds.length) return 'Didn’t catch that — try e.g. “raise left arm a bit”, “bend right knee more throughout”, “turn head left”.';
+  const b = ED.rig.bones, st = edSnap(), applyWas = ED.apply; ED.apply = P.scope;
+  ED.rig.group.updateMatrixWorld(true);
+  const W = j => b[j].getWorldPosition(V3()), WQ = j => b[j].getWorldQuaternion(new THREE.Quaternion());
+  const J = n => edJ(n);
+  const L0 = J('LeftUpLeg'), R0 = J('RightUpLeg'), up = new THREE.Vector3(0, 1, 0);
+  const left = (L0 != null && R0 != null ? W(L0).sub(W(R0)) : new THREE.Vector3(1, 0, 0)).setY(0); if (left.lengthSq() < 1e-8) left.set(1, 0, 0); left.normalize();
+  const fwd = left.clone().cross(up).normalize();
+  const rotW = (j, axis, ang) => { // turn bone j by ang about a world axis, keeping everything else
+    const pj = b[j].parent; const pw = pj ? pj.getWorldQuaternion(new THREE.Quaternion()) : new THREE.Quaternion();
+    const R = new THREE.Quaternion().setFromAxisAngle(axis.clone().normalize(), ang);
+    b[j].quaternion.copy(pw.clone().invert().multiply(R).multiply(WQ(j))).normalize(); ED.rig.group.updateMatrixWorld(true);
+  };
+  const dirOf = (j, nm) => { const base = nm.replace(/^(Left|Right)/, ''), ch = FIX_CHILD[base] ? J(nm.replace(base, FIX_CHILD[base])) : null;
+    if (ch != null) return W(ch).sub(W(j)).normalize();
+    const pa = b[j].parent; return pa ? W(j).sub(pa.getWorldPosition(V3())).normalize() : up.clone(); };
+  const done = [];
+  for (const c of P.cmds) {
+    const sides = /^(Arm|ForeArm|Hand|UpLeg|Leg|Foot)$/.test(c.part) ? (c.side === 'both' ? ['Left', 'Right'] : [c.side]) : [''];
+    const rad = c.deg * Math.PI / 180;
+    for (const S of sides) {
+      let names = [S + c.part]; if (c.part === 'Spine') names = ['Spine', 'Spine1', 'Spine2'].filter(n => J(n) != null);
+      names = names.filter(n => J(n) != null); if (!names.length) continue;
+      const share = rad / names.length, sideOut = S === 'Right' ? left.clone().negate() : left.clone();
+      for (const nm of names) {
+        const j = J(nm), a = c.act;
+        if (a === 'turnL' || a === 'turnR') rotW(j, up, a === 'turnL' ? share : -share);
+        else if (a === 'tiltL' || a === 'tiltR') rotW(j, fwd, a === 'tiltL' ? -share : share);
+        else if (a === 'leanF' || a === 'leanB' || a === 'nodDown' || a === 'nodUp' || (/^(Head|Neck|Spine|Hips)$/.test(c.part) && /^(fwd|back|down|up)$/.test(a)))
+          rotW(j, left, (a === 'leanF' || a === 'nodDown' || a === 'fwd' || a === 'down') ? share : -share);
+        else if (/^(Head|Neck|Spine|Hips)$/.test(c.part) && (a === 'out' || a === 'in')) continue;
+        else if (a === 'bend' || a === 'straight') {
+          const pa = b[j].parent; if (!pa) continue; const pd = W(j).sub(pa.getWorldPosition(V3())).normalize(), d = dirOf(j, nm);
+          let ax = pd.clone().cross(d); const cur = pd.angleTo(d);
+          if (ax.lengthSq() < 1e-6) { // dead straight: pick the natural hinge
+            const tgt = /Leg$/.test(nm) && !/UpLeg/.test(nm) ? fwd.clone().negate() : /ForeArm/.test(nm) ? fwd.clone().add(up).normalize() : fwd.clone();
+            if (a === 'straight') continue; ax = d.clone().cross(tgt); if (ax.lengthSq() < 1e-6) continue;
+          }
+          rotW(j, ax, a === 'bend' ? Math.min(share, Math.PI * 0.85 - cur) : -Math.min(share, cur));
+        } else {
+          const T = a === 'up' ? up.clone() : a === 'down' ? up.clone().negate() : a === 'fwd' ? fwd.clone() : a === 'back' ? fwd.clone().negate() : a === 'out' ? sideOut : sideOut.clone().negate();
+          const d = dirOf(j, nm); let ax = d.clone().cross(T);
+          if (ax.lengthSq() < 1e-6) { if (d.dot(T) > 0) continue; ax = d.clone().cross(Math.abs(d.dot(fwd)) < 0.9 ? fwd : up); }
+          rotW(j, ax, Math.min(share, d.angleTo(T)));
+        }
+        done.push(nm);
+      }
+    }
+  }
+  if (!done.length) { ED.apply = applyWas; return 'Nothing to change — it’s already there, or that limb can’t move that way. Try another direction.'; }
+  edPush(); edKeyChanged(st); ED.apply = applyWas; ED.dial = null; edRefresh();
+  const NICE = { Arm: 'arm', ForeArm: 'elbow', Hand: 'hand', UpLeg: 'leg', Leg: 'knee', Foot: 'foot', Head: 'head', Neck: 'neck', Spine: 'chest', Spine1: 'chest', Spine2: 'chest', Hips: 'hips' };
+  const nice = [...new Set(done.map(n => { const S = n.match(/^(Left|Right)/); return (S ? S[1].toLowerCase() + ' ' : '') + (NICE[n.replace(/^(Left|Right)/, '')] || n); }))].join(', ');
+  return '✓ Changed ' + nice + (P.scope === 'layer' ? ' across the whole clip.' : ' around this frame.') + ' Undo ↶ takes it back.';
+}
+$('edFixGo').onclick = () => { const v = $('edFixTxt').value.trim(); if (!v) return; const msg = fixApply(v); $('edFixMsg').textContent = msg; if (msg[0] === '✓') $('edFixTxt').value = ''; };
+$('edFixTxt').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('edFixGo').click(); } });
+
 document.addEventListener('keydown', e => {
   if (!edOpen()) return; const tg = e.target; if (tg && (tg.tagName === 'INPUT' && tg.type !== 'range' && tg.type !== 'checkbox' || tg.tagName === 'TEXTAREA' || tg.isContentEditable)) return;
   if (e.code === 'Space') { e.preventDefault(); e.stopImmediatePropagation(); ED.playing ? edStop() : edStart(); }
