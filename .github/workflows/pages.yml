@@ -79,6 +79,18 @@ jobs:
           for(const f of ["controls/OrbitControls.js","exporters/GLTFExporter.js","utils/BufferGeometryUtils.js","loaders/FBXLoader.js","loaders/GLTFLoader.js"]) check("_site/vendor/three/examples/jsm/"+f);
           console.log("checked",seen.size,"files"); process.exit(bad?1:0);'
 
+      - name: Download preview characters (Unity / Mixamo-compatible rigs; any source that is unavailable is skipped)
+        run: |
+          mkdir -p _site/characters && cd _site/characters
+          T=https://raw.githubusercontent.com/mrdoob/three.js/r160/examples/models/gltf
+          get() { curl -fsSL --retry 2 --max-time 90 -o "$1" "$2" || { rm -f "$1"; echo "skipped $1"; }; }
+          get rpm-male.glb https://readyplayerme.github.io/visage/male.glb
+          get rpm-female.glb https://readyplayerme.github.io/visage/female.glb
+          get soldier.glb $T/Soldier.glb
+          get michelle.glb $T/Michelle.glb
+          get xbot.glb $T/Xbot.glb
+          node -e 'const fs=require("fs");const l=fs.readdirSync(".").filter(f=>f.endsWith(".glb")&&fs.statSync(f).size>20000).map(f=>({id:f.replace(/\.glb$/,""),file:f,size:fs.statSync(f).size}));fs.writeFileSync("list.json",JSON.stringify(l));console.log(l)'
+
       - name: Check every file the app needs is present
         run: |
           for f in $(grep -oE "'(vendor|models)/[^']+'" _site/sw.js | tr -d "'"); do

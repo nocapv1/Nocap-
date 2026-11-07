@@ -238,6 +238,9 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
 #editModal .erow2 .ebtn{flex:1;font-size:13.5px}
 .modelmenu{position:absolute;right:6px;top:40px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:8px;display:none;z-index:20;min-width:200px;box-shadow:0 12px 30px #000a}
 .modelmenu.open{display:block}
+.modelmenu button.cur{background:var(--panel);outline:1px solid var(--accent)}
+.propbtn{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 6px;color:inherit;font:inherit;font-size:12px;cursor:pointer;text-align:left}
+.propbtn.on{border-color:var(--accent);color:var(--accent)}
 .modelmenu button{display:block;width:100%;text-align:left;background:none;border:0;padding:9px 8px;border-radius:8px;cursor:pointer;color:inherit;font:inherit}
 .modelmenu button:hover{background:var(--panel)}
 .modelmenu small{display:block;color:var(--dim);padding:2px 8px 6px;word-break:break-all}
@@ -1965,6 +1968,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     pullback: { dur: 0.7, keys: K([0, guardP()], [0.4, guardP({}, { chestPitch: -12, headPitch: 6, hipsYaw: -48, shift: -0.08, chestYaw: -14 })], [0.6, guardP({}, { chestPitch: -12, headPitch: 6, hipsYaw: -48, shift: -0.08, chestYaw: -14 })], [1, guardP()]) },
     shoulderroll: { dur: 0.75, keys: K([0, guardP()], [0.4, guardP({}, { chestYaw: -34, hipsYaw: -48, shrL: 20, headPitch: 22, dip: -0.04, cover: 0.3 })], [0.6, guardP({}, { chestYaw: -34, hipsYaw: -48, shrL: 20, headPitch: 22, dip: -0.04, cover: 0.3 })], [1, guardP()]) },
     stepmove: { dur: 0.6, keys: K([0, guardP()], [1, guardP()]) },
+    bike: { dur: 1, loop: true, travel: 4.5, bike: true, keys: K([0, pose({}, { chestPitch: 28, hipsPitch: 14, headPitch: -8 })], [1, pose({}, { chestPitch: 28, hipsPitch: 14, headPitch: -8 })]) },
     stance: { dur: 1.2, loop: true, keys: K([0, guardP()], [0.5, guardP({}, { dip: -0.02 })], [1, guardP()]) },
     slip: { dur: 0.55, side: 'R', keys: K([0, guardP()], [0.45, guardP({}, { chestRoll: 16, chestYaw: -14, chestPitch: 16, headPitch: 18, dip: -0.06 })], [1, guardP()]) },
     weave: { dur: 0.95, side: 'R', keys: K([0, guardP()], [0.35, guardP({}, { chestRoll: -14, chestPitch: 26, chestYaw: 8, dip: -0.16 })], [0.65, guardP({}, { chestRoll: 14, chestPitch: 26, chestYaw: -12, dip: -0.16 })], [1, guardP()]) },
@@ -2008,6 +2012,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     [/\b(pull counter|pull and counter)\b/, 'pullback:counter'], [/\b(pull back|pulls back|lean back|leans back|leaning back|lay back)\b/, 'pullback'], [/\b(shoulder roll|roll the shoulder|philly shell)\b/, 'shoulderroll'],
     [/\b(overhand|over hand|overhead right|looping right)\b/, 'overhand'], [/\b(feint|feints|feinting|fake jab|fake)\b/, 'feint'], [/\b(parry|parries|parrying|catch the jab|slap down)\b/, 'parry'],
     [/\b(check hook)\b/, 'hook:check'],
+    [/\b(ride a bike|riding a bike|rides a bike|ride bike|ride a bicycle|riding a bicycle|cycle|cycles|cycling|cyclist|bike|bikes|biking|bicycle|pedal|pedals|pedaling|pedalling|bmx)\b/, 'bike'],
     [/\b(walk|walking|walks|stroll|strolling|march|marching|step|steps|pace|pacing|wander)/, 'walk'], [/\b(run|running|runs|sprint|sprinting|jog|jogging|dash)/, 'run'],
     [/\b(jumping jacks?|star jumps?|jacks)\b/, 'jacks'], [/\b(jump shot|jumpshot|shoot|shooting|free throw|three pointer|basket)\b/, 'shoot'], [/\b(jump|jumping|jumps|hop|hopping|leap|leaping)/, 'jump'],
     [/\b(body jab|jab to the body|jab (to )?(the )?(gut|stomach|body))\b/, 'bodyjab'], [/\b(body (hook|shot|punch)|liver shot|hook to the body|(punch|hook) to the (body|gut|ribs|stomach|liver))\b/, 'bodyhook'],
@@ -2270,7 +2275,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     { let yw = 0; for (const p of plan) { p.yaw0 = yw; if (p.move === 'turn') yw += p.turn || 90; } }
     for (const p of plan) { if (p.move === 'turn' && style.boxing) p.guardTurn = true; if (p.step && style.south && (p.step === 'left' || p.step === 'right')) p.step = p.step === 'left' ? 'right' : 'left'; }
     const vYaw = seed ? (rnd() - 0.5) * 14 : 0, vBounce = seed ? 1.4 + rnd() * 0.7 : 1.7, vLean = seed ? (rnd() - 0.5) * 8 : 0;
-    for (const p of plan) { const M_ = MOVES[p.move]; p.len = p.secs || (M_.loop && !p.secs ? M_.dur * (p.move === 'walk' || p.move === 'run' ? (p.turnRate ? 6 : 3) : p.move === 'dribble' || p.move === 'clap' ? 4 : p.move === 'jacks' ? 3 : p.move === 'shuffle' ? 2 : 1) : M_.dur) / (p.secs ? 1 : p.speed); }
+    for (const p of plan) { const M_ = MOVES[p.move]; p.len = p.secs || (M_.loop && !p.secs ? M_.dur * (p.move === 'walk' || p.move === 'run' ? (p.turnRate ? 6 : 3) : p.move === 'dribble' || p.move === 'clap' ? 4 : p.move === 'bike' ? 6 : p.move === 'jacks' ? 3 : p.move === 'shuffle' ? 2 : 1) : M_.dur) / (p.secs ? 1 : p.speed); }
     const total = plan.reduce((a, p) => a + p.len, 0), n = Math.max(2, Math.round(total * fps) + 1), rest = buildRest({ ...DEFAULT_M }), ix = rest.index, J = rest.joints;
     const BLEND = 0.18; const locals = [], rootPos = [], contacts = []; let px = 0, pz = 0, yaw = 0;
     const off = j => len(J[ix[j]].offset), LA1 = off('LeftForeArm'), LA2 = off('LeftHand'), LL1 = off('LeftLeg'), LL2 = off('LeftFoot');
@@ -2297,6 +2302,21 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       return { anc, H0, chin: [0, chinY, D], body: [0, chinY - 0.42, D - 0.08] };
     })();
     const toF = (q, v) => qrot(qconj(q), v);
+    // 🚲 bike: everything relative to the point on the ground under the cranks. Hips sit on the saddle, feet ride the pedals, hands hold the bars.
+    const BIKE = { hip: [0, 0.98, -0.18], bb: [0, 0.3, 0], crank: 0.17, grip: 0.24, bar: [0, 1.02, 0.42], tread: 0.11 };
+    function bikeSolve(P_, th) {
+      const { G, Hq, Cq } = torsoG(P_, 0), f = fk(rest, locOf(G), [0, BIKE.hip[1], 0]), pos = f.pos, org = [0, 0, -BIKE.hip[2]]; // root sits above the saddle
+      for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
+        const a = th + (sx > 0 ? 0 : Math.PI), ped = add(add(org, BIKE.bb), [sx * BIKE.tread, -Math.cos(a) * BIKE.crank, Math.sin(a) * BIKE.crank]);
+        const [ul, ll] = ik2(pos[ix[S + 'UpLeg']], add(ped, [0, 0.075, -0.03]), LL1, LL2, [sx * 0.15, 0.2, 1]);
+        P_.dirs[S + 'UpLeg'] = toF(Hq, ul); P_.dirs[S + 'Leg'] = toF(Hq, ll);
+        const [ua, la] = ik2(pos[ix[S + 'Arm']], add(add(org, BIKE.bar), [sx * BIKE.grip, 0, 0]), LA1, LA2, [sx * 0.6, -0.6, -0.4]);
+        P_.dirs[S + 'Arm'] = toF(Cq, ua); P_.dirs[S + 'ForeArm'] = toF(Cq, la);
+        P_['fy' + S[0]] = 0;
+      }
+      return P_;
+    }
+    let crankA = 0, bikeDist = 0; const bikeTrack = [];
     // fight poses: arms reach for real targets (guard by the face, punches at the opponent), planted feet stay put, eyes on the opponent
     function fightSolve(P_, strike, gstyle) {
       const w = clamp(P_.guard || 0, 0, 1); if (w < 0.01) return P_;
@@ -2374,6 +2394,8 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         for (const S2 of ['L', 'R']) { const us = S2 === first ? uA : uB; P_['so' + S2] = [D[0] * (us - uR), lift(us, us > 0 && us < 1), D[2] * (us - uR)]; }
         stepDelta = uR - ss(uOf(cur.lt - 1 / fps)); stepDir = D;
       }
+      const biking = !!MOVES[mv].bike;
+      if (biking) { const v = MOVES[mv].travel * (cur.p.speed || 1); if (k > 0) { crankA += 2 * Math.PI * (v / fps) / 5.2; bikeDist += v / fps; } P_ = bikeSolve(P_, crankA); }
       P_ = fightSolve(P_, MOVES[mv].strike, style.peekaboo ? 'peekaboo' : style.ali ? 'ali' : style.roll ? 'roll' : 'std');
       if (style.south) P_ = mirrorPose(P_, false); // southpaw / left-handed: the whole body mirrored
       const hy = P_.hipsYaw + yaw + vYaw, { G } = torsoG(P_, hy);
@@ -2387,15 +2409,16 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const fwd = qrot(axq([0, 1, 0], yaw + vYaw), [0, 0, 1]);
       if (k > 0) { px += fwd[0] * travel / fps; pz += fwd[2] * travel / fps; }
       if (stepDir && k > 0) { const sd = qrot(axq([0, 1, 0], yaw + vYaw), [stepDir[0] * (style.south ? -1 : 1), 0, stepDir[2]]); px += sd[0] * stepDelta; pz += sd[2] * stepDelta; }
-      const y = -low + (P_.air ? Math.max(0, P_.rootY) : 0), sh = (P_.shift || 0) * clamp(P_.guard || 0, 0, 1); // weight shifts toward the punch
+      const y = biking ? BIKE.hip[1] : -low + (P_.air ? Math.max(0, P_.rootY) : 0), sh = (P_.shift || 0) * clamp(P_.guard || 0, 0, 1); // weight shifts toward the punch
+      bikeTrack.push(biking ? { on: 1, crank: crankA, dist: bikeDist, yaw: yaw + vYaw } : { on: 0 });
       rootPos.push([px + fwd[0] * sh, y, pz + fwd[2] * sh]);
       locals.push(loc);
-      contacts.push({ Left: !P_.air && f0.pos[ix.LeftFoot][1] - low < 0.1, Right: !P_.air && f0.pos[ix.RightFoot][1] - low < 0.1 });
+      contacts.push(biking ? { Left: false, Right: false } : { Left: !P_.air && f0.pos[ix.LeftFoot][1] - low < 0.1, Right: !P_.air && f0.pos[ix.RightFoot][1] - low < 0.1 });
     }
     for (let k = 1; k < n; k++) for (let j = 0; j < locals[k].length; j++) { const a = locals[k - 1][j], b = locals[k][j]; if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0) locals[k][j] = b.map(v => -v); }
     const PRETTY = { shoulderroll: 'shoulder roll', pullback: 'lean back', soccerkick: 'football kick', lookaround: 'look around', headshake: 'shake head', sitdown: 'sit down', hitreact: 'take a hit', jacks: 'jumping jacks', fistpump: 'fist pump' };
     const label = p => p.label || PRETTY[p.move] || (p.move === 'stepmove' ? 'step ' + ({ fwd: 'in', back: 'back', left: 'left', right: 'right' })[p.step || 'fwd'] : null) || (p.side && MOVES[p.move] && MOVES[p.move].side ? p.side + ' ' : '') + (p.move === 'turn' ? `turn ${p.turn > 0 ? 'left' : 'right'} ${Math.abs(p.turn)}°` : p.move) + (p.back ? ' backwards' : '') + (p.turnRate ? ' in a circle' : '');
-    return { rest, fps, n, rootPos, locals, contacts, hasHands: { Left: false, Right: false }, M: rest.M, unknown, plan: plan.map(label), styles: Object.keys(style).filter(k => style[k]), text };
+    return { rest, fps, n, rootPos, locals, contacts, hasHands: { Left: false, Right: false }, M: rest.M, unknown, plan: plan.map(label), styles: Object.keys(style).filter(k => style[k]), text, bikeTrack: bikeTrack.some(b => b.on) ? bikeTrack : null, bike: BIKE };
   }
 
   // cut an animation down to [a, b] seconds (relative to its own start)
@@ -2492,7 +2515,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <input type="range" id="headTilt" min="-25" max="25" step="1" value="0" hidden><span id="headTiltV" hidden></span>
     <div class="row"><label>In-place <span class="mini">feet stay on one spot, body keeps moving</span></label><input type="checkbox" id="inPlace"></div>
     <div class="sub">Locks</div>
-    <div class="row"><label>🔒 Lock feet <span class="mini">feet frozen exactly where they are at the current frame, for the whole animation</span></label><input type="checkbox" id="mainPinFeet"></div>
+    <div class="row"><label>🔒 Lock feet <span class="mini">feet frozen exactly where they are at the current frame, for the whole animation</span></label><select id="mainPinFeet"><option value="">Off</option><option value="both">Both feet</option><option value="Left">Left foot</option><option value="Right">Right foot</option></select></div>
     <div class="row"><label>🔒 Lock hand &amp; head rotation <span class="mini">your edits never turn the hands or head</span></label><input type="checkbox" id="mainLockRot"></div>
     <div class="stats" id="stats" style="display:none"></div>
   </section>
@@ -2538,17 +2561,20 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
         <button class="btn small" id="tBones">Bones</button>
         <button class="btn small on" id="tFollow">Follow</button>
         <button class="btn small" id="tReset">Video angle</button>
-        <button class="btn small" id="tModel" title="Preview on your own character (FBX / GLB / VRM)">🧍 Model</button>
+        <button class="btn small" id="tModel" title="Change character: the AI body, realistic people, or your own (FBX / GLB / VRM)">🧍 Character</button>
+        <button class="btn small" id="tProps" title="Props: boxing gloves, golf club, bat, racket, balls, bike">🎒 Props</button>
         <button class="btn small" id="tPhys" title="Add physics: follow-through, overshoot and settling">⚛️ Physics</button>
       </div>
       <div class="physpanel" id="physPanel">
+        <select id="propMode" hidden><option value="auto" selected>auto</option><option value="none">none</option><option value="gloves">gloves</option><option value="golf">golf</option><option value="bat">bat</option><option value="racket">racket</option><option value="basketball">basketball</option><option value="football">football</option><option value="bike">bike</option></select>
         <label class="pp-row"><input type="checkbox" id="physOn"> <b>Physics on</b></label>
         <div class="pp-row"><span>Strength</span><input type="range" id="physStr" min="0" max="100" step="1" value="55"><b id="physStrV">55</b></div>
         <div class="pp-row"><span>Bounce</span><input type="range" id="physBounce" min="0" max="100" step="1" value="55"><b id="physBounceV">55</b></div>
         <div class="pp-row pp-parts"><label><input type="checkbox" id="physArms" checked> Arms</label><label><input type="checkbox" id="physBody" checked> Body &amp; head</label><label><input type="checkbox" id="physLegs"> Legs</label></div>
         <small>Strength = how loose the joints are. Bounce = how much they overshoot and wobble before settling. Legs off keeps the feet planted.</small>
       </div>
-      <div class="modelmenu" id="modelMenu"><small id="mmName"></small><button id="mmToggle">Show the AI body</button><button id="mmLoad">Load another character…</button><button id="mmForget">Remove my character</button></div>
+      <div class="modelmenu" id="modelMenu"><small>Preview the motion on…</small><div id="mmList"></div><hr style="border:0;border-top:1px solid var(--line);margin:6px 0"><button id="mmLoad">📂 Load my own character (FBX / GLB / VRM)…</button><button id="mmForget">🗑 Remove my character</button><small style="display:block;opacity:.65;padding:4px 8px 0;line-height:1.3">All use Unity / Mixamo-style humanoid rigs. Exports are the same whichever you preview on.</small><span id="mmName" hidden></span><button id="mmToggle" hidden></button></div>
+      <div class="physpanel" id="propsPanel"><b>🎒 Props</b><div id="propList" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px"></div><small>✨ Auto picks the right prop from your motion (golf swing → club, punches → gloves, ride a bike → bike…).</small></div>
       <input type="file" id="modelFile" accept=".fbx,.glb,.gltf,.vrm" hidden>
       <div id="three"></div>
     </div>
@@ -2596,7 +2622,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div style="display:flex;gap:6px;align-items:center"><input id="wmFrom" placeholder="when I say… (scrap)" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:9px;font-size:16px"><input id="wmTo" placeholder="it means… (boxing)" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:9px;font-size:16px"><button class="btn" id="wmAdd">Add</button></div>
     <div id="tchList" style="margin-top:10px"></div>
   </div>
-  <div class="hint">Type it how you'd say it — typos are fine. <b>Boxing:</b> jab, cross, hook, uppercut, body shot, slip, bob &amp; weave, block, combos like 1-2-3, left / right / lead / rear, southpaw. <b>Fighters:</b> Tyson, Ali, Mayweather, Canelo, Lomachenko, Bruce Lee, McGregor, Muay Thai, karate. <b>Sports:</b> golf, baseball bat / pitch, tennis serve / forehand, basketball dribble / shoot, football kick. <b>Moves:</b> walk, run, backwards, in a circle, turn, jump, kick, knee, elbow, teep, squat, lunge, jumping jacks, stretch, sit down, push, pull, lift, wave, clap, point, bow, salute, shrug, nod, look around, think, flex, celebrate, dance, spin. <b>Moods &amp; places:</b> tired, proud, sneaky, happy, angry, drunk, old, zombie, in the rain, windy, on ice, uphill, underwater, soldier march, carrying a box. Just a theme ("workout", "Mike Tyson") makes a full routine. Tap Create again for a new variation. 🧠 Teach my AI learns any move from a video, e.g. a real Tyson hook clip.</div>
+  <div class="hint">Type it how you'd say it — typos are fine. <b>Boxing:</b> jab, cross, hook, uppercut, body shot, slip, bob &amp; weave, block, combos like 1-2-3, left / right / lead / rear, southpaw. <b>Fighters:</b> Tyson, Ali, Mayweather, Canelo, Lomachenko, Bruce Lee, McGregor, Muay Thai, karate. <b>Sports:</b> ride a bike, golf, baseball bat / pitch, tennis serve / forehand, basketball dribble / shoot, football kick. <b>Moves:</b> walk, run, backwards, in a circle, turn, jump, kick, knee, elbow, teep, squat, lunge, jumping jacks, stretch, sit down, push, pull, lift, wave, clap, point, bow, salute, shrug, nod, look around, think, flex, celebrate, dance, spin. <b>Moods &amp; places:</b> tired, proud, sneaky, happy, angry, drunk, old, zombie, in the rain, windy, on ice, uphill, underwater, soldier march, carrying a box. Just a theme ("workout", "Mike Tyson") makes a full routine. Tap Create again for a new variation. 🧠 Teach my AI learns any move from a video, e.g. a real Tyson hook clip.</div>
 </div></div>
 <div id="editModal" data-et="studio">
   <div class="ehead">
@@ -2632,7 +2658,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="emeta"><span id="edTime">frame 1</span><span class="sp"></span><span id="edSel" class="esel">no joint picked</span></div>
   </div>
   <div class="esheet">
-    <div class="elocks"><label><input type="checkbox" id="edLockFeet"> 🔒 Lock feet</label><label><input type="checkbox" id="edLockRot"> 🔒 Lock hand &amp; head rotation</label></div>
+    <div class="elocks"><label>🔒 Lock feet <select id="edLockFeet" style="margin-left:auto"><option value="">Off</option><option value="both">Both</option><option value="Left">L</option><option value="Right">R</option></select></label><label><input type="checkbox" id="edLockRot"> 🔒 Lock hand &amp; head rotation</label></div>
     <div class="eapply" id="edApply"><span>Change applies to</span><button data-v="moment" class="on">⏱ This moment</button><button data-v="layer">🎞 Whole animation</button></div>
     <div class="emodes" id="edMode"><button data-m="move" class="on"><b>✥</b>Move (IK)</button><button data-m="rotate"><b>🎛</b>Rotate</button></div>
     <div id="edMovePanel">
@@ -3204,7 +3230,7 @@ $('go').onclick = processVideo;
 // ---- text to motion ----
 let lastPrompt = null, ttmSeeds = {}, lastSeed = 0, ttmCaption = null;
 $('inPlace').addEventListener('change', () => { if (!frames && lastPrompt && anim) runTextMotion(lastPrompt, currentTakeId, lastSeed); });
-const TTM_EXAMPLES = ['Mike Tyson left hook', '1-2-3 then slip', 'southpaw jab cross then right hook', 'muay thai', 'do some boxing', 'golf swing', 'basketball dribble then jump shot', 'zombie walk in a circle', 'walk backwards then turn around and wave', 'workout', 'march like a soldier', 'tired walk in the rain', 'celebrate'];
+const TTM_EXAMPLES = ['Mike Tyson left hook', '1-2-3 then slip', 'southpaw jab cross then right hook', 'muay thai', 'do some boxing', 'golf swing', 'ride a bike', 'step back left hook then right hand to the body', 'basketball dribble then jump shot', 'zombie walk in a circle', 'walk backwards then turn around and wave', 'workout', 'march like a soldier', 'tired walk in the rain', 'celebrate'];
 $('ttmChips').innerHTML = TTM_EXAMPLES.map(e => `<button class="btn small" data-e="${e}">${e}</button>`).join('');
 $('ttmChips').onclick = e => { const b = e.target.closest('button'); if (b) $('ttmText').value = b.dataset.e; };
 $('ttmBtn').onclick = () => { $('ttmModal').style.display = 'grid'; lockPage(); setTimeout(() => $('ttmText').focus(), 50); };
@@ -3479,7 +3505,7 @@ $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) re
 for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('change', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 30); }); // update once you let go (no stutter while dragging)
 for (const id of ['armPose', 'lowerBody', 'footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
 
-function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON', 'editBtn']) $(id).disabled = !on; if (on && !MODEL.obj) setTimeout(() => restoreModel(), 0); else if (on && MODEL.obj) { scene.add(MODEL.prep.wrap); } }
+function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON', 'editBtn']) $(id).disabled = !on; if (on && !MODEL.obj) setTimeout(() => restoreModel(), 0); else if (on && MODEL.obj) { if (MODEL.on && CHARS[MODEL.id]) useChar(CHARS[MODEL.id], MODEL.id); else scene.add(MODEL.prep.wrap); } } // re-fit the character to the new motion's skeleton
 function showStats() {
   if (!frames) return;
   const M = anim.M, el = $('stats'); el.style.display = 'grid';
@@ -3586,6 +3612,7 @@ function applyAt(t) {
   character.group.updateMatrixWorld(true);
   const k = Math.round(Math.min(anim.n - 1, Math.max(0, (t - animT0()) * anim.fps)));
   if (MODEL.on) poseModel();
+  updateProps(k, t);
   ['Left', 'Right'].forEach((s, i) => { b[anim.rest.index[s + 'Foot']].getWorldPosition(_v); footMarks[i].position.x = _v.x; footMarks[i].position.z = _v.z; footMarks[i].material.opacity = anim.contacts[k][s] ? 0.9 : 0; });
   if ($('tFollow').classList.contains('on')) {
     b[0].getWorldPosition(_v); const tgt = new THREE.Vector3(_v.x, Math.max(0.95, _v.y), _v.z), d = tgt.clone().sub(controls.target); // follows up too: no ceiling on jumps
@@ -3820,7 +3847,7 @@ const LIB = {
   all() { return this.run('readonly', s => s.getAll()); }, del(id) { return this.run('readwrite', s => s.delete(id)); },
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
-const settingIds = ['physOn', 'physStr', 'physBounce', 'physArms', 'physBody', 'physLegs', 'clipSpeed', 'armPose', 'lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
+const settingIds = ['propMode', 'physOn', 'physStr', 'physBounce', 'physArms', 'physBody', 'physLegs', 'clipSpeed', 'armPose', 'lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
 const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; s.edits = JSON.parse(JSON.stringify(EDITS)); return s; };
 const writeSettings = s => { if (!s) return; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); EDITS = s.edits ? JSON.parse(JSON.stringify(s.edits)) : { keys: {}, root: {}, spread: 0.5 }; try { edSyncLocks(); } catch (e) {} };
 const DEFAULT_SETTINGS = readSettings(); // the app's starting settings, used for anything a take never saved
@@ -3984,6 +4011,7 @@ function applyEditsRaw(a, E) {
 // hands + head keep their original facing. Joints you edited yourself are left alone.
 function lockPass(a, locals, rootPos, E, affected, own) {
   const lockFeet = true, pin = !!E.pinFeet, lockRot = !!E.lockRot; // edits never drag unedited feet; 🔒 pin freezes them for the whole clip
+  const pinned = Sd => pin && (!E.pinSide || E.pinSide === 'both' || E.pinSide === Sd); // 🔒 both feet, or just the left / right one
   const pk = Math.max(0, Math.min(a.n - 1, E.pinFrame | 0)), pinRef = pin ? S.fk(a.rest, a.locals[pk], a.rootPos[pk]) : null;
   const rest = a.rest, ix = rest.index, J = rest.joints, Q = v => new THREE.Quaternion(v[0], v[1], v[2], v[3]), V = v => new THREE.Vector3(v[0], v[1], v[2]);
   const toArr = q => [q.x, q.y, q.z, q.w];
@@ -3993,7 +4021,7 @@ function lockPass(a, locals, rootPos, E, affected, own) {
     if (pin) { // a frozen foot must stay reachable: if a leg would have to stretch, bring the hips just close enough
       let sh = [0, 0, 0];
       for (const Sd of ['Left', 'Right']) {
-        const iU = ix[Sd + 'UpLeg'], iL = ix[Sd + 'Leg'], iF = ix[Sd + 'Foot']; if ([iU, iL, iF].some(j => own[k].has(j))) continue;
+        const iU = ix[Sd + 'UpLeg'], iL = ix[Sd + 'Leg'], iF = ix[Sd + 'Foot']; if (!pinned(Sd) || [iU, iL, iF].some(j => own[k].has(j))) continue;
         const H = V(cur.pos[iU]).add(V(sh)), T = V(pinRef.pos[iF]), Lg = V(cur.pos[iU]).distanceTo(V(cur.pos[iL])) + V(cur.pos[iL]).distanceTo(V(cur.pos[iF])), d = H.distanceTo(T), ex = d - Lg * 0.985;
         if (ex > 0) { const dir = T.clone().sub(H).normalize().multiplyScalar(ex); sh = [sh[0] + dir.x, sh[1] + dir.y, sh[2] + dir.z]; }
       }
@@ -4002,8 +4030,8 @@ function lockPass(a, locals, rootPos, E, affected, own) {
     if (lockFeet) for (const Sd of ['Left', 'Right']) {
       const iU = ix[Sd + 'UpLeg'], iL = ix[Sd + 'Leg'], iF = ix[Sd + 'Foot'], iT = ix[Sd + 'ToeBase'];
       if ([iU, iL, iF, iT].some(j => own[k].has(j))) continue; // you moved this leg yourself
-      const ref = pin ? pinRef : base, H = V(cur.pos[iU]), K = V(cur.pos[iL]), A = V(cur.pos[iF]), T = V(ref.pos[iF]);
-      if (!pin && V(base.pos[iF]).distanceTo(A) < 1e-5) continue;
+      const pS = pinned(Sd), ref = pS ? pinRef : base, H = V(cur.pos[iU]), K = V(cur.pos[iL]), A = V(cur.pos[iF]), T = V(ref.pos[iF]);
+      if (!pS && V(base.pos[iF]).distanceTo(A) < 1e-5) continue;
       const la = H.distanceTo(K), lb = K.distanceTo(A), dir = T.clone().sub(H), d = THREE.MathUtils.clamp(dir.length(), Math.abs(la - lb) + 1e-4, (la + lb) * 0.999); dir.normalize();
       let pole = K.clone().sub(H); pole.sub(dir.clone().multiplyScalar(pole.dot(dir))); if (pole.lengthSq() < 1e-10) pole = new THREE.Vector3(0, 0, 1); pole.normalize();
       const x = (la * la - lb * lb + d * d) / (2 * d), h = Math.sqrt(Math.max(0, la * la - x * x));
@@ -4015,7 +4043,7 @@ function lockPass(a, locals, rootPos, E, affected, own) {
       locals[k][iU] = toArr(Q(cur.rot[pU]).invert().multiply(gU).normalize());
       locals[k][iL] = toArr(gU.clone().invert().multiply(gL).normalize());
       locals[k][iF] = toArr(gL.clone().invert().multiply(Q(ref.rot[iF])).normalize()); // and the foot keeps its angle
-      if (pin) locals[k][iT] = a.locals[pk][iT].slice();
+      if (pS) locals[k][iT] = a.locals[pk][iT].slice();
     }
     if (lockRot) {
       cur = S.fk(rest, locals[k], rootPos[k]);
@@ -4343,16 +4371,16 @@ function edJump(h, label) { // undo / redo only change your edits back: the fram
 const edStep = (from, to, label) => { const cur = JSON.stringify(EDITS); let h; while (from.length && (h = from.pop()).e === cur) h = null; if (!h) { toast('Nothing to ' + label.toLowerCase().replace('ne', '')); edTimeline(); return; } to.push({ e: cur }); edJump(h, label); };
 $('edUndo').onclick = () => edStep(ED.undo, ED.redo, 'Undone');
 $('edRedo').onclick = () => edStep(ED.redo, ED.undo, 'Redone');
-function edSyncLocks() { $('edLockFeet').checked = $('mainPinFeet').checked = !!EDITS.pinFeet; $('edLockRot').checked = $('mainLockRot').checked = !!EDITS.lockRot; }
+function edSyncLocks() { $('edLockFeet').value = $('mainPinFeet').value = EDITS.pinFeet ? (EDITS.pinSide || 'both') : ''; $('edLockRot').checked = $('mainLockRot').checked = !!EDITS.lockRot; }
 $('edApply').onclick = e => { const b = e.target.closest('button'); if (!b) return; ED.apply = b.dataset.v; ED.dial = null; edTimeline(); toast(ED.apply === 'layer' ? 'Whole animation: your change is added to every frame, on top of the original motion.' : 'This moment: your change blends in around this frame only.'); };
 function mainLockChanged() { // the Refine-section boxes: same locks as in the editor
-  EDITS.pinFeet = $('mainPinFeet').checked; if (EDITS.pinFeet) EDITS.pinFrame = anim ? Math.max(0, Math.min(anim.n - 1, Math.round((curTime - animT0()) * anim.fps))) : 0;
-  EDITS.lockRot = $('mainLockRot').checked; $('edLockFeet').checked = EDITS.pinFeet; $('edLockRot').checked = EDITS.lockRot;
+  EDITS.pinFeet = !!$('mainPinFeet').value; EDITS.pinSide = $('mainPinFeet').value || 'both'; if (EDITS.pinFeet) EDITS.pinFrame = anim ? Math.max(0, Math.min(anim.n - 1, Math.round((curTime - animT0()) * anim.fps))) : 0;
+  EDITS.lockRot = $('mainLockRot').checked; $('edLockFeet').value = EDITS.pinFeet ? EDITS.pinSide : ''; $('edLockRot').checked = EDITS.lockRot;
   if (baseAnim) { anim = applyEdits(baseAnim, EDITS); applyAt(curTime); drawContacts(); requestRender(); }
-  recordChange(); toast(EDITS.pinFeet ? `Feet locked where they are at ${(curTime - animT0()).toFixed(2)}s, for the whole animation.` : 'Locks updated.');
+  recordChange(); toast(EDITS.pinFeet ? `${{ both: 'Both feet', Left: 'Left foot', Right: 'Right foot' }[EDITS.pinSide]} locked where it is at ${(curTime - animT0()).toFixed(2)}s, for the whole animation.` : 'Locks updated.');
 }
 $('mainPinFeet').onchange = mainLockChanged; $('mainLockRot').onchange = mainLockChanged;
-$('edLockFeet').onchange = () => { edPush(); EDITS.pinFeet = $('edLockFeet').checked; EDITS.pinFrame = ED.k; $('mainPinFeet').checked = EDITS.pinFeet; edRefresh(); toast(EDITS.pinFeet ? `Feet frozen where they are on frame ${ED.k + 1}, for the whole animation.` : 'Feet unlocked.'); };
+$('edLockFeet').onchange = () => { edPush(); EDITS.pinFeet = !!$('edLockFeet').value; EDITS.pinSide = $('edLockFeet').value || 'both'; EDITS.pinFrame = ED.k; $('mainPinFeet').value = $('edLockFeet').value; edRefresh(); toast(EDITS.pinFeet ? `Feet frozen where they are on frame ${ED.k + 1}, for the whole animation.` : 'Feet unlocked.'); };
 $('edLockRot').onchange = () => { edPush(); EDITS.lockRot = $('edLockRot').checked; $('mainLockRot').checked = EDITS.lockRot; edRefresh(); toast(EDITS.lockRot ? 'Hands & head keep their original rotation.' : 'Rotation lock off.'); };
 $('edMode').onclick = e => { const b = e.target.closest('button'); if (!b) return; ED.mode = b.dataset.m; ED.dial = null; edTimeline(); };
 $('edScrub').addEventListener('input', () => { if (ED.playing) edStop(); edGo(+$('edScrub').value); });
@@ -4386,7 +4414,7 @@ let edClearArm = 0;
 $('edClearAll').onclick = () => {
   if (!hasEdits(EDITS)) return;
   if (Date.now() - edClearArm > 3000) { edClearArm = Date.now(); $('edClearAll').textContent = 'Tap again to clear'; setTimeout(() => ($('edClearAll').textContent = 'Clear all'), 3000); return; }
-  edPush(); EDITS = { keys: {}, root: {}, spread: EDITS.spread || 0.5, pinFeet: EDITS.pinFeet, pinFrame: EDITS.pinFrame, lockRot: EDITS.lockRot }; $('edClearAll').textContent = 'Clear all'; ED.dial = null; edRefresh();
+  edPush(); EDITS = { keys: {}, root: {}, spread: EDITS.spread || 0.5, pinFeet: EDITS.pinFeet, pinSide: EDITS.pinSide, pinFrame: EDITS.pinFrame, lockRot: EDITS.lockRot }; $('edClearAll').textContent = 'Clear all'; ED.dial = null; edRefresh();
 };
 document.addEventListener('keydown', e => {
   if (!edOpen()) return; const tg = e.target; if (tg && (tg.tagName === 'INPUT' && tg.type !== 'range' && tg.type !== 'checkbox' || tg.tagName === 'TEXTAREA' || tg.isContentEditable)) return;
@@ -4496,6 +4524,43 @@ function poseModel() {
   const hp = character.bones[0].getWorldPosition(new THREE.Vector3()), hb = info.Hips.b;
   hb.position.copy(hb.parent.worldToLocal(hp)); wrap.updateMatrixWorld(true);
 }
+const CHAR_INFO = { 'rpm-male': '🧑 Realistic man', 'rpm-female': '👩 Realistic woman', soldier: '🪖 Soldier (realistic)', michelle: '💃 Michelle (realistic)', xbot: '🤖 X Bot (Unity mannequin)' };
+let CHAR_LIST = null; const CHARS = {}; // loaded characters, kept so switching back is instant
+async function charList() { if (CHAR_LIST) return CHAR_LIST; try { const r = await fetch('characters/list.json'); CHAR_LIST = r.ok ? await r.json() : []; } catch (e) { CHAR_LIST = []; } return CHAR_LIST; }
+function useChar(entry, id) { // show this character (null = the AI body)
+  if (MODEL.prep && MODEL.prep.wrap) MODEL.prep.wrap.visible = false;
+  if (!entry) { MODEL.on = false; MODEL.id = 'ai'; if (character) character.mesh.visible = $('tBody').classList.contains('on'); }
+  else {
+    if (!entry.prep || entry.prepFor !== anim.rest) { if (entry.prep) scene.remove(entry.prep.wrap); entry.prep = prepModel(entry.obj, entry.map); entry.prepFor = anim.rest; }
+    if (!entry.prep.wrap.parent) scene.add(entry.prep.wrap);
+    Object.assign(MODEL, { obj: entry.obj, map: entry.map, name: entry.name, prep: entry.prep, on: true, id }); entry.prep.wrap.visible = true;
+    if (character) character.mesh.visible = false;
+  }
+  try { localStorage.setItem('nocap-char', id); } catch (e) {}
+  applyAt(curTime); requestRender(); updateModelBtn();
+}
+async function pickChar(id, quiet) {
+  if (id === 'ai') return useChar(null, 'ai');
+  if (!anim) { if (!quiet) toast('Make or open a motion first, then pick a character.', true); return; }
+  if (CHARS[id]) return useChar(CHARS[id], id);
+  if (id === 'mine') return restoreModel(true);
+  const it = (await charList()).find(c => c.id === id); if (!it) return;
+  if (!quiet) toast('Loading ' + (CHAR_INFO[id] || id) + '…');
+  try { const r = await fetch('characters/' + it.file); if (!r.ok) throw new Error('not available offline yet'); const e = await parseModel(await r.blob(), it.file); e.name = CHAR_INFO[id] || id; CHARS[id] = e; useChar(e, id); if (!quiet) toast((CHAR_INFO[id] || id) + ' ready. It plays your motion now.'); }
+  catch (e) { if (!quiet) toast('Could not load that character: ' + e.message, true, 7000); }
+}
+async function parseModel(blob, name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  let obj, json = null;
+  const buf = await blob.arrayBuffer();
+  if (ext === 'fbx') { const { FBXLoader } = await import('three/addons/loaders/FBXLoader.js'); obj = new FBXLoader().parse(buf, ''); }
+  else { const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js'); const g = await new Promise((res, rej) => new GLTFLoader().parse(buf, '', res, rej)); obj = g.scene || g.scenes[0]; json = g.parser && g.parser.json; }
+  obj.animations = [];
+  const map = mapSkeleton(obj, json), need = ['Hips', 'LeftArm', 'RightArm', 'LeftUpLeg', 'RightUpLeg', 'LeftLeg', 'RightLeg'], miss = need.filter(k => !map[k]);
+  if (miss.length) throw new Error('no humanoid skeleton found (missing ' + miss.join(', ') + ')');
+  obj.traverse(o => { if (o.isMesh || o.isSkinnedMesh) { o.castShadow = true; o.frustumCulled = false; } });
+  return { obj, map, name };
+}
 async function loadModelFile(blob, name, quiet) {
   const ext = (name.split('.').pop() || '').toLowerCase();
   if (!anim) { if (!quiet) toast('Make or open a motion first, then load your character.', true); MODEL.pending = { blob, name }; return; }
@@ -4510,12 +4575,10 @@ async function loadModelFile(blob, name, quiet) {
   const map = mapSkeleton(obj, json), need = ['Hips', 'LeftArm', 'RightArm', 'LeftUpLeg', 'RightUpLeg', 'LeftLeg', 'RightLeg'];
   const miss = need.filter(k => !map[k]);
   if (miss.length) { toast('Could not find a humanoid skeleton in that file (missing ' + miss.join(', ') + ').', true, 9000); return; }
-  if (MODEL.obj) { scene.remove(MODEL.prep.wrap); }
+  if (CHARS.mine && CHARS.mine.prep) scene.remove(CHARS.mine.prep.wrap);
   obj.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
-  MODEL.obj = obj; MODEL.map = map; MODEL.name = name; MODEL.prep = prepModel(obj, map); scene.add(MODEL.prep.wrap); MODEL.on = true;
-  if (character) character.mesh.visible = false;
+  CHARS.mine = { obj, map, name }; useChar(CHARS.mine, 'mine');
   try { localStorage.setItem('nocap-model', name); const c = await caches.open('nocap-user-model'); await c.put('/my-model', new Response(blob)); } catch (e) {}
-  applyAt(curTime); requestRender(); updateModelBtn();
   if (!quiet) toast(`${name}: ${Object.keys(map).length} bones matched. Your motion now plays on it.`);
 }
 function setModelOn(on) {
@@ -4523,15 +4586,146 @@ function setModelOn(on) {
   if (character) character.mesh.visible = !MODEL.on && $('tBody').classList.contains('on');
   applyAt(curTime); requestRender(); updateModelBtn();
 }
-function updateModelBtn() { $('tModel').classList.toggle('on', MODEL.on); $('mmToggle').textContent = MODEL.on ? 'Show the AI body' : 'Show my character'; $('mmToggle').disabled = !MODEL.obj; $('mmName').textContent = MODEL.obj ? MODEL.name : 'No character loaded yet'; }
-$('tModel').onclick = e => { e.stopPropagation(); if (!MODEL.obj) { $('modelFile').click(); return; } $('modelMenu').classList.toggle('open'); };
+function updateModelBtn() { $('tModel').classList.toggle('on', MODEL.on); $('tModel').textContent = MODEL.on ? '🧍 ' + (MODEL.name || 'Character').replace(/^\S+\s/, '').replace(/\s*\(.*\)$/, '').slice(0, 14) : '🧍 Character'; }
+async function fillCharMenu() {
+  const list = await charList(), cur = MODEL.on ? MODEL.id : 'ai', mineName = localStorage.getItem('nocap-model');
+  const items = [['ai', '🦴 AI body (default)'], ...list.map(c => [c.id, CHAR_INFO[c.id] || c.id]), ...(mineName ? [['mine', '⭐ My character: ' + mineName]] : [])];
+  $('mmList').innerHTML = items.map(([id, nm]) => `<button data-id="${id}" class="${id === cur ? 'cur' : ''}">${nm}${id === cur ? ' ✓' : ''}</button>`).join('') + (list.length ? '' : '<small style="display:block;opacity:.7;padding:4px 8px">The ready-made characters arrive with the next app update.</small>');
+}
+$('mmList').onclick = e => { const b = e.target.closest('button'); if (!b) return; $('modelMenu').classList.remove('open'); pickChar(b.dataset.id); };
+$('tModel').onclick = e => { e.stopPropagation(); fillCharMenu(); $('modelMenu').classList.toggle('open'); };
 $('modelMenu').onclick = e => e.stopPropagation();
 document.addEventListener('click', () => $('modelMenu').classList.remove('open'));
 $('mmLoad').onclick = () => { $('modelMenu').classList.remove('open'); $('modelFile').click(); };
 $('mmToggle').onclick = () => { $('modelMenu').classList.remove('open'); setModelOn(!MODEL.on); };
-$('mmForget').onclick = async () => { $('modelMenu').classList.remove('open'); if (MODEL.obj) scene.remove(MODEL.prep.wrap); MODEL.obj = null; MODEL.on = false; try { localStorage.removeItem('nocap-model'); await caches.delete('nocap-user-model'); } catch (e) {} setModelOn(false); toast('Character removed.'); };
+$('mmForget').onclick = async () => { $('modelMenu').classList.remove('open'); if (CHARS.mine && CHARS.mine.prep) scene.remove(CHARS.mine.prep.wrap); delete CHARS.mine; if (MODEL.id === 'mine') useChar(null, 'ai'); try { localStorage.removeItem('nocap-model'); await caches.delete('nocap-user-model'); } catch (e) {} toast('Your character was removed.'); };
 $('modelFile').onchange = () => { const f = $('modelFile').files[0]; $('modelFile').value = ''; if (f) loadModelFile(f, f.name); };
-async function restoreModel() { try { const name = localStorage.getItem('nocap-model'); if (!name || MODEL.obj) return; const c = await caches.open('nocap-user-model'), r = await c.match('/my-model'); if (r) await loadModelFile(await r.blob(), name, true); } catch (e) {} }
+async function restoreModel(force) {
+  try {
+    const want = localStorage.getItem('nocap-char') || (localStorage.getItem('nocap-model') ? 'mine' : 'ai');
+    if (!force && want !== 'mine') { if (want !== 'ai' && !MODEL.on) pickChar(want, true); return; }
+    const name = localStorage.getItem('nocap-model'); if (!name || (!force && MODEL.obj)) return;
+    const c = await caches.open('nocap-user-model'), r = await c.match('/my-model'); if (r) await loadModelFile(await r.blob(), name, true);
+  } catch (e) {}
+}
+
+// ---------- 🎒 props: gloves, golf club, bat, racket, basketball, football, bike (simple shapes = light on any phone) ----------
+const PROP_INFO = { auto: '✨ Auto', none: '🚫 None', gloves: '🥊 Boxing gloves', golf: '🏌️ Golf club', bat: '⚾ Baseball bat', racket: '🎾 Tennis racket', basketball: '🏀 Basketball', football: '⚽ Football', bike: '🚲 Bike' };
+const PR = { built: {}, cur: null, kick: null, kickFor: null };
+function propAuto() {
+  if (!anim) return 'none';
+  const t = ((anim.text || '') + ' ' + (anim.plan || []).join(' ') + ' ' + (anim.styles || []).join(' ')).toLowerCase();
+  if (anim.bikeTrack || /\bbike|cycl|bicycle|pedal/.test(t)) return 'bike';
+  if (/golf/.test(t)) return 'golf'; if (/\bbat\b|baseball|batting|home run/.test(t)) return 'bat';
+  if (/serve|forehand|backhand|tennis|racket|racquet/.test(t)) return 'racket'; if (/dribble|shoot|basketball|jump shot|free throw/.test(t)) return 'basketball';
+  if (/football kick|soccer|kick the ball|penalty|free kick|volley/.test(t)) return 'football';
+  if (/\bboxing\b|jab|cross|hook|uppercut|punch|overhand|body shot|stance|feint|peekaboo|\bfight/.test(t)) return 'gloves';
+  return 'none';
+}
+const PM = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.55, metalness: 0.05 });
+function canvasTex(draw) { const c = document.createElement('canvas'); c.width = 256; c.height = 128; const g = c.getContext('2d'); draw(g, c); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; }
+const cyl = (r1, r2, h, m, seg = 10) => new THREE.Mesh(new THREE.CylinderGeometry(r1, r2, h, seg), m);
+function buildProp(kind) {
+  const g = new THREE.Group(); g.name = 'prop-' + kind;
+  if (kind === 'gloves') {
+    for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
+      const h = new THREE.Group(), red = PM(0xb3141c), wh = PM(0xf2f2f2);
+      const main = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), red); main.scale.set(0.075, 0.06, 0.068); main.position.set(sx * 0.06, 0.01, 0);
+      const thumb = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), red); thumb.scale.set(0.04, 0.03, 0.03); thumb.position.set(sx * 0.04, -0.01, 0.055);
+      const cuff = cyl(0.048, 0.05, 0.08, wh, 14); cuff.rotation.z = Math.PI / 2; cuff.position.set(-sx * 0.02, 0.005, 0);
+      h.add(main, thumb, cuff); h.userData.side = S; g.add(h);
+    }
+  } else if (kind === 'golf') {
+    const shaft = cyl(0.006, 0.005, 0.86, PM(0xb8bcc4)); shaft.position.y = -0.55; const grip = cyl(0.013, 0.011, 0.26, PM(0x222222)); grip.position.y = -0.13;
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.03, 0.05), PM(0x30343a)); head.position.set(0.035, -0.99, 0); g.add(shaft, grip, head);
+  } else if (kind === 'bat') {
+    const b = cyl(0.034, 0.013, 0.84, PM(0xc8a26a), 14); b.position.y = -0.42; b.rotation.x = Math.PI; const knob = cyl(0.022, 0.022, 0.015, PM(0xa5824f), 14); knob.position.y = 0.0; g.add(b, knob);
+  } else if (kind === 'racket') {
+    const handle = cyl(0.014, 0.013, 0.2, PM(0x202020)); handle.position.y = -0.1;
+    const throat = cyl(0.008, 0.008, 0.12, PM(0x1d4ed8)); throat.position.y = -0.25;
+    const frame = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.008, 6, 28), PM(0x1d4ed8)); frame.scale.set(0.8, 1, 1); frame.position.y = -0.43;
+    const strings = new THREE.Mesh(new THREE.CircleGeometry(0.125, 24), new THREE.MeshBasicMaterial({ color: 0xe8e8e0, transparent: true, opacity: 0.35, side: THREE.DoubleSide })); strings.scale.set(0.8, 1, 1); strings.position.y = -0.43;
+    g.add(handle, throat, frame, strings);
+  } else if (kind === 'basketball') {
+    const tex = canvasTex((x, c) => { x.fillStyle = '#d9631e'; x.fillRect(0, 0, c.width, c.height); x.strokeStyle = '#2a1408'; x.lineWidth = 4; for (const X of [0, 64, 128, 192]) { x.beginPath(); x.moveTo(X, 0); x.lineTo(X, 128); x.stroke(); } x.beginPath(); x.moveTo(0, 64); x.lineTo(256, 64); x.stroke(); });
+    g.add(new THREE.Mesh(new THREE.SphereGeometry(0.12, 24, 16), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.7 })));
+  } else if (kind === 'football') {
+    const tex = canvasTex((x, c) => { x.fillStyle = '#f4f4f4'; x.fillRect(0, 0, c.width, c.height); x.fillStyle = '#1b1b1b'; for (let i = 0; i < 10; i++) { const cx = (i * 53) % 256, cy = 20 + ((i * 37) % 90); x.beginPath(); for (let a = 0; a < 5; a++) { const an = a * 2 * Math.PI / 5; x[a ? 'lineTo' : 'moveTo'](cx + 13 * Math.cos(an), cy + 13 * Math.sin(an)); } x.fill(); } });
+    g.add(new THREE.Mesh(new THREE.SphereGeometry(0.11, 22, 16), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 })));
+  } else if (kind === 'bike') {
+    const B = (anim && anim.bike) || { hip: [0, 0.98, -0.18], bb: [0, 0.3, 0], crank: 0.17, grip: 0.24, bar: [0, 1.02, 0.42], tread: 0.11 }, R = 0.34;
+    const frameM = PM(0xd7263d), dark = PM(0x1f1f1f), metal = PM(0xb9bec6), V = (...a) => new THREE.Vector3(...a);
+    const tube = (a, b, r = 0.018, m = frameM) => { const d = b.clone().sub(a), t = cyl(r, r, d.length(), m, 8); t.position.copy(a).add(b).multiplyScalar(0.5); t.quaternion.setFromUnitVectors(V(0, 1, 0), d.normalize()); return t; };
+    const rearC = V(0, R, -0.52), frontC = V(0, R, 0.5), bb = V(...B.bb), seat = V(0, B.hip[1] - 0.06, B.hip[2] - 0.02), head = V(0, 0.9, 0.36), bar = V(...B.bar);
+    const wheel = c => { const w = new THREE.Group(); w.position.copy(c); const tyre = new THREE.Mesh(new THREE.TorusGeometry(R - 0.015, 0.018, 8, 32), dark); tyre.rotation.y = Math.PI / 2; w.add(tyre); const rim = new THREE.Mesh(new THREE.TorusGeometry(R - 0.04, 0.006, 4, 32), metal); rim.rotation.y = Math.PI / 2; w.add(rim); for (let i = 0; i < 8; i++) { const sp = cyl(0.0025, 0.0025, (R - 0.04) * 2, metal, 4); sp.rotation.x = i * Math.PI / 8; w.add(sp); } const hub = cyl(0.02, 0.02, 0.06, metal, 10); hub.rotation.z = Math.PI / 2; w.add(hub); return w; };
+    const rw = wheel(rearC), fw = wheel(frontC); g.add(rw, fw);
+    g.add(tube(rearC, bb), tube(rearC, seat.clone().add(V(0, -0.05, 0))), tube(bb, seat), tube(bb, head, 0.02), tube(seat.clone().add(V(0, -0.08, 0)), head), tube(head, frontC, 0.016, metal), tube(head, bar.clone().add(V(0, -0.03, -0.02)), 0.014, metal));
+    g.add(tube(bar.clone().add(V(-B.grip, 0, 0)), bar.clone().add(V(B.grip, 0, 0)), 0.012, dark));
+    const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 0.26), dark); saddle.position.copy(seat).add(V(0, 0.02, 0)); g.add(saddle);
+    const crank = new THREE.Group(); crank.position.copy(bb); const ring = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.008, 5, 24), metal); ring.rotation.y = Math.PI / 2; ring.position.x = -0.06; crank.add(ring);
+    const pedals = [];
+    for (const sx of [1, -1]) { const arm = cyl(0.01, 0.01, B.crank, metal, 6); const armG = new THREE.Group(); arm.position.y = -B.crank / 2; armG.add(arm); armG.position.x = sx * 0.07; if (sx < 0) armG.rotation.x = Math.PI; crank.add(armG);
+      const ped = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.02, 0.07), dark); ped.userData.sx = sx; pedals.push(ped); g.add(ped); }
+    g.add(crank); g.userData = { rw, fw, crank, pedals, B };
+  }
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; }); g.visible = false; scene.add(g); return g;
+}
+const _pv = () => new THREE.Vector3(), _pq = () => new THREE.Quaternion();
+function jointW(name) { // where a joint is in the scene: on your character if one is shown, else on the AI body
+  const ix = anim.rest.index, mb = MODEL.on && MODEL.map && MODEL.map[name];
+  return (mb || character.bones[ix[name]]).getWorldPosition(_pv());
+}
+function footballKick() { // when (and how hard) a foot strikes the ball: worked out once per motion
+  if (PR.kickFor === anim) return PR.kick; PR.kickFor = anim; PR.kick = null;
+  const ix = anim.rest.index, F = []; for (let k = 0; k < anim.n; k++) F.push(S.fk(anim.rest, anim.locals[k], anim.rootPos[k]).pos);
+  let best = null;
+  for (const Sd of ['Right', 'Left']) for (let k = 1; k < anim.n - 1; k++) { const a = F[k - 1][ix[Sd + 'ToeBase']], b = F[k + 1][ix[Sd + 'ToeBase']], v = [(b[0] - a[0]) * anim.fps / 2, (b[1] - a[1]) * anim.fps / 2, (b[2] - a[2]) * anim.fps / 2], sp = Math.hypot(v[0], v[2]); if (F[k][ix[Sd + 'ToeBase']][1] < 0.25 && sp > 2.5 && (!best || sp > best.sp)) best = { k, sp, v, at: F[k][ix[Sd + 'ToeBase']] }; }
+  if (!best) { const f = F[0], tz = (f[ix.LeftToeBase][2] + f[ix.RightToeBase][2]) / 2 + 0.3; best = { k: 1e9, v: [0, 0, 0], at: [(f[ix.LeftToeBase][0] + f[ix.RightToeBase][0]) / 2, 0, tz] }; }
+  PR.kick = { k: best.k, start: [best.at[0], 0.11, best.at[2] + 0.06], v: [best.v[0] * 1.5, Math.max(2.5, Math.hypot(best.v[0], best.v[2]) * 0.45), best.v[2] * 1.5] };
+  return PR.kick;
+}
+function updateProps(k, t) {
+  if (!anim || !character) return;
+  const mode0 = $('propMode').value, mode = mode0 === 'auto' ? propAuto() : mode0;
+  for (const key in PR.built) PR.built[key].visible = key === mode;
+  if (mode === 'none') return;
+  const g = PR.built[mode] || (PR.built[mode] = buildProp(mode)); g.visible = true;
+  const ix = anim.rest.index, bq = nm => character.bones[ix[nm]].getWorldQuaternion(_pq());
+  const hand = S2 => jointW(S2 + 'Hand'), fore = S2 => jointW(S2 + 'ForeArm');
+  const handFrame = S2 => { const q = bq(S2 + 'Hand'), sx = S2 === 'Left' ? 1 : -1; return { q, fing: new THREE.Vector3(sx, 0, 0).applyQuaternion(q), palm: new THREE.Vector3(0, -1, 0).applyQuaternion(q) }; };
+  const along = (obj, top, dir) => { obj.position.copy(top); obj.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir.clone().normalize()); };
+  if (mode === 'gloves') for (const h of g.children) { const S2 = h.userData.side; h.position.copy(hand(S2)); h.quaternion.copy(bq(S2 + 'Hand')); }
+  else if (mode === 'golf' || mode === 'bat') {
+    const L = hand('Left'), Rh = hand('Right'); let dir = Rh.clone().sub(L);
+    if (dir.length() < 0.04) dir = Rh.clone().sub(fore('Right')); dir.normalize(); // hands stacked on the grip: the shaft runs from the top hand through the bottom hand (else it carries on from the forearm)
+    along(g, L.clone().addScaledVector(dir, -0.06), dir);
+  } else if (mode === 'racket') { const h = hand('Right'), d = h.clone().sub(fore('Right')).normalize(); along(g, h.clone().addScaledVector(d, 0.03), d); }
+  else if (mode === 'basketball') {
+    const L = hand('Left'), Rh = hand('Right'), fr = handFrame('Right');
+    if (L.distanceTo(Rh) < 0.4) { const m = L.clone().add(Rh).multiplyScalar(0.5), fl = handFrame('Left'); g.position.copy(m).addScaledVector(fr.palm.clone().add(fl.palm).normalize(), 0.1); }
+    else if (Rh.y < 1.15) { const T = 0.55, u = Math.abs(Math.cos(Math.PI * ((t % T) / T))); g.position.set(Rh.x, 0.12 + Math.max(0, Rh.y - 0.25) * u, Rh.z); } // dribbling: bounces between hand and floor
+    else g.position.copy(Rh).addScaledVector(fr.palm, 0.13).addScaledVector(fr.fing, 0.04);
+  } else if (mode === 'football') {
+    const kk = footballKick(), tt = (k - kk.k) / anim.fps;
+    if (tt <= 0) g.position.set(...kk.start);
+    else { let y = kk.start[1] + kk.v[1] * tt - 4.9 * tt * tt, vx = kk.v[0], vz = kk.v[2], tx = tt; if (y < 0.11) { y = 0.11; tx = Math.min(tt, 2 * kk.v[1] / 9.8 + (tt - 2 * kk.v[1] / 9.8) * 0.5); } g.position.set(kk.start[0] + vx * tx, y, kk.start[2] + vz * tx); g.rotation.x = tt * 12; }
+  } else if (mode === 'bike') {
+    const { rw, fw, crank, pedals, B } = g.userData, tr = anim.bikeTrack && anim.bikeTrack[k], hips = character.bones[0].getWorldPosition(_pv());
+    const yaw = (tr && tr.on ? tr.yaw : 0) * Math.PI / 180, q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+    g.quaternion.copy(q); g.position.copy(hips).sub(new THREE.Vector3(...B.hip).applyQuaternion(q)); g.position.y = 0;
+    const th = tr && tr.on ? tr.crank : t * 7, dist = tr && tr.on ? tr.dist : t * 4.5;
+    rw.rotation.x = fw.rotation.x = dist / 0.34; crank.rotation.x = -th; // crank arms line up with the pedals (and the rider's feet)
+    for (const pd of pedals) { const sx = pd.userData.sx, a = th + (sx > 0 ? 0 : Math.PI); pd.position.set(sx * B.tread, B.bb[1] - Math.cos(a) * B.crank, B.bb[2] + Math.sin(a) * B.crank); }
+  }
+}
+function fillProps() {
+  const cur = $('propMode').value, auto = propAuto();
+  $('propList').innerHTML = Object.entries(PROP_INFO).map(([k, nm]) => `<button class="propbtn${k === cur ? ' on' : ''}" data-k="${k}">${nm}${k === 'auto' && auto !== 'none' ? ' <small>(' + PROP_INFO[auto].split(' ')[0] + ')</small>' : ''}</button>`).join('');
+  $('tProps').classList.toggle('on', (cur === 'auto' ? auto : cur) !== 'none');
+}
+$('tProps').onclick = e => { e.stopPropagation(); fillProps(); $('propsPanel').classList.toggle('open'); $('physPanel').classList.remove('open'); };
+$('propList').onclick = e => { const b = e.target.closest('button'); if (!b) return; $('propMode').value = b.dataset.k; $('propMode').dispatchEvent(new Event('change')); fillProps(); applyAt(curTime); requestRender(); };
+document.addEventListener('pointerdown', e => { if (!e.target.closest('#propsPanel') && !e.target.closest('#tProps')) $('propsPanel').classList.remove('open'); });
 
 // ---------- 🧠 Teach your AI: an example-based motion memory ----------
 // You show it real moves with words. A prompt is split into steps ("then", commas); each step is matched to your taught moves
