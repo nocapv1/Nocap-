@@ -84,6 +84,9 @@ input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
 .take b{display:block;font-size:13px;word-break:break-word}
 .take small{color:var(--faint);font-size:11.5px}
 .take .acts{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+.libbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 8px}.libbar .btn{padding:6px 10px;font-size:13px}
+.picking .take{cursor:pointer;position:relative}.picking .take .acts{display:none}.take .tick{display:none}.picking .take .tick{display:grid;place-items:center;position:absolute;top:6px;left:6px;width:24px;height:24px;border-radius:7px;border:2px solid var(--line);background:var(--panel2);font-size:15px;font-weight:700;color:var(--bg)}
+.picking .take.picked{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}.picking .take.picked .tick{background:var(--accent);border-color:var(--accent)}
 .take .acts .btn{padding:4px 8px;font-size:12px;min-height:0 !important}
 .trimbar{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:10px 12px;margin:0 10px 10px}
 .trimtrack{position:relative;height:34px;background:var(--panel);border:1px solid var(--line);border-radius:8px;touch-action:none;margin:4px 8px 10px}
@@ -2524,13 +2527,27 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         const M_ = MOVES[p.move], cyc = M_.dur / p.speed, K = M_.keys, tp = M_.strike && K.length > 3 ? K[3][0] : 0.6; // just after contact
         p.len = cyc * Math.min(1, tp + 0.1); p.combo = true; } }
     const total = plan.reduce((a, p) => a + p.len, 0), n = Math.max(2, Math.round(total * fps) + 1), rest = buildRest({ ...DEFAULT_M }), ix = rest.index, J = rest.joints;
-    const BLEND = 0.18, TWIST = {}; let FISTW = 0; const locals = [], rootPos = [], contacts = []; let px = 0, pz = 0, yaw = 0;
+    const BLEND = 0.18, TWIST = {}, PALMF = { Left: 0, Right: 0 }; let FISTW = 0; const locals = [], rootPos = [], contacts = []; let px = 0, pz = 0, yaw = 0;
     const off = j => len(J[ix[j]].offset), LA1 = off('LeftForeArm'), LA2 = off('LeftHand'), LL1 = off('LeftLeg'), LL2 = off('LeftFoot');
     // arms keep their twist from frame to frame (the shortest turn from last frame's direction), drifting gently back to the
     // natural twist only when that's well defined: no more forearm / wrist spinning round mid-hook or overhand
-    const twistKeep = (tr, key, axis, d) => {
-      const abs = qFromTo(axis, d); if (!tr) return abs; const pr = tr[key]; let q = abs;
-      if (pr) { const tq = qnorm(qmul(qFromTo(pr.d, d), pr.q)); q = dot(norm(d), axis) > -0.3 ? qslerp(tq, abs, 0.2) : tq; }
+    // which way the palm faces: in towards the body / the other hand (fists up in the guard, arms hanging, arms raised),
+    // down when the arm reaches forward or across (jab, cross, hook). The rest pose palm is -y; the bone runs along +-x.
+    // palmFwd 0..1 turns it to face forwards (waving).
+    const ARM_Z = norm([-0.3214, -0.342, 0.883]), ARM_Q = [0.1508, 0.6562, 0.4798, -0.5626]; // left arm reference (found by search): palms in for the guard / arms up / uppercuts, down-in on jabs, back-down on hooks
+    const armQ = (sx, d, palmFwd = 0) => {
+      d = norm(d); const Z = sx > 0 ? ARM_Z : [-ARM_Z[0], ARM_Z[1], ARM_Z[2]], Q = sx > 0 ? ARM_Q : [ARM_Q[0], -ARM_Q[1], -ARM_Q[2], ARM_Q[3]];
+      let q = qnorm(qmul(qFromTo(Z, d), Q)); // one smooth twist for every direction; the only unclear one is straight back behind the shoulder
+      if (palmFwd > 0) { // waving: palm turned to face forwards
+        const q1 = qFromTo([sx, 0, 0], d); let pp = sub([0, 0, 1], sc(d, d[2])); const pl = len(pp);
+        if (pl > 0.05) { pp = sc(pp, 1 / pl); const p1 = qrot(q1, [0, -1, 0]), ang = Math.atan2(dot(cross(p1, pp), d), dot(p1, pp)); q = qslerp(q, qnorm(qmul(axq(d, ang * 180 / Math.PI), q1)), palmFwd); }
+      }
+      return { q, ok: clamp((1 + dot(d, Z)) / 0.4, 0, 1) };
+    };
+    const dot4 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+    const twistKeep = (tr, key, sx, d, palmFwd) => {
+      const A_ = armQ(sx, d, palmFwd), abs = A_.q; if (!tr) return abs; const pr = tr[key]; let q = abs;
+      if (pr) { const tq = qnorm(qmul(qFromTo(pr.d, d), pr.q)); if (A_.ok > 0.05) { const ang = 2 * Math.acos(Math.min(1, Math.abs(dot4(tq, abs)))), w = Math.min(1, ang > 1e-4 ? (A_.ok * 60 * Math.PI / 180) / ang : 1); q = qslerp(tq, abs, w); } else q = tq; } // follows the natural twist, at most 60° a frame (less near the one unclear direction): no wrist spins
       tr[key] = { q, d: d.slice() }; return q;
     };
     const torsoG = (P_, hy, tr) => {
@@ -2539,7 +2556,8 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const G = {}; G.Hips = Hq; G.Spine = qslerp(Hq, Cq, 1 / 3); G.Spine1 = qslerp(Hq, Cq, 2 / 3); G.Spine2 = Cq; G.Neck = Cq; G.Head = qmul(Cq, qmul(axq([0, 1, 0], P_.headYaw || 0), axq([1, 0, 0], (P_.headPitch || 0) - (P_.chestPitch || 0) * 0.6)));
       for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
         G[S + 'Shoulder'] = qmul(Cq, qmul(axq([0, 1, 0], -sx * (P_['pro' + S[0]] || 0)), axq([0, 0, 1], sx * (P_['shr' + S[0]] || 0)))); // collarbone: forward (reach) / up (shrug)
-        G[S + 'Arm'] = qmul(Cq, twistKeep(tr, S + 'Arm', [sx, 0, 0], P_.dirs[S + 'Arm'])); G[S + 'ForeArm'] = qmul(Cq, twistKeep(tr, S + 'ForeArm', [sx, 0, 0], P_.dirs[S + 'ForeArm'])); G[S + 'Hand'] = G[S + 'ForeArm'];
+        const pf = (P_.palmFwd || {})[S] || 0;
+        G[S + 'Arm'] = qmul(Cq, twistKeep(tr, S + 'Arm', sx, P_.dirs[S + 'Arm'], pf * 0.5)); G[S + 'ForeArm'] = qmul(Cq, twistKeep(tr, S + 'ForeArm', sx, P_.dirs[S + 'ForeArm'], pf)); G[S + 'Hand'] = G[S + 'ForeArm'];
         G[S + 'UpLeg'] = qmul(Hq, qFromTo([0, -1, 0], P_.dirs[S + 'UpLeg'])); G[S + 'Leg'] = qmul(Hq, qFromTo([0, -1, 0], P_.dirs[S + 'Leg'])); G[S + 'Foot'] = axq([0, 1, 0], hy);
       }
       return { G, Hq, Cq };
@@ -2657,6 +2675,8 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       if (biking) { const v = MOVES[mv].travel * (cur.p.speed || 1); if (k > 0) { crankA += 2 * Math.PI * (v / fps) / 5.2; bikeDist += v / fps; } P_ = bikeSolve(P_, crankA); }
       P_ = fightSolve(P_, MOVES[mv].strike, style.peekaboo ? 'peekaboo' : style.ali ? 'ali' : style.roll ? 'roll' : 'std');
       if (style.south) P_ = mirrorPose(P_, false); // southpaw / left-handed: the whole body mirrored
+      { const wv = /^(wave|salute)$/.test(mv), side = cur.p.mirror ? 'Left' : 'Right', o = side === 'Right' ? 'Left' : 'Right', st = 1 / (0.2 * fps);
+        PALMF[side] = clamp(PALMF[side] + (wv ? st : -st), 0, 1); PALMF[o] = clamp(PALMF[o] - st, 0, 1); P_.palmFwd = { ...PALMF }; if (style.south) P_.palmFwd = { Left: PALMF.Right, Right: PALMF.Left }; }
       const hy = P_.hipsYaw + yaw + vYaw, { G } = torsoG(P_, hy, TWIST);
       for (const S of ['Left', 'Right']) { const fy = P_['fy' + S[0]]; if (fy != null) G[S + 'Foot'] = axq([0, 1, 0], fy + yaw + vYaw); }
       const loc = locOf(G);
@@ -4197,6 +4217,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <section class="card">
     <h2><span class="n">5</span>Library <span style="margin-left:auto;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400" id="libCount"></span></h2>
     <div class="hint" style="margin:0 0 8px">Every motion you generate is saved here on this device, with its video. Open it again or download it any time, even offline.</div>
+    <div class="libbar"><button class="btn" id="libSel">☑️ Select</button><span id="libSelActs" style="display:none;gap:6px;flex-wrap:wrap"><button class="btn" id="libAll">All</button><button class="btn" id="libDelSel">🗑 Delete</button><button class="btn" id="libCancel">Cancel</button></span></div>
     <div id="libList"></div>
   </section>
 </aside>
@@ -5665,16 +5686,36 @@ async function saveTake(cv) {
 function takeAnim(take) { const s = take.settings || {}; const o = { ...opts(), fps: take.meta.fps, W: take.meta.W, H: take.meta.H };
   const SV = (s.solverVer || 'classic') === 'classic' && window.SolverClassic ? window.SolverClassic : S;
   const base = take.baked && take.baked.anim && !take.prompt ? take.baked.anim : SV.solveAll(take.frames, o); return applyEdits(base, s.edits); }
+let LIBSEL = null, LIB_IDS = [], delSelArm = false; // ☑️ multi-select (declared before anything can draw the library)
 async function renderLibrary() {
   let takes = []; try { takes = (await LIB.all()).sort((a, b) => (+b.mod || +b.id || 0) - (+a.mod || +a.id || 0)); /* most recent first */ } catch (e) { $('libList').innerHTML = '<div class="hint">Library is not available in this browser mode.</div>'; return; }
   $('libCount').textContent = takes.length ? `${takes.length} saved` : '';
   if (!takes.length) { $('libList').innerHTML = '<div class="hint">Nothing saved yet. Generate a motion and it appears here.</div>'; return; }
-  $('libList').innerHTML = takes.map(k => `<div class="take" data-id="${k.id}">${k.thumb ? `<img alt="" data-thumb="${k.id}">` : '<div class="ph"></div>'}<div><b>${(k.name || 'motion').replace(/[<>&]/g, '')}</b><small>${new Date(k.mod || k.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} · ${(+k.dur || 0).toFixed(1)}s${k.prompt ? ' · ✍️ text' : (k.videoBuf || k.video) ? '' : ' · motion only'}${k.status === 'processing' ? ' · <span style="color:var(--warn)">not finished</span>' : ''}</small>
+  LIB_IDS = takes.map(k => k.id); if (LIBSEL) for (const id of [...LIBSEL]) if (!LIB_IDS.includes(id)) LIBSEL.delete(id);
+  $('libList').classList.toggle('picking', !!LIBSEL);
+  $('libList').innerHTML = takes.map(k => `<div class="take${LIBSEL && LIBSEL.has(k.id) ? ' picked' : ''}" data-id="${k.id}"><span class="tick">${LIBSEL && LIBSEL.has(k.id) ? '✓' : ''}</span>${k.thumb ? `<img alt="" data-thumb="${k.id}">` : '<div class="ph"></div>'}<div><b>${(k.name || 'motion').replace(/[<>&]/g, '')}</b><small>${new Date(k.mod || k.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} · ${(+k.dur || 0).toFixed(1)}s${k.prompt ? ' · ✍️ text' : (k.videoBuf || k.video) ? '' : ' · motion only'}${k.status === 'processing' ? ' · <span style="color:var(--warn)">not finished</span>' : ''}</small>
     <div class="acts"><button class="btn" data-a="open">▶ Open</button><button class="btn" data-a="edit">✏️ Edit</button><button class="btn" data-a="fbx">FBX</button><button class="btn" data-a="bvh">BVH</button><button class="btn" data-a="glb">GLB</button><button class="btn" data-a="del" title="Delete">🗑</button></div></div></div>`).join('');
   for (const k of takes) if (k.thumb) { const img = $('libList').querySelector(`[data-thumb="${k.id}"]`); if (img) { img.src = URL.createObjectURL(k.thumb); img.onload = () => URL.revokeObjectURL(img.src); } }
 }
 let delArm = null;
+// ☑️ pick several clips and delete them together
+function libSelUI() {
+  const on = !!LIBSEL; $('libSel').style.display = on ? 'none' : ''; $('libSelActs').style.display = on ? 'inline-flex' : 'none';
+  $('libDelSel').textContent = delSelArm ? `Delete ${LIBSEL.size}? Tap again` : `🗑 Delete${on && LIBSEL.size ? ' (' + LIBSEL.size + ')' : ''}`;
+  $('libAll').textContent = on && LIBSEL.size === LIB_IDS.length && LIB_IDS.length ? 'None' : 'All';
+}
+$('libSel').onclick = () => { LIBSEL = new Set(); delSelArm = false; libSelUI(); renderLibrary(); };
+$('libCancel').onclick = () => { LIBSEL = null; delSelArm = false; libSelUI(); renderLibrary(); };
+$('libAll').onclick = () => { if (!LIBSEL) return; LIBSEL = LIBSEL.size === LIB_IDS.length ? new Set() : new Set(LIB_IDS); delSelArm = false; libSelUI(); renderLibrary(); };
+$('libDelSel').onclick = async () => {
+  if (!LIBSEL || !LIBSEL.size) { toast('Tap the clips you want to delete first.'); return; }
+  if (!delSelArm) { delSelArm = true; libSelUI(); setTimeout(() => { if (delSelArm) { delSelArm = false; libSelUI(); } }, 4000); return; }
+  const ids = [...LIBSEL], n = ids.length; delSelArm = false;
+  for (const id of ids) { try { await LIB.del(id); } catch (er) {} }
+  LIBSEL = null; libSelUI(); toast(`Deleted ${n} clip${n === 1 ? '' : 's'} from Library.`); renderLibrary();
+};
 $('libList').onclick = async e => {
+  if (LIBSEL) { const t = e.target.closest('.take'); if (!t) return; const id = +t.dataset.id; if (LIBSEL.has(id)) LIBSEL.delete(id); else LIBSEL.add(id); delSelArm = false; t.classList.toggle('picked', LIBSEL.has(id)); t.querySelector('.tick').textContent = LIBSEL.has(id) ? '✓' : ''; libSelUI(); return; }
   const b = e.target.closest('button[data-a]'); if (!b || busy) return;
   const id = +b.closest('.take').dataset.id, take = await LIB.get(id); if (!take) return renderLibrary();
   const base = (take.name || 'motion') + '_' + id;
