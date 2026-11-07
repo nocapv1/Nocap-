@@ -928,7 +928,8 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     }
     // left/right swap repair: if swapping a limb pair matches the previous frame much better, swap it
     if (opt.fixSwaps !== false) {
-      const LIMBS = [[[23, 24], [25, 26], [27, 28], [29, 30], [31, 32]], [[11, 12], [13, 14], [15, 16], [17, 18], [19, 20], [21, 22]], [[7, 8], [1, 4], [2, 5], [3, 6], [9, 10]]];
+      // arms and legs only (as on Thu 5 Nov): swapping the hips or shoulders here turned side-on boxers round on a right hand
+      const LIMBS = [[[25, 26], [27, 28], [29, 30], [31, 32]], [[13, 14], [15, 16], [17, 18], [19, 20], [21, 22]]];
       let prev = null, prevI = null;
       for (let k = 0; k < pw.length; k++) {
         const w = pw[k]; if (!w) continue;
@@ -940,7 +941,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
               const w2 = w.slice(), i2 = pi[k] && pi[k].slice();
               for (const [a, b] of pairs) { w2[a] = w[b]; w2[b] = w[a]; if (i2) { i2[a] = pi[k][b]; i2[b] = pi[k][a]; } }
               pw[k] = w2; if (i2) pi[k] = i2;
-              if (pairs[0][0] === 11) { const h = hl[k]; hl[k] = hr[k]; hr[k] = h; }
+              if (pairs[0][0] === 13) { const h = hl[k]; hl[k] = hr[k]; hr[k] = h; }
             }
           }
         }
@@ -1018,7 +1019,11 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     // sharp mode: wrists, hands, elbows, ankles and feet follow fast moves (punches, kicks) instead of being rounded off
     const EXTREME = new Set([13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 25, 26, 27, 28, 29, 30, 31, 32]);
     const sharpFn = opt.sharp !== true ? null : (p, m, b) => (EXTREME.has(p) ? [m * 1.25, b * 5] : [m, b]);
-    let P = smoothPoints(pw.map(a => a.map(toY)), dt, mc, 0.4, sharpFn);
+    // shoulders + hips (the body's facing) get the steadier Thursday-5-Nov smoothing, so a fast punch can't swing the whole body
+    // round; arms, legs and head keep the newer speed-keeping smoothing
+    const TORSO = new Set([11, 12, 23, 24]), torsoMc = s <= 0 ? 999 : 6 * Math.pow(0.06, s * 0.75);
+    const pointFn = (p, m, b) => (TORSO.has(p) ? [torsoMc, b] : sharpFn ? sharpFn(p, m, b) : [m, b]);
+    let P = smoothPoints(pw.map(a => a.map(toY)), dt, mc, 0.4, pointFn);
     let R = smoothPoints(roots.map(r => [toY(r)]), dt, s <= 0 ? 999 : { loess: Math.round(win * 1.6) + 2 }, 0.2).map(a => a[0]); // root depth is the noisiest: a bit wider
     const hmc = s <= 0 ? 999 : { loess: Math.max(1, Math.round(win * 0.8)) };
     const HL = hlF ? smoothPoints(hlF.map(a => a.map(toY)), dt, hmc, 0.6) : null;
