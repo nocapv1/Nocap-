@@ -84,12 +84,14 @@ jobs:
           mkdir -p _site/characters && cd _site/characters
           T=https://raw.githubusercontent.com/mrdoob/three.js/r160/examples/models/gltf
           get() { curl -fsSL --retry 2 --max-time 90 -o "$1" "$2" || { rm -f "$1"; echo "skipped $1"; }; }
-          get rpm-male.glb https://readyplayerme.github.io/visage/male.glb
-          get rpm-female.glb https://readyplayerme.github.io/visage/female.glb
+          # realistic Ready Player Me avatars: first source that still has them wins
+          for u in https://readyplayerme.github.io/visage/male.glb https://raw.githubusercontent.com/readyplayerme/visage/main/public/male.glb https://raw.githubusercontent.com/readyplayerme/visage/develop/public/male.glb $T/readyplayer.me.glb; do [ -s rpm-male.glb ] || get rpm-male.glb $u; done
+          for u in https://readyplayerme.github.io/visage/female.glb https://raw.githubusercontent.com/readyplayerme/visage/main/public/female.glb https://raw.githubusercontent.com/readyplayerme/visage/develop/public/female.glb; do [ -s rpm-female.glb ] || get rpm-female.glb $u; done
           get soldier.glb $T/Soldier.glb
           get michelle.glb $T/Michelle.glb
           get xbot.glb $T/Xbot.glb
-          node -e 'const fs=require("fs");const l=fs.readdirSync(".").filter(f=>f.endsWith(".glb")&&fs.statSync(f).size>20000).map(f=>({id:f.replace(/\.glb$/,""),file:f,size:fs.statSync(f).size}));fs.writeFileSync("list.json",JSON.stringify(l));console.log(l)'
+          # keep only full-body humanoids (hips, arms, legs, feet in the skeleton)
+          node -e 'const fs=require("fs");const full=f=>{try{const b=fs.readFileSync(f);if(b.readUInt32LE(0)!==0x46546C67)return false;const n=b.readUInt32LE(12),j=JSON.parse(b.slice(20,20+n).toString());const names=(j.nodes||[]).map(x=>String(x.name||"").toLowerCase().replace(/^.*[:|]/,"").replace(/mixamorig\d*/,""));return ["hips","leftupleg","leftleg","leftfoot","leftarm","rightupleg","rightfoot"].every(k=>names.some(x=>x.replace(/[_\s.]/g,"")===k));}catch(e){return false}};const l=fs.readdirSync(".").filter(f=>f.endsWith(".glb")&&fs.statSync(f).size>20000).filter(f=>{const ok=full(f);if(!ok){console.log("not a full-body humanoid, dropped",f);fs.unlinkSync(f);}return ok;}).map(f=>({id:f.replace(/\.glb$/,""),file:f,size:fs.statSync(f).size}));fs.writeFileSync("list.json",JSON.stringify(l));console.log(l)'
 
       - name: Check every file the app needs is present
         run: |
