@@ -853,9 +853,9 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const soft = names.map(nm => {
       if (/Thumb|Index|Middle|Ring|Pinky/.test(nm)) return o.arms !== false ? 0.6 : 0;
       if (/Hand$/.test(nm)) return o.arms !== false ? 0.45 : 0; if (/ForeArm$/.test(nm)) return o.arms !== false ? 0.75 : 0;
-      if (/Arm$/.test(nm)) return o.arms !== false ? 0.65 : 0; if (/Shoulder$/.test(nm)) return o.arms !== false ? 0.4 : 0;
-      if (nm === 'Head') return o.body !== false ? 0.8 : 0; if (nm === 'Neck') return o.body !== false ? 0.6 : 0;
-      if (nm === 'Spine2') return o.body !== false ? 0.5 : 0; if (nm === 'Spine1') return o.body !== false ? 0.4 : 0; if (nm === 'Spine') return o.body !== false ? 0.3 : 0;
+      if (/Arm$/.test(nm)) return o.arms !== false ? 0.7 : 0; if (/Shoulder$/.test(nm)) return o.arms !== false ? 0.6 : 0;
+      if (nm === 'Head') return o.body !== false ? 0.9 : 0; if (nm === 'Neck') return o.body !== false ? 0.7 : 0;
+      if (nm === 'Spine2') return o.body !== false ? 0.6 : 0; if (nm === 'Spine1') return o.body !== false ? 0.5 : 0; if (nm === 'Spine') return o.body !== false ? 0.4 : 0;
       if (/UpLeg$/.test(nm)) return o.legs ? 0.25 : 0; if (/Leg$/.test(nm)) return o.legs ? 0.35 : 0; if (/Foot$|ToeBase$/.test(nm)) return o.legs ? 0.45 : 0;
       return 0;
     });
@@ -868,23 +868,23 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       let s0 = [0, 0, 0]; for (const d of [-1, 0, 1]) { const q = clamp(k + d, 1, n - 2); s0 = add(s0, sc(add(sub(P(q + 1)[j], sc(P(q)[j], 2)), P(q - 1)[j]), 1 / (dt * dt))); }
       s0 = sc(s0, 1 / 3); const l = len(s0); return l > 40 ? sc(s0, 40 / l) : s0;
     };
-    const zeta = 0.95 - 0.73 * b, state = J.map((_, j) => ({ q: F[0].rot[j].slice(), w: [0, 0, 0] })), out = [];
+    const zeta = 0.9 - 0.78 * b, state = J.map((_, j) => ({ q: F[0].rot[j].slice(), w: [0, 0, 0] })), out = [];
     for (let k = 0; k < n; k++) {
       const G = [], loc = [];
       for (let j = 0; j < J.length; j++) {
         const p = J[j].parent, tq = F[k].rot[j], lt = a.locals[k][j];
         if (!soft[j] || p < 0 || k === 0) { G[j] = p >= 0 && !soft[j] ? qnorm(qmul(G[p], lt)) : tq; if (soft[j]) { state[j].q = G[j].slice(); state[j].w = [0, 0, 0]; } }
         else {
-          const om = 2 * Math.PI * (12 - 9.5 * s * soft[j]), sub_ = Math.max(1, Math.ceil(om * dt / 0.25)), h = dt / sub_, st = state[j], prev = F[k - 1].rot[j];
+          const om = 2 * Math.PI * (11 - 9.2 * s * soft[j]), sub_ = Math.max(1, Math.ceil(om * dt / 0.25)), h = dt / sub_, st = state[j], prev = F[k - 1].rot[j];
           const c = child[j], bv = c >= 0 ? sub(F[k].pos[c], F[k].pos[j]) : null, bl = bv ? len(bv) : 0;
-          const inert = bv && bl > 0.02 ? sc(cross(sc(bv, 1 / bl), sc(acc(j, k), -1)), 0.55 * s * soft[j] / Math.max(0.12, bl)) : [0, 0, 0];
+          const inert = bv && bl > 0.02 ? sc(cross(sc(bv, 1 / bl), sc(acc(j, k), -1)), 0.85 * s * soft[j] / Math.max(0.12, bl)) : [0, 0, 0];
           for (let i = 1; i <= sub_; i++) {
             const qt = qslerp(prev, tq, i / sub_), e = rotvec(qmul(qt, qconj(st.q)));
             const al = add(sub(sc(e, om * om), sc(st.w, 2 * zeta * om)), inert);
             st.w = add(st.w, sc(al, h)); st.q = qnorm(qmul(expv(sc(st.w, h)), st.q));
           }
           // never drift too far from the real pose
-          const dev = rotvec(qmul(tq, qconj(st.q))), dl = len(dev), mx = (12 + 40 * s * soft[j]) * Math.PI / 180;
+          const dev = rotvec(qmul(tq, qconj(st.q))), dl = len(dev), mx = (12 + 50 * s * soft[j]) * Math.PI / 180;
           if (dl > mx) { st.q = qnorm(qmul(expv(sc(dev, (dl - mx) / dl)), st.q)); st.w = sc(st.w, 0.5); }
           G[j] = st.q;
         }
@@ -894,6 +894,19 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     }
     for (let k = 1; k < n; k++) for (let j = 0; j < out[k].length; j++) { const x = out[k - 1][j], y = out[k][j]; if (x[0] * y[0] + x[1] * y[1] + x[2] * y[2] + x[3] * y[3] < 0) out[k][j] = y.map(v => -v); }
     return { ...a, locals: out };
+  }
+
+  // ---- smoothing for any animation: gaussian blur over time (joint rotations + root), s 0..1. Softens hand-overs between moves.
+  function smoothAnim(a, s) {
+    s = clamp(s, 0, 1); const sig = s * s * 6 * a.fps / 30; if (!a || sig < 0.35) return a;
+    const n = a.n, R = Math.ceil(sig * 2.5), wts = []; for (let d = -R; d <= R; d++) wts.push(Math.exp(-(d * d) / (2 * sig * sig)));
+    const J = a.locals[0].length, locals = a.locals.map(l => l.slice());
+    for (let j = 0; j < J; j++) {
+      const seq = a.locals.map(l => l[j].slice()); for (let k = 1; k < n; k++) { const x = seq[k - 1], y = seq[k]; if (x[0] * y[0] + x[1] * y[1] + x[2] * y[2] + x[3] * y[3] < 0) seq[k] = y.map(v => -v); }
+      for (let k = 0; k < n; k++) { const acc = [0, 0, 0, 0]; let ws = 0; for (let d = -R; d <= R; d++) { const q = clamp(k + d, 0, n - 1), w = wts[d + R]; for (let c = 0; c < 4; c++) acc[c] += seq[q][c] * w; ws += w; } locals[k][j] = qnorm(acc.map(v => v / ws)); }
+    }
+    const rootPos = a.rootPos.map((_, k) => { const acc = [0, 0, 0]; let ws = 0; for (let d = -R; d <= R; d++) { const q = clamp(k + d, 0, n - 1), w = wts[d + R]; for (let c = 0; c < 3; c++) acc[c] += a.rootPos[q][c] * w; ws += w; } return acc.map(v => v / ws); });
+    return { ...a, locals, rootPos };
   }
 
   // ---- full pipeline ----
@@ -995,7 +1008,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     // convert to Y-up and smooth (zero-lag one-euro)
     const s = clamp(opt.smooth, 0, 1);
     // smoothing = how many neighbouring frames each frame is fitted against (0 = snappy/raw, 1 = very smooth). It never slows the motion down.
-    const win = Math.round((1 + s * 9) * fps / 30);
+    const win = Math.round((1 + 5 * s + 16 * s * s * s) * fps / 30); // grows fast near the top so the right end is really smooth
     const mc = s <= 0 ? 999 : opt.legacySmooth ? 6 * Math.pow(0.06, s) : { loess: win };
     // sharp mode: wrists, hands, elbows, ankles and feet follow fast moves (punches, kicks) instead of being rounded off
     const EXTREME = new Set([13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 25, 26, 27, 28, 29, 30, 31, 32]);
@@ -1203,7 +1216,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     if (opt.kneeGuard !== false) locals = kneeGuard(rest, locals, fps);
     if (opt.elbowGuard !== false) locals = elbowGuard(rest, locals, fps);
     if (opt.proLimits !== false) locals = proLimits(rest, locals);
-    if (opt.antiJitter !== false) locals = antiJitter(locals, fps, Math.max(1, Math.round((1 + 3 * clamp(opt.smooth, 0, 1)) * fps / 30)));
+    if (opt.antiJitter !== false) locals = antiJitter(locals, fps, Math.max(1, Math.round((1 + 3 * clamp(opt.smooth, 0, 1) + 7 * clamp(opt.smooth, 0, 1) ** 3) * fps / 30)));
     if (opt.footIK !== false || opt.inPlace) locals = footCleanup(rest, locals, rootPos, C, M, fps, !!opt.inPlace);
     if (opt.footIK !== false || opt.inPlace) { // final pass: smooth the legs so planting a foot never makes the knee pop
       const legs = ['Left', 'Right'].flatMap(S => [S + 'UpLeg', S + 'Leg', S + 'Foot']).map(nm => rest.index[nm]);
@@ -1925,7 +1938,12 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   });
   // ---- boxing: strikes are aimed at an imaginary opponent in front (chin / body). Orthodox: lead = left, rear = right.
   // Body rotation: lead punches turn the chest further to the right (closing), rear punches turn it through to the left.
-  const STRIKE = (type, arm, body, dur, load, peak, tp = 0.45) => ({ dur, strike: { type, arm, body }, keys: K([0, guardP()], [0.18, guardP({}, { ...load })], [tp, guardP({}, { ...peak, ext: 1 })], [tp + 0.12, guardP({}, { ...peak, ext: 1 })], [1, guardP()]) });
+  // keys: guard → load → contact → hold → follow-through (keeps turning / travelling past the target) → back to guard
+  const FOLLOW = { hook: (pk, sgn) => ({ hipsYaw: pk.hipsYaw + 8 * sgn, chestYaw: pk.chestYaw + 16 * sgn, ext: 1.2 }), upper: pk => ({ chestPitch: (pk.chestPitch || 0) - 5, ext: 1.12 }), straight: () => ({ ext: 1 }), overhand: (pk, sgn) => ({ chestYaw: pk.chestYaw + 10 * sgn, chestPitch: (pk.chestPitch || 0) + 8, ext: 1.15 }), elbow: (pk, sgn) => ({ chestYaw: pk.chestYaw + 10 * sgn, ext: 1.1 }), parry: () => ({ ext: 1 }) };
+  const STRIKE = (type, arm, body, dur, load, peak, tp = 0.45) => {
+    const sgn = arm === 'Left' ? -1 : 1, fo = { ...peak, ...(FOLLOW[type] || FOLLOW.straight)(peak, sgn) };
+    return { dur, strike: { type, arm, body }, keys: K([0, guardP()], [0.18, guardP({}, { ...load })], [tp, guardP({}, { ...peak, ext: 1 })], [tp + 0.08, guardP({}, { ...peak, ext: 1 })], [Math.min(0.8, tp + 0.2), guardP({}, fo)], [1, guardP()]) };
+  };
   Object.assign(MOVES, {
     jab: STRIKE('straight', 'Left', false, 0.5, {}, { hipsYaw: -42, chestYaw: -18, chestPitch: 10, shift: 0.04 }, 0.4),
     cross: STRIKE('straight', 'Right', false, 0.6, { hipsYaw: -40, chestYaw: -12 }, { hipsYaw: -6, chestYaw: 16, chestPitch: 12, shift: 0.07, pivotR: 1 }),
@@ -1938,6 +1956,15 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     bodyjab: STRIKE('straight', 'Left', true, 0.55, { dip: -0.08, chestPitch: 16 }, { hipsYaw: -42, chestYaw: -16, dip: -0.13, chestPitch: 22, shift: 0.04 }, 0.42),
     bodycross: STRIKE('straight', 'Right', true, 0.65, { hipsYaw: -40, chestYaw: -12, dip: -0.08, chestPitch: 16 }, { hipsYaw: -6, chestYaw: 16, dip: -0.13, chestPitch: 22, shift: 0.06, pivotR: 1 }),
     elbow: STRIKE('elbow', 'Left', false, 0.6, { hipsYaw: -30, chestYaw: 0 }, { hipsYaw: -58, chestYaw: -32, pivotL: 1 }, 0.5),
+    bodyupperL: STRIKE('upper', 'Left', true, 0.7, { hipsYaw: -30, chestYaw: -2, dip: -0.12, chestPitch: 18, chestRoll: 5 }, { hipsYaw: -52, chestYaw: -20, dip: -0.08, chestPitch: 14, pivotL: 1 }, 0.52),
+    bodyupper: STRIKE('upper', 'Right', true, 0.7, { hipsYaw: -45, chestYaw: -16, dip: -0.12, chestPitch: 18, chestRoll: -5 }, { hipsYaw: -10, chestYaw: 14, dip: -0.08, chestPitch: 14, pivotR: 1 }, 0.52),
+    overhand: STRIKE('overhand', 'Right', false, 0.8, { hipsYaw: -45, chestYaw: -14, dip: -0.04, chestRoll: -6 }, { hipsYaw: -2, chestYaw: 24, chestPitch: 20, dip: -0.08, shift: 0.07, pivotR: 1, chestRoll: 8 }, 0.5),
+    overhandL: STRIKE('overhand', 'Left', false, 0.75, { hipsYaw: -30, chestYaw: 0, chestRoll: 6 }, { hipsYaw: -55, chestYaw: -26, chestPitch: 18, dip: -0.06, pivotL: 1, chestRoll: -8 }, 0.5),
+    feint: STRIKE('straight', 'Left', false, 0.35, { dip: -0.02 }, { hipsYaw: -40, chestYaw: -12, dip: -0.04, ext: 0.35, shift: 0.02 }, 0.4),
+    parry: STRIKE('parry', 'Right', false, 0.4, {}, { chestYaw: -4 }, 0.4),
+    pullback: { dur: 0.7, keys: K([0, guardP()], [0.4, guardP({}, { chestPitch: -12, headPitch: 6, hipsYaw: -48, shift: -0.08, chestYaw: -14 })], [0.6, guardP({}, { chestPitch: -12, headPitch: 6, hipsYaw: -48, shift: -0.08, chestYaw: -14 })], [1, guardP()]) },
+    shoulderroll: { dur: 0.75, keys: K([0, guardP()], [0.4, guardP({}, { chestYaw: -34, hipsYaw: -48, shrL: 20, headPitch: 22, dip: -0.04, cover: 0.3 })], [0.6, guardP({}, { chestYaw: -34, hipsYaw: -48, shrL: 20, headPitch: 22, dip: -0.04, cover: 0.3 })], [1, guardP()]) },
+    stepmove: { dur: 0.6, keys: K([0, guardP()], [1, guardP()]) },
     stance: { dur: 1.2, loop: true, keys: K([0, guardP()], [0.5, guardP({}, { dip: -0.02 })], [1, guardP()]) },
     slip: { dur: 0.55, side: 'R', keys: K([0, guardP()], [0.45, guardP({}, { chestRoll: 16, chestYaw: -14, chestPitch: 16, headPitch: 18, dip: -0.06 })], [1, guardP()]) },
     weave: { dur: 0.95, side: 'R', keys: K([0, guardP()], [0.35, guardP({}, { chestRoll: -14, chestPitch: 26, chestYaw: 8, dip: -0.16 })], [0.65, guardP({}, { chestRoll: 14, chestPitch: 26, chestYaw: -12, dip: -0.16 })], [1, guardP()]) },
@@ -1947,7 +1974,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   for (const [m, free] of [['kick', 'R'], ['roundhouse', 'R'], ['knee', 'R'], ['teep', 'L']]) MOVES[m].keys = MOVES[m].keys.map(([t, P], i, a) => [t, i === 0 || i === a.length - 1 ? P : { ...P, ['plant' + free]: 0 }]);
   MOVES.shuffle.keys = MOVES.shuffle.keys.map(([t, P]) => [t, { ...P, plantL: 0, plantR: 0 }]);
   // which variant for lead / rear hand
-  const PUNCH_VARIANTS = { jab: ['jab', 'cross', 0, 'jab'], cross: ['jab', 'cross', 1, 'cross'], hook: ['hook', 'hookR', 0, 'hook'], uppercut: ['uppercutL', 'uppercut', 1, 'uppercut'], bodyhook: ['bodyhook', 'bodyhookR', 0, 'body hook'], bodyjab: ['bodyjab', 'bodycross', 0, 'body shot'], elbow: ['elbow', 'elbow', 0, 'elbow'] };
+  const PUNCH_VARIANTS = { bodyupper: ['bodyupperL', 'bodyupper', 1, 'body uppercut'], overhand: ['overhandL', 'overhand', 1, 'overhand'], feint: ['feint', 'feint', 0, 'feint'], parry: ['parry', 'parry', 1, 'parry'], jab: ['jab', 'cross', 0, 'jab'], cross: ['jab', 'cross', 1, 'cross'], hook: ['hook', 'hookR', 0, 'hook'], uppercut: ['uppercutL', 'uppercut', 1, 'uppercut'], bodyhook: ['bodyhook', 'bodyhookR', 0, 'body hook'], bodyjab: ['bodyjab', 'bodycross', 0, 'body shot'], elbow: ['elbow', 'elbow', 0, 'elbow'] };
   // guard hand positions relative to the head (fight frame: x = left, y = up, z = toward the opponent)
   const GUARD_HANDS = {
     std: { Left: [0.04, 0, 0.28], Right: [-0.09, -0.02, 0.12] }, peekaboo: { Left: [0.07, 0.03, 0.13], Right: [-0.07, 0.02, 0.12] },
@@ -1977,13 +2004,17 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   MOVES.walk = { dur: 1.1, loop: true, travel: 1.3, cycle: false };
   MOVES.run = { dur: 0.7, loop: true, travel: 3.6, cycle: true };
   const WORDS = [
+    [/\b(step back|steps back|stepping back|step backwards|step out|steps out|step in|steps in|stepping in|step forward|steps forward|stepping forward|step forwards|step up|side ?steps?|step to the (left|right)|step (left|right)|stepping)\b/, 'stepmove'],
+    [/\b(pull counter|pull and counter)\b/, 'pullback:counter'], [/\b(pull back|pulls back|lean back|leans back|leaning back|lay back)\b/, 'pullback'], [/\b(shoulder roll|roll the shoulder|philly shell)\b/, 'shoulderroll'],
+    [/\b(overhand|over hand|overhead right|looping right)\b/, 'overhand'], [/\b(feint|feints|feinting|fake jab|fake)\b/, 'feint'], [/\b(parry|parries|parrying|catch the jab|slap down)\b/, 'parry'],
+    [/\b(check hook)\b/, 'hook:check'],
     [/\b(walk|walking|walks|stroll|strolling|march|marching|step|steps|pace|pacing|wander)/, 'walk'], [/\b(run|running|runs|sprint|sprinting|jog|jogging|dash)/, 'run'],
     [/\b(jumping jacks?|star jumps?|jacks)\b/, 'jacks'], [/\b(jump shot|jumpshot|shoot|shooting|free throw|three pointer|basket)\b/, 'shoot'], [/\b(jump|jumping|jumps|hop|hopping|leap|leaping)/, 'jump'],
     [/\b(body jab|jab to the body|jab (to )?(the )?(gut|stomach|body))\b/, 'bodyjab'], [/\b(body (hook|shot|punch)|liver shot|hook to the body|(punch|hook) to the (body|gut|ribs|stomach|liver))\b/, 'bodyhook'],
     [/\b(jab|jabs|jabbing|punch|punches|punching|hit|hits|strike|strikes|straight left|lead straight)\b/, 'jab'], [/\b(cross|crosses|straight right|right hand|rear straight|power punch|straight)\b/, 'cross'],
-    [/\b(haymaker|overhand)\b/, 'hook:R'], [/\b(hook|hooks|hooking)\b/, 'hook'], [/\b(uppercut|uppercuts|upper cut|upper-cut)/, 'uppercut'],
+    [/\b(haymaker|wild hook)\b/, 'hook:R'], [/\b(hook|hooks|hooking)\b/, 'hook'], [/\b(uppercut|uppercuts|upper cut|upper-cut)/, 'uppercut'],
     [/\b(slip|slips|slipping|dodge|dodges|dodging|evade)\b/, 'slip'], [/\b(bob and weave|bob & weave|bob|bobbing|weave|weaving|duck|ducks|ducking|roll under)\b/, 'weave'],
-    [/\b(block|blocks|blocking|cover up|covering up|parry|parries|shell)\b/, 'block'], [/\b(shoulder roll|philly shell)\b/, 'slip'],
+    [/\b(block|blocks|blocking|cover up|covering up|shell|high guard)\b/, 'block'],
     [/\b(knee|knees|knee strike|kneeing)\b/, 'knee'], [/\b(elbow|elbows|elbow strike)\b/, 'elbow'], [/\b(teep|push kick|front kick|front push)\b/, 'teep'],
     [/\b(roundhouse|round house|round kick|leg kick|low kick|body kick|head kick|high kick)/, 'roundhouse'], [/\b(kick the ball|shoot the ball|soccer kick|football kick|penalty|free kick|pass the ball|volley)\b/, 'soccerkick'], [/\b(kick|kicks|kicking)/, 'kick'],
     [/\b(shuffle|shuffles|footwork|bounce on (my|his|her|the) feet)\b/, 'shuffle'], [/\b(pivot|pivots|pivoting)\b/, 'turn:45'],
@@ -2007,7 +2038,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   // boxing numbers: 1 jab, 2 cross, 3 lead hook, 4 rear hook, 5 lead uppercut, 6 rear uppercut
   const PUNCH_NUM = { 1: ['jab', null], 2: ['cross', null], 3: ['hook', 'lead'], 4: ['hook', 'rear'], 5: ['uppercut', 'lead'], 6: ['uppercut', 'rear'] };
   const STYLE_WORDS = {
-    boxing: /\b(box|boxer|boxing|fight|fighter|fighting|jab|cross|hook|uppercut|punch|punches|stance|guard|spar|sparring|mma|ufc|kickbox|kickboxing|muay|thai|karate|slip|weave|block|knee|elbow|teep|haymaker|combo|shadow ?box)/,
+    boxing: /\b(box|boxer|boxing|fight|fighter|fighting|jab|cross|hook|uppercut|punch|punches|stance|guard|spar|sparring|mma|ufc|kickbox|kickboxing|muay|thai|karate|slip|weave|block|knee|elbow|teep|haymaker|combo|shadow ?box|overhand|feint|parry|pull counter|shoulder roll|step back|step in|stepping|step forward|side ?step|right hand|left hand|body shot|lead hand|rear hand)/,
     tired: /\b(tired|exhausted|sleepy|weak|sad|depressed|hot|desert|heat)\b/, proud: /\b(proud|confident|strut|swagger|cool|catwalk|model|runway|boss)\b/,
     sneaky: /\b(sneak|sneaky|sneaking|stealth|creep|creeping|crouch(ed)?|ninja|spy|tiptoe)\b/, happy: /\b(happy|excited|joyful|cheerful|bouncy)\b/,
     angry: /\b(angry|aggressive|furious|mad|rage|explosive|powerful)\b/, drunk: /\b(drunk|dizzy|wobbly|stumbl\w*|on ice|icy|slippery)\b/, old: /\b(old|elderly|old man|old woman|grandpa|grandma)\b/,
@@ -2016,30 +2047,69 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     downhill: /\b(downhill|down a hill|downstairs|down the stairs|decline)\b/, march: /\b(march|marching|soldier|army|military|parade)\b/, carry: /\b(carry|carrying|holding a box|with a box)\b/,
     peekaboo: /\b(tyson|iron mike|mike tyson|peek ?a ?boo|peekaboo)\b/, ali: /\b(ali|muhammad ali|float like a butterfly)\b/, roll: /\b(mayweather|floyd|shoulder roll|philly shell)\b/,
     canelo: /\b(canelo|alvarez)\b/, loma: /\b(lomachenko|loma)\b/, brucelee: /\b(bruce lee|jeet kune do|jkd)\b/, conor: /\b(mcgregor|conor|notorious)\b/,
+    fury: /\b(fury|tyson fury|gypsy king)\b/, usyk: /\b(usyk|oleksandr)\b/, pacquiao: /\b(pacquiao|pacman|manny)\b/, naseem: /\b(naseem|prince naseem|naz)\b/, royjones: /\b(roy jones|rjj)\b/,
+    ggg: /\b(ggg|golovkin|triple g)\b/, joshua: /\b(joshua|anthony joshua|aj)\b/, crawford: /\b(crawford|bud crawford)\b/,
     muaythai: /\b(muay thai|muay|thai boxing|buakaw)\b/, karate: /\b(karate|kung fu|taekwondo|martial arts)\b/,
     south: /\b(southpaw|lefty|left handed|left-handed)\b/,
   };
   // themes with no specific moves: build a believable routine (varies each take)
+  // themes with no specific moves: build a believable routine. Each fighter has several; a new take picks another.
+  // entry = [move, side ('lead'/'rear'/'left'/'right'), turn degrees, step ('fwd'/'back'/'left'/'right'), to the body]
   const ROUTINES = {
-    peekaboo: [['stance'], ['weave'], ['hook', 'lead'], ['uppercut', 'rear'], ['weave'], ['bodyhook', 'lead'], ['hook', 'lead'], ['hook', 'rear']],
-    ali: [['shuffle'], ['jab'], ['jab'], ['cross'], ['shuffle'], ['slip'], ['jab'], ['cross']],
-    roll: [['stance'], ['slip'], ['cross'], ['jab'], ['slip'], ['cross'], ['hook', 'lead']],
-    canelo: [['stance'], ['slip'], ['weave'], ['bodyhook', 'lead'], ['hook', 'lead'], ['uppercut', 'rear']],
-    loma: [['shuffle'], ['jab'], ['turn', null, 45], ['cross'], ['hook', 'lead'], ['turn', null, -45], ['jab']],
-    brucelee: [['shuffle'], ['jab'], ['jab'], ['kick', 'lead'], ['cross'], ['shuffle']],
-    conor: [['stance'], ['jab'], ['cross'], ['teep'], ['cross'], ['hook', 'lead']],
-    muaythai: [['stance'], ['teep'], ['roundhouse'], ['jab'], ['cross'], ['knee'], ['elbow'], ['roundhouse']],
-    karate: [['stance'], ['cross'], ['kick'], ['block'], ['jab'], ['roundhouse']],
-    boxing: [['stance'], ['jab'], ['jab'], ['cross'], ['slip'], ['hook', 'lead'], ['cross'], ['weave'], ['jab'], ['cross']],
-    golf: [['golf']], basketball: [['dribble'], ['dribble'], ['shoot']], baseball: [['bat']], tennis: [['serve'], ['forehand']], football: [['soccerkick']],
-    workout: [['jacks'], ['jacks'], ['jacks'], ['squat'], ['lunge'], ['stretch']], celebrate: [['celebrate'], ['fistpump']],
+    peekaboo: [
+      [['stance'], ['weave'], ['hook', 'lead'], ['uppercut', 'rear'], ['weave'], ['bodyhook', 'lead'], ['hook', 'lead'], ['hook', 'rear']],
+      [['stance'], ['slip'], ['weave', 'left'], ['hook', 'lead', null, 'fwd'], ['uppercut', 'rear'], ['hook', 'lead']],
+      [['stance'], ['weave'], ['bodyjab', 'rear'], ['hook', 'lead'], ['weave', 'left'], ['uppercut', 'rear'], ['bodyhook', 'lead']],
+      [['stance'], ['jab', 'lead', null, 'fwd'], ['weave'], ['hook', 'rear'], ['hook', 'lead'], ['uppercut', 'rear']]],
+    ali: [
+      [['shuffle'], ['jab'], ['jab'], ['cross'], ['shuffle'], ['slip'], ['jab'], ['cross']],
+      [['stepmove', null, null, 'back'], ['jab', 'lead', null, 'fwd'], ['jab'], ['pullback'], ['cross'], ['shuffle']],
+      [['shuffle'], ['jab'], ['jab'], ['stepmove', null, null, 'left'], ['jab'], ['cross'], ['hook', 'lead']]],
+    roll: [
+      [['stance'], ['shoulderroll'], ['cross'], ['jab'], ['slip'], ['cross'], ['hook', 'lead']],
+      [['stance'], ['pullback'], ['cross'], ['shoulderroll'], ['cross'], ['hook', 'lead']],
+      [['stance'], ['jab', 'lead', null, null, true], ['shoulderroll'], ['cross'], ['stepmove', null, null, 'back']]],
+    canelo: [
+      [['stance'], ['slip'], ['weave'], ['bodyhook', 'lead'], ['hook', 'lead'], ['uppercut', 'rear']],
+      [['stance'], ['jab'], ['bodyjab', 'rear'], ['hook', 'lead'], ['weave'], ['bodyhook', 'lead']],
+      [['stance'], ['slip', 'left'], ['uppercut', 'rear'], ['hook', 'lead'], ['bodyhook', 'rear']]],
+    loma: [
+      [['shuffle'], ['jab'], ['turn', null, 45], ['cross'], ['hook', 'lead'], ['turn', null, -45], ['jab']],
+      [['stance'], ['jab', 'lead', null, 'fwd'], ['hook', 'lead'], ['stepmove', null, null, 'right'], ['cross'], ['uppercut', 'rear']],
+      [['shuffle'], ['feint'], ['jab'], ['turn', null, 40], ['cross'], ['bodyhook', 'lead']]],
+    brucelee: [[['shuffle'], ['jab'], ['jab'], ['kick', 'lead'], ['cross'], ['shuffle']], [['shuffle'], ['jab', 'lead', null, 'fwd'], ['jab'], ['teep'], ['cross']]],
+    conor: [[['stance'], ['jab'], ['cross'], ['teep'], ['cross'], ['hook', 'lead']], [['stance'], ['stepmove', null, null, 'back'], ['cross'], ['kick', 'lead'], ['cross']]],
+    muaythai: [[['stance'], ['teep'], ['roundhouse'], ['jab'], ['cross'], ['knee'], ['elbow'], ['roundhouse']], [['stance'], ['jab'], ['cross'], ['hook', 'lead'], ['roundhouse'], ['knee']]],
+    karate: [[['stance'], ['cross'], ['kick'], ['block'], ['jab'], ['roundhouse']]],
+    fury: [
+      [['stance'], ['feint'], ['jab'], ['jab'], ['stepmove', null, null, 'back'], ['cross'], ['uppercut', 'rear']],
+      [['stance'], ['jab', 'lead', null, null, true], ['jab'], ['pullback'], ['cross'], ['hook', 'lead']]],
+    usyk: [
+      [['shuffle'], ['jab'], ['stepmove', null, null, 'right'], ['jab'], ['cross'], ['hook', 'lead']],
+      [['stance'], ['feint'], ['jab', 'lead', null, 'fwd'], ['cross'], ['stepmove', null, null, 'back']]],
+    pacquiao: [
+      [['stance'], ['jab', 'lead', null, 'fwd'], ['cross'], ['stepmove', null, null, 'back'], ['jab'], ['cross'], ['hook', 'lead']],
+      [['shuffle'], ['cross', 'rear', null, 'fwd'], ['hook', 'lead'], ['cross'], ['stepmove', null, null, 'right']]],
+    naseem: [[['shuffle'], ['pullback'], ['overhand', 'rear'], ['uppercut', 'lead'], ['stepmove', null, null, 'back']], [['stance'], ['feint'], ['uppercut', 'rear'], ['pullback'], ['hook', 'lead']]],
+    royjones: [[['shuffle'], ['hook', 'lead'], ['hook', 'lead'], ['cross'], ['pullback']], [['stance'], ['feint'], ['hook', 'lead', null, 'fwd'], ['uppercut', 'rear'], ['shuffle']]],
+    ggg: [[['stance'], ['jab'], ['jab'], ['hook', 'lead'], ['bodyhook', 'lead'], ['cross']], [['stance'], ['jab', 'lead', null, 'fwd'], ['cross'], ['hook', 'lead'], ['uppercut', 'rear']]],
+    joshua: [[['stance'], ['jab'], ['cross'], ['uppercut', 'rear'], ['hook', 'lead']], [['stance'], ['jab'], ['jab'], ['cross', 'rear', null, 'fwd'], ['hook', 'lead']]],
+    crawford: [[['stance'], ['jab'], ['cross'], ['stepmove', null, null, 'left'], ['hook', 'lead'], ['cross']], [['stance'], ['pullback'], ['cross'], ['uppercut', 'rear'], ['hook', 'lead']]],
+    boxing: [
+      [['stance'], ['jab'], ['jab'], ['cross'], ['slip'], ['hook', 'lead'], ['cross'], ['weave'], ['jab'], ['cross']],
+      [['stance'], ['jab', 'lead', null, 'fwd'], ['cross'], ['hook', 'lead'], ['stepmove', null, null, 'back'], ['jab'], ['cross']],
+      [['stance'], ['feint'], ['jab'], ['bodyjab', 'rear'], ['hook', 'lead'], ['slip'], ['cross'], ['uppercut', 'lead']],
+      [['stance'], ['jab'], ['cross'], ['weave'], ['hook', 'lead'], ['hook', 'rear'], ['pullback'], ['cross']],
+      [['shuffle'], ['jab'], ['stepmove', null, null, 'right'], ['cross'], ['bodyhook', 'lead'], ['hook', 'lead'], ['overhand', 'rear']]],
+    golf: [[['golf']]], basketball: [[['dribble'], ['dribble'], ['shoot']]], baseball: [[['bat']]], tennis: [[['serve'], ['forehand']]], football: [[['soccerkick']]],
+    workout: [[['jacks'], ['jacks'], ['jacks'], ['squat'], ['lunge'], ['stretch']]], celebrate: [[['celebrate'], ['fistpump']]],
   };
   const THEME_WORDS = { golf: /\bgolf/, basketball: /\b(basketball|hoops|nba)\b/, baseball: /\b(baseball|batter|mlb)\b/, tennis: /\b(tennis|wimbledon)\b/, football: /\b(football|soccer|footy)\b/,
     workout: /\b(workout|work out|exercise|exercising|gym|training|fitness|cardio|warm ?up)\b/, celebrate: /\b(celebrat\w*|party time|winner)\b/ };
   // typo-tolerant reading: unknown words are matched to the nearest word the AI knows
   const VOCAB = [...new Set(('walk walking run running sprint jog jump hop leap jab cross hook uppercut punch punches kick kicks roundhouse squat wave dance spin stance guard idle stand boxing boxer fight fighter slip weave bob block knee elbow teep shuffle pivot turn around left right lead rear front back backwards golf swing baseball bat throw pitch serve forehand backhand tennis basketball dribble shoot clap celebrate cheer point bow salute shrug nod shake head look think flex stretch lunge sit sitting down push pull lift tired proud sneaky happy angry drunk zombie march soldier rain windy uphill stairs tyson ali mayweather canelo lomachenko bruce conor mcgregor muay thai karate southpaw combo body shot slowly quickly times twice circle then and seconds workout exercise celebrate football soccer jacks').split(' '))];
   const lev = (a, b) => { const m = a.length, n = b.length; if (Math.abs(m - n) > 2) return 9; let prev = Array.from({ length: n + 1 }, (_, j) => j); for (let i = 1; i <= m; i++) { const cur = [i]; for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = cur; } return prev[n]; };
-  const COMMON = new Set('the a an and then with do does some times time for of to in on at my his her him he she it is be please make like style quick slow fast few seconds second while doing into onto from out up down over under very really just bit little lot more less again after before next then them they this that these those your you me man woman guy girl person character someone people who what how when where why can could would should will wants want lets let get gets got goes go going have has had was were are am not no yes all each every both other another same here there now way like'.split(' '));
+  const COMMON = new Set('hand hands arm arms leg legs foot feet body head side face chin ribs liver gut stomach shot shots punch counter hands down the a an and then with do does some times time for of to in on at my his her him he she it is be please make like style quick slow fast few seconds second while doing into onto from out up down over under very really just bit little lot more less again after before next then them they this that these those your you me man woman guy girl person character someone people who what how when where why can could would should will wants want lets let get gets got goes go going have has had was were are am not no yes all each every both other another same here there now way like'.split(' '));
   function fixTypos(text) {
     return text.replace(/[a-z']+/g, w => {
       if (w.length < 4 || COMMON.has(w) || VOCAB.includes(w) || WORDS.some(([re]) => re.test(w))) return w;
@@ -2047,9 +2117,12 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       return best && bd <= (w.length >= 7 ? 2 : 1) ? best : w;
     });
   }
-  function detectStyles(text) { const s = {}, t = String(text).toLowerCase(); for (const k in STYLE_WORDS) if (STYLE_WORDS[k].test(t)) s[k] = true; if (s.peekaboo || s.ali || s.roll || s.canelo || s.loma || s.brucelee || s.conor || s.muaythai || s.karate) s.boxing = true; return s; }
+  function detectStyles(text) { const s = {}, t = String(text).toLowerCase(); for (const k in STYLE_WORDS) if (STYLE_WORDS[k].test(t)) s[k] = true;     if (s.fury && /\btyson fury\b/.test(t)) s.peekaboo = false; // Tyson Fury isn't Mike Tyson
+    if (s.peekaboo || s.ali || s.roll || s.canelo || s.loma || s.brucelee || s.conor || s.muaythai || s.karate || s.fury || s.usyk || s.pacquiao || s.naseem || s.royjones || s.ggg || s.joshua || s.crawford) s.boxing = true;
+    if (s.usyk || s.pacquiao || s.naseem) s.south = true; if (s.naseem || s.royjones) s.ali = true; // southpaws; hands-low showmen
+    return s; }
   const SIDE_RE = /\b(left|right|lead|rear|back|front|jab hand|power hand|other)\s*(hand(ed)?|side|arm|leg|foot)?\s*$/;
-  function parsePrompt(text) {
+  function parsePrompt(text, seed = 0) {
     let t = ' ' + fixTypos(String(text).toLowerCase()) + ' ';
     // "1-2", "1 2 3", "one two" = boxing combos
     t = t.replace(/\b(one|two|three|four|five|six)(?=[\s-]+(one|two|three|four|five|six)\b)/g, m => ({ one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 })[m]).replace(/(\d)[\s-]+(one|two|three|four|five|six)\b/g, (m, a, b) => a + '-' + ({ one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 })[b]);
@@ -2069,6 +2142,16 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       }
       if (!hits.length) { unknown.push(sg); continue; }
       hits.sort((a, b) => a.at - b.at);
+      const STRIKES = new Set(['jab', 'cross', 'hook', 'uppercut', 'bodyhook', 'bodyjab', 'overhand', 'feint', 'elbow']);
+      for (let i = 0; i < hits.length; i++) { // "step back left hook" = a stepping punch, not two moves
+        const h = hits[i]; if (h.m !== 'stepmove') continue;
+        let tx = sg.slice(h.at, h.at + h.len); if (/side/.test(tx) && !/left|right/.test(tx)) tx += ' ' + (sg.slice(h.at + h.len).match(/^\s*(to the )?(left|right)/) || ['', '', ''])[2]; // "side step left"
+        const dir = /back|out/.test(tx) ? 'back' : /left/.test(tx) ? 'left' : /right/.test(tx) ? 'right' : /side/.test(tx) ? 'right' : 'fwd';
+        const nx = hits.slice(i + 1).find(x => STRIKES.has(x.m)); h.dir = dir;
+        if (nx && !nx.step) { nx.step = dir; h.drop = true; }
+      }
+      for (let i = hits.length - 1; i >= 0; i--) if (hits[i].drop) hits.splice(i, 1);
+      for (const h of hits) if (STRIKES.has(h.m) && /^\s*(to the |to his |to her |to )?(body|stomach|gut|ribs|liver|midsection|belly|solar plexus)\b/.test(sg.slice(h.at + h.len, h.at + h.len + 26))) h.body = true;
       const nm = sg.match(/(\d+)\s*(x|times|reps)?\b/) || sg.match(/\b(once|twice|thrice|three|four|five|six|seven|eight|nine|ten|couple|few|several)\b/);
       let count = nm ? (+nm[1] || NUMS[nm[1]] || 1) : 1; const secs = sg.match(/(\d+(\.\d+)?)\s*(s|sec|secs|seconds)\b/), mins = sg.match(/(\d+(\.\d+)?)\s*(m|min|mins|minutes)\b/);
       if (secs || mins) count = 1;
@@ -2082,15 +2165,19 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         let side = sm ? ({ left: 'left', right: 'right', lead: 'lead', front: 'lead', 'jab hand': 'lead', rear: 'rear', back: 'rear', 'power hand': 'rear', other: null })[sm[1]] : null;
         if (h.arg === 'R') side = 'rear';
         let move = st.boxing && h.m === 'idle' ? 'stance' : h.m;
+        if (h.body) move = { jab: 'bodyjab', cross: 'bodyjab', hook: 'bodyhook', uppercut: 'bodyupper' }[move] || move;
+        if (h.body && h.m === 'cross' && !side) side = 'rear';
         if (st.march && move === 'walk') move = 'walk';
-        const e = { move, side, height: jh, speed: speed / ((move === 'jump' || move === 'celebrate' || move === 'shoot') ? Math.sqrt(jh) : 1), secs: secs ? +secs[1] : mins ? +mins[1] * 60 : null, back: back && (move === 'walk' || move === 'run'), turnRate: circle && (move === 'walk' || move === 'run') ? 60 : 0 };
+        const e = { step: h.step || (move === 'stepmove' ? h.dir : null), check: h.arg === 'check', move, side, height: jh, speed: speed / ((move === 'jump' || move === 'celebrate' || move === 'shoot') ? Math.sqrt(jh) : 1), secs: secs ? +secs[1] : mins ? +mins[1] * 60 : null, back: back && (move === 'walk' || move === 'run'), turnRate: circle && (move === 'walk' || move === 'run') ? 60 : 0 };
         if (move === 'turn') { e.turn = +(h.arg || 90); if (/\bright\b/.test(sg) && !h.arg) e.turn = -90; }
+        if (e.check) { plan.push(e); used.push(move); plan.push({ move: 'turn', turn: -40, speed: 1.6, secs: null }); continue; } // check hook: hook then pivot out
+        if (h.arg === 'counter') { plan.push(e); used.push(move); plan.push({ move: 'cross', side: null, speed: speed * 1.15, secs: null }); continue; } // pull counter: lean back, fire the right hand
         plan.push(e); used.push(move);
       }
     }
     // a theme / fighter with no moves of its own ("do some boxing", "Mike Tyson", "golf") gets a routine
-    const theme = Object.keys(THEME_WORDS).find(k => THEME_WORDS[k].test(t)) || ['peekaboo', 'ali', 'roll', 'canelo', 'loma', 'brucelee', 'conor', 'muaythai', 'karate'].find(k => st[k]) || (st.boxing ? 'boxing' : null);
-    if (!plan.length && theme) { for (const [move, side, turn] of ROUTINES[theme]) plan.push({ move, side: side || null, speed: st.peekaboo || st.loma ? 1.2 : 1, secs: null, turn, routine: true }); unknown.length = 0; }
+    const theme = Object.keys(THEME_WORDS).find(k => THEME_WORDS[k].test(t)) || ['naseem', 'royjones', 'peekaboo', 'fury', 'usyk', 'pacquiao', 'ggg', 'joshua', 'crawford', 'ali', 'roll', 'canelo', 'loma', 'brucelee', 'conor', 'muaythai', 'karate'].find(k => st[k]) || (st.boxing ? 'boxing' : null);
+    if (!plan.length && theme) { const R_ = ROUTINES[theme], pick = R_[seed % R_.length]; for (const [move, side, turn, step, body] of pick) plan.push({ move: body ? ({ jab: 'bodyjab', hook: 'bodyhook', uppercut: 'bodyupper' })[move] || move : move, side: side || null, speed: st.peekaboo || st.loma || st.pacquiao ? 1.2 : st.fury ? 0.9 : 1, secs: null, turn, step: step || null, routine: true }); unknown.length = 0; }
     // Tyson style: bob & weave into the hooks
     if (st.peekaboo && plan.length && !plan.some(p => p.move === 'weave')) { const i = plan.findIndex(p => p.move === 'hook' || p.move === 'uppercut' || p.move === 'bodyhook'); if (i >= 0) plan.splice(i, 0, { move: 'weave', speed: 1.2, secs: null }); }
     if (st.boxing && plan.length && !['stance', 'shuffle'].includes(plan[0].move) && MOVES[plan[0].move] && (MOVES[plan[0].move].keys || [])[0] && MOVES[plan[0].move].keys[0][1].guard) plan.unshift({ move: 'stance', speed: 1, secs: 0.6 });
@@ -2120,7 +2207,8 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     else { const hb = P_.guard > 0.5 ? -38 : 0, cb = P_.guard > 0.5 ? -8 : 0; o.chestYaw = 2 * cb - P_.chestYaw; if (legsToo || MOVES_ALL_FLAG) o.hipsYaw = 2 * hb - P_.hipsYaw; }
     o.chestRoll = -(P_.chestRoll || 0); o.headYaw = -(P_.headYaw || 0); o.hipsRoll = -(P_.hipsRoll || 0);
     if (!onlyMoving || legsToo) { o.plantL = P_.plantR; o.plantR = P_.plantL; o.pivotL = P_.pivotR; o.pivotR = P_.pivotL; }
-    if (!onlyMoving) { o.fyL = P_.fyR != null ? -P_.fyR : undefined; o.fyR = P_.fyL != null ? -P_.fyL : undefined; }
+    if (!onlyMoving) { o.fyL = P_.fyR != null ? -P_.fyR : undefined; o.fyR = P_.fyL != null ? -P_.fyL : undefined; o.shrL = P_.shrR; o.shrR = P_.shrL; o.proL = P_.proR; o.proR = P_.proL;
+      const mxv = v => v && [-v[0], v[1], v[2]]; o.soL = mxv(P_.soR); o.soR = mxv(P_.soL); }
     return o;
   }
   let MOVES_ALL_FLAG = false;
@@ -2130,7 +2218,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     if (p.move === 'walk' || p.move === 'run') { const u = (lt % cyc) / cyc; P_ = cyclePose(p.back ? 1 - u : u, p.move === 'run'); }
     else {
       let u = M_.loop ? (lt % cyc) / cyc : clamp(lt / cyc, 0, 1);
-      const K = M_.keys; let k = 0; while (k < K.length - 2 && u > K[k + 1][0]) k++;
+      const K = p.guardTurn ? MOVES.stepmove.keys : M_.keys; let k = 0; while (k < K.length - 2 && u > K[k + 1][0]) k++;
       const [t0, a] = K[k], [t1, b] = K[k + 1], w = ss(clamp((u - t0) / Math.max(1e-6, t1 - t0), 0, 1));
       P_ = blendPose(a, b, w);
       if (p.height && p.height !== 1 && P_.air) P_.rootY *= p.height; // jumps go as high as asked (more time in the air too)
@@ -2140,12 +2228,12 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   }
   function blendPose(a, b, w) {
     const dirs = {}; for (const j in a.dirs) dirs[j] = lerpN(a.dirs[j], b.dirs[j] || a.dirs[j], w);
-    const o = { dirs }; for (const k of ['hipsYaw', 'hipsPitch', 'hipsRoll', 'chestYaw', 'chestPitch', 'chestRoll', 'headPitch', 'headYaw', 'rootY', 'guard', 'ext', 'dip', 'shift', 'cover', 'pivotL', 'pivotR', 'plantL', 'plantR']) o[k] = (a[k] || 0) * (1 - w) + (b[k] || 0) * w;
+    const o = { dirs }; for (const k of ['hipsYaw', 'hipsPitch', 'hipsRoll', 'chestYaw', 'chestPitch', 'chestRoll', 'headPitch', 'headYaw', 'rootY', 'guard', 'ext', 'dip', 'shift', 'cover', 'pivotL', 'pivotR', 'plantL', 'plantR', 'shrL', 'shrR', 'proL', 'proR']) o[k] = (a[k] || 0) * (1 - w) + (b[k] || 0) * w;
     o.air = Math.max(a.air || 0, b.air || 0) * (w > 0.05 && w < 0.95 ? 1 : 0); return o;
   }
   function textToMotion(text, fps = 30, seed = 0) {
     let sd = (seed * 9301 + 49297) % 233280 || 1; const rnd = () => { sd = (sd * 9301 + 49297) % 233280; return sd / 233280; }; // repeatable variation per seed
-    const { plan, unknown, styles: style } = parsePrompt(text || '');
+    const { plan, unknown, styles: style } = parsePrompt(text || '', seed);
     if (!plan.length && style.boxing) plan.push({ move: 'stance', speed: 1, secs: 3 });
     if (!plan.length) throw new Error('I didn\'t recognise any moves. Try things like: "Mike Tyson left hook", "1-2-3 then slip", "golf swing", "zombie walk in a circle", "basketball jump shot", "workout", "celebrate".');
     if (seed) for (const p of plan) p.speed *= 0.88 + rnd() * 0.24; // each new take varies the timing a little
@@ -2170,7 +2258,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     for (const p of plan) { // punches: pick the lead or rear hand version (left / right depend on orthodox or southpaw)
       const V_ = PUNCH_VARIANTS[p.move]; if (!V_) continue;
       const arm = p.side === 'lead' ? 0 : p.side === 'rear' ? 1 : p.side === 'left' ? (style.south ? 1 : 0) : p.side === 'right' ? (style.south ? 0 : 1) : V_[2];
-      p.label = (p.side || (arm ? 'rear' : 'lead')) + ' ' + V_[3]; p.move = V_[arm]; p.side = null;
+      p.label = (p.step ? ({ fwd: 'step in ', back: 'step back ', left: 'step left ', right: 'step right ' })[p.step] : '') + (p.side || (arm ? 'rear' : 'lead')) + ' ' + V_[3]; p.move = V_[arm]; p.side = null;
     }
     for (const p of plan) {
       const M_ = MOVES[p.move] || {}; if (!M_.side) continue; p.south = !!style.south;
@@ -2180,6 +2268,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     }
     for (const p of plan) if (!p.south && style.south) p.south = true;
     { let yw = 0; for (const p of plan) { p.yaw0 = yw; if (p.move === 'turn') yw += p.turn || 90; } }
+    for (const p of plan) { if (p.move === 'turn' && style.boxing) p.guardTurn = true; if (p.step && style.south && (p.step === 'left' || p.step === 'right')) p.step = p.step === 'left' ? 'right' : 'left'; }
     const vYaw = seed ? (rnd() - 0.5) * 14 : 0, vBounce = seed ? 1.4 + rnd() * 0.7 : 1.7, vLean = seed ? (rnd() - 0.5) * 8 : 0;
     for (const p of plan) { const M_ = MOVES[p.move]; p.len = p.secs || (M_.loop && !p.secs ? M_.dur * (p.move === 'walk' || p.move === 'run' ? (p.turnRate ? 6 : 3) : p.move === 'dribble' || p.move === 'clap' ? 4 : p.move === 'jacks' ? 3 : p.move === 'shuffle' ? 2 : 1) : M_.dur) / (p.secs ? 1 : p.speed); }
     const total = plan.reduce((a, p) => a + p.len, 0), n = Math.max(2, Math.round(total * fps) + 1), rest = buildRest({ ...DEFAULT_M }), ix = rest.index, J = rest.joints;
@@ -2190,7 +2279,8 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const Cq = qmul(Hq, qmul(axq([0, 1, 0], P_.chestYaw || 0), qmul(axq([1, 0, 0], P_.chestPitch || 0), axq([0, 0, 1], P_.chestRoll || 0))));
       const G = {}; G.Hips = Hq; G.Spine = qslerp(Hq, Cq, 1 / 3); G.Spine1 = qslerp(Hq, Cq, 2 / 3); G.Spine2 = Cq; G.Neck = Cq; G.Head = qmul(Cq, qmul(axq([0, 1, 0], P_.headYaw || 0), axq([1, 0, 0], (P_.headPitch || 0) - (P_.chestPitch || 0) * 0.6)));
       for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
-        G[S + 'Shoulder'] = Cq; G[S + 'Arm'] = qmul(Cq, qFromTo([sx, 0, 0], P_.dirs[S + 'Arm'])); G[S + 'ForeArm'] = qmul(Cq, qFromTo([sx, 0, 0], P_.dirs[S + 'ForeArm'])); G[S + 'Hand'] = G[S + 'ForeArm'];
+        G[S + 'Shoulder'] = qmul(Cq, qmul(axq([0, 1, 0], -sx * (P_['pro' + S[0]] || 0)), axq([0, 0, 1], sx * (P_['shr' + S[0]] || 0)))); // collarbone: forward (reach) / up (shrug)
+        G[S + 'Arm'] = qmul(Cq, qFromTo([sx, 0, 0], P_.dirs[S + 'Arm'])); G[S + 'ForeArm'] = qmul(Cq, qFromTo([sx, 0, 0], P_.dirs[S + 'ForeArm'])); G[S + 'Hand'] = G[S + 'ForeArm'];
         G[S + 'UpLeg'] = qmul(Hq, qFromTo([0, -1, 0], P_.dirs[S + 'UpLeg'])); G[S + 'Leg'] = qmul(Hq, qFromTo([0, -1, 0], P_.dirs[S + 'Leg'])); G[S + 'Foot'] = axq([0, 1, 0], hy);
       }
       return { G, Hq, Cq };
@@ -2210,22 +2300,30 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     // fight poses: arms reach for real targets (guard by the face, punches at the opponent), planted feet stay put, eyes on the opponent
     function fightSolve(P_, strike, gstyle) {
       const w = clamp(P_.guard || 0, 0, 1); if (w < 0.01) return P_;
-      const dip = P_.dip || 0, { G, Hq, Cq } = torsoG(P_, P_.hipsYaw), f = fk(rest, locOf(G), [0, ST.H0 + dip, P_.shift || 0]), pos = f.pos;
-      const head = pos[ix.Head], gh = GUARD_HANDS[gstyle] || GUARD_HANDS.std, e = clamp(P_.ext || 0, 0, 1), L = LA1 + LA2;
+      const eRaw = clamp(P_.ext || 0, 0, 1.3), e = Math.min(1, eRaw), over = Math.max(0, eRaw - 1);
+      // shoulders: chin tucked behind a slightly raised shoulder in the guard; the punching shoulder drives forward (and up on hooks)
+      for (const S of ['Left', 'Right']) { const a = strike && strike.arm === S ? e : 0, ty = strike ? strike.type : '';
+        P_['shr' + S[0]] = (P_['shr' + S[0]] || 0) + 4 * w + a * (ty === 'hook' ? 16 : ty === 'upper' ? 8 : ty === 'overhand' ? 12 : 6);
+        P_['pro' + S[0]] = (P_['pro' + S[0]] || 0) + a * (ty === 'straight' ? 20 : ty === 'hook' ? 16 : 12); }
+      const dip = P_.dip || 0, so = S => P_['so' + S[0]] || [0, 0, 0], ra = lerp(so('Left'), so('Right'), 0.5);
+      const { G, Hq, Cq } = torsoG(P_, P_.hipsYaw), f = fk(rest, locOf(G), [ra[0], ST.H0 + dip, (P_.shift || 0) + ra[2]]), pos = f.pos;
+      const head = pos[ix.Head], gh = GUARD_HANDS[gstyle] || GUARD_HANDS.std, L = LA1 + LA2;
       for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
         const shp = pos[ix[S + 'Arm']], gpos = add(head, lerp(gh[S], GUARD_HANDS.cover[S], clamp(P_.cover || 0, 0, 1)));
         let tgt = gpos, pole = [sx * 0.35, -1, -0.25];
         if (strike && strike.arm === S && e > 0.001) {
           const aim = strike.body ? ST.body : ST.chin;
           if (strike.type === 'straight') { tgt = lerp(gpos, add(shp, clampLen(sub(aim, shp), 0.97 * L, 0.99 * L)), e); pole = [sx * 0.5, -1, 0]; } // snaps straight through the target
-          else if (strike.type === 'hook') { const c = add(aim, [sx * 0.09, 0, -0.02]), end = add(shp, clampLen(sub(c, shp), 0.62 * L, 0.8 * L)); tgt = bez(gpos, add(end, [sx * 0.38, 0.06, -0.12]), end, e); pole = [sx, strike.body ? -0.2 : 0.55, -0.3]; }
-          else if (strike.type === 'upper') { const c = add(aim, [0, -0.06, -0.04]), end = add(shp, clampLen(sub(c, shp), 0.55 * L, 0.78 * L)); tgt = bez(gpos, add(lerp(gpos, end, 0.5), [0, -0.3, -0.05]), end, e); pole = [sx * 0.25, -1, -0.1]; }
+          else if (strike.type === 'hook') { const c = add(aim, [sx * 0.09, 0, -0.02]), end = add(shp, clampLen(sub(c, shp), 0.62 * L, 0.8 * L)); tgt = add(bez(gpos, add(end, [sx * 0.38, 0.06, -0.12]), end, e), sc([-sx, 0, -0.15], over * 1.3)); pole = [sx, strike.body ? -0.2 : 0.55, -0.3]; } // follows through across the target
+          else if (strike.type === 'upper') { const c = add(aim, [0, -0.06, -0.04]), end = add(shp, clampLen(sub(c, shp), 0.55 * L, 0.78 * L)); tgt = add(bez(gpos, add(lerp(gpos, end, 0.5), [0, -0.3, -0.05]), end, e), [0, over * 1.1, 0]); pole = [sx * 0.25, -1, -0.1]; }
+          else if (strike.type === 'overhand') { const end = add(shp, clampLen(sub(add(aim, [sx * 0.04, 0.02, 0]), shp), 0.85 * L, 0.97 * L)); tgt = add(bez(gpos, add(lerp(gpos, end, 0.5), [sx * 0.25, 0.35, -0.05]), end, e), [0, -over * 1.4, over * 0.3]); pole = [sx * 0.8, 0.8, -0.2]; } // loops over the top
+          else if (strike.type === 'parry') { tgt = add(gpos, sc([-sx * 0.16, 0.02, 0.14], e)); pole = [sx * 0.35, -1, -0.25]; }
           else if (strike.type === 'elbow') { const end = add(head, [-sx * 0.12, -0.04, 0.14]); tgt = lerp(gpos, end, e); pole = lerp([sx * 0.35, -1, -0.25], [sx * 0.6, 0.35, 1], e); }
         }
         const [u, l] = ik2(shp, tgt, LA1, LA2, pole);
         P_.dirs[S + 'Arm'] = lerpN(P_.dirs[S + 'Arm'], toF(Cq, u), w); P_.dirs[S + 'ForeArm'] = lerpN(P_.dirs[S + 'ForeArm'], toF(Cq, l), w);
         const pw = w * clamp(P_['plant' + S[0]] || 0, 0, 1);
-        if (pw > 0.01) { const [ul, ll] = ik2(pos[ix[S + 'UpLeg']], ST.anc[S], LL1, LL2, [sx * 0.25, 0, 1]); P_.dirs[S + 'UpLeg'] = lerpN(P_.dirs[S + 'UpLeg'], toF(Hq, ul), pw); P_.dirs[S + 'Leg'] = lerpN(P_.dirs[S + 'Leg'], toF(Hq, ll), pw); }
+        if (pw > 0.01) { const [ul, ll] = ik2(pos[ix[S + 'UpLeg']], add(ST.anc[S], so(S)), LL1, LL2, [sx * 0.25, 0, 1]); P_.dirs[S + 'UpLeg'] = lerpN(P_.dirs[S + 'UpLeg'], toF(Hq, ul), pw); P_.dirs[S + 'Leg'] = lerpN(P_.dirs[S + 'Leg'], toF(Hq, ll), pw); }
         // planted feet keep their stance angle (lead toes forward, rear foot turned out); punching pivots them
         const fy = S === 'Left' ? -25 - 35 * (P_.pivotL || 0) : -60 + 45 * (P_.pivotR || 0);
         P_['fy' + S[0]] = P_.hipsYaw * (1 - pw) + fy * pw;
@@ -2267,6 +2365,15 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       if (style.carry && !/throw|serve|shoot|golf|bat/.test(mv)) { for (const S2 of ['Left', 'Right']) { P_.dirs[S2 + 'Arm'] = V(S2 === 'Left' ? 0.2 : -0.2, -0.8, 0.5); P_.dirs[S2 + 'ForeArm'] = V(S2 === 'Left' ? -0.2 : 0.2, 0.15, 1); } P_.chestPitch -= 6; }
       if (style.drunk) { P_.hipsRoll = (P_.hipsRoll || 0) + Math.sin(t * 2 * Math.PI * 0.5) * 7; P_.chestYaw += Math.sin(t * 2 * Math.PI * 0.35) * 10; P_.headPitch += Math.sin(t * 2 * Math.PI * 0.7) * 10; }
       P_.chestPitch += vLean;
+      // stepping punches: the first foot steps, the body travels, the other foot follows (lead foot first going forward, rear foot first going back)
+      let stepDelta = 0, stepDir = null;
+      if (cur.p.step) {
+        const D = { fwd: [0, 0, 0.32], back: [0, 0, -0.3], left: [0.28, 0, 0], right: [-0.28, 0, 0] }[cur.p.step], first = { fwd: 'L', back: 'R', left: 'L', right: 'R' }[cur.p.step];
+        const win_ = Math.min(cur.p.len * 0.55, 0.42), uOf = tt => clamp(tt / win_, 0, 1), u = uOf(cur.lt), uR = ss(u), uA = ss(clamp(u / 0.6, 0, 1)), uB = ss(clamp((u - 0.4) / 0.6, 0, 1));
+        const lift = (uu, on) => (on ? 0.05 * Math.sin(Math.PI * uu) : 0);
+        for (const S2 of ['L', 'R']) { const us = S2 === first ? uA : uB; P_['so' + S2] = [D[0] * (us - uR), lift(us, us > 0 && us < 1), D[2] * (us - uR)]; }
+        stepDelta = uR - ss(uOf(cur.lt - 1 / fps)); stepDir = D;
+      }
       P_ = fightSolve(P_, MOVES[mv].strike, style.peekaboo ? 'peekaboo' : style.ali ? 'ali' : style.roll ? 'roll' : 'std');
       if (style.south) P_ = mirrorPose(P_, false); // southpaw / left-handed: the whole body mirrored
       const hy = P_.hipsYaw + yaw + vYaw, { G } = torsoG(P_, hy);
@@ -2279,13 +2386,15 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const travel = MOVES[cur.p.move].travel ? MOVES[cur.p.move].travel * (cur.p.speed || 1) * (cur.p.back ? -0.55 : 1) * (style.heavy ? 0.6 : 1) : 0;
       const fwd = qrot(axq([0, 1, 0], yaw + vYaw), [0, 0, 1]);
       if (k > 0) { px += fwd[0] * travel / fps; pz += fwd[2] * travel / fps; }
+      if (stepDir && k > 0) { const sd = qrot(axq([0, 1, 0], yaw + vYaw), [stepDir[0] * (style.south ? -1 : 1), 0, stepDir[2]]); px += sd[0] * stepDelta; pz += sd[2] * stepDelta; }
       const y = -low + (P_.air ? Math.max(0, P_.rootY) : 0), sh = (P_.shift || 0) * clamp(P_.guard || 0, 0, 1); // weight shifts toward the punch
       rootPos.push([px + fwd[0] * sh, y, pz + fwd[2] * sh]);
       locals.push(loc);
       contacts.push({ Left: !P_.air && f0.pos[ix.LeftFoot][1] - low < 0.1, Right: !P_.air && f0.pos[ix.RightFoot][1] - low < 0.1 });
     }
     for (let k = 1; k < n; k++) for (let j = 0; j < locals[k].length; j++) { const a = locals[k - 1][j], b = locals[k][j]; if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0) locals[k][j] = b.map(v => -v); }
-    const label = p => p.label || (p.side && MOVES[p.move] && MOVES[p.move].side ? p.side + ' ' : '') + (p.move === 'turn' ? `turn ${p.turn > 0 ? 'left' : 'right'} ${Math.abs(p.turn)}°` : p.move) + (p.back ? ' backwards' : '') + (p.turnRate ? ' in a circle' : '');
+    const PRETTY = { shoulderroll: 'shoulder roll', pullback: 'lean back', soccerkick: 'football kick', lookaround: 'look around', headshake: 'shake head', sitdown: 'sit down', hitreact: 'take a hit', jacks: 'jumping jacks', fistpump: 'fist pump' };
+    const label = p => p.label || PRETTY[p.move] || (p.move === 'stepmove' ? 'step ' + ({ fwd: 'in', back: 'back', left: 'left', right: 'right' })[p.step || 'fwd'] : null) || (p.side && MOVES[p.move] && MOVES[p.move].side ? p.side + ' ' : '') + (p.move === 'turn' ? `turn ${p.turn > 0 ? 'left' : 'right'} ${Math.abs(p.turn)}°` : p.move) + (p.back ? ' backwards' : '') + (p.turnRate ? ' in a circle' : '');
     return { rest, fps, n, rootPos, locals, contacts, hasHands: { Left: false, Right: false }, M: rest.M, unknown, plan: plan.map(label), styles: Object.keys(style).filter(k => style[k]), text };
   }
 
@@ -2296,7 +2405,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     return { ...anim, n: i1 - i0 + 1, rootPos: anim.rootPos.slice(i0, i1 + 1), locals: anim.locals.slice(i0, i1 + 1), contacts: anim.contacts.slice(i0, i1 + 1) };
   }
 
-  g.Solver = { physics, faceCovered, guessLowerBody, sliceAnim, textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, floorFinder, estimateFov, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
+  g.Solver = { smoothAnim, physics, faceCovered, guessLowerBody, sliceAnim, textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, floorFinder, estimateFov, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -2434,8 +2543,8 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       </div>
       <div class="physpanel" id="physPanel">
         <label class="pp-row"><input type="checkbox" id="physOn"> <b>Physics on</b></label>
-        <div class="pp-row"><span>Strength</span><input type="range" id="physStr" min="0" max="100" step="1" value="45"><b id="physStrV">45</b></div>
-        <div class="pp-row"><span>Bounce</span><input type="range" id="physBounce" min="0" max="100" step="1" value="45"><b id="physBounceV">45</b></div>
+        <div class="pp-row"><span>Strength</span><input type="range" id="physStr" min="0" max="100" step="1" value="55"><b id="physStrV">55</b></div>
+        <div class="pp-row"><span>Bounce</span><input type="range" id="physBounce" min="0" max="100" step="1" value="55"><b id="physBounceV">55</b></div>
         <div class="pp-row pp-parts"><label><input type="checkbox" id="physArms" checked> Arms</label><label><input type="checkbox" id="physBody" checked> Body &amp; head</label><label><input type="checkbox" id="physLegs"> Legs</label></div>
         <small>Strength = how loose the joints are. Bounce = how much they overshoot and wobble before settling. Legs off keeps the feet planted.</small>
       </div>
@@ -3357,7 +3466,7 @@ function opts() {
 }
 let solveT;
 function solve(rebuild = false) {
-  if (!frames) return;
+  if (!frames) { if (baseAnim && baseAnim.plan) { anim = applyEdits(baseAnim, EDITS); applyAt(curTime); requestRender(); } return; } // text motion: re-smooth
   try {
     const newAnim = S.solveAll(frames, opts());
     const restChanged = !anim || rebuild || JSON.stringify(anim.M) !== JSON.stringify(newAnim.M);
@@ -3829,7 +3938,7 @@ const ssE = x => x * x * (3 - 2 * x);
 function hasEdits(E) { return !!E && (Object.values(E.keys || {}).some(m => Object.keys(m).length) || Object.keys(E.root || {}).length > 0 || Object.keys(E.layer || {}).length > 0 || !!(E.layerRoot && E.layerRoot.some(v => v)) || !!E.pinFeet); }
 // physics on top of everything (video and text motion, exports too)
 function physOpts() { return { on: $('physOn').checked, strength: +$('physStr').value / 100, bounce: +$('physBounce').value / 100, arms: $('physArms').checked, body: $('physBody').checked, legs: $('physLegs').checked }; }
-function applyEdits(a, E) { const r = applyEditsRaw(a, E), o = physOpts(); return r && o.on ? S.physics(r, o) : r; }
+function applyEdits(a, E) { let r = applyEditsRaw(a, E); const o = physOpts(); if (r && r.plan) r = S.smoothAnim(r, +$('smooth').value); return r && o.on ? S.physics(r, o) : r; } // text motion: the Smoothing slider softens it too
 function applyEditsRaw(a, E) {
   if (!a || !hasEdits(E)) return a;
   const n = a.n, R = Math.max(1, Math.round((+E.spread || 0.5) * a.fps));
