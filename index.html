@@ -4524,7 +4524,7 @@ function poseModel() {
   const hp = character.bones[0].getWorldPosition(new THREE.Vector3()), hb = info.Hips.b;
   hb.position.copy(hb.parent.worldToLocal(hp)); wrap.updateMatrixWorld(true);
 }
-const CHAR_INFO = { 'rpm-male': '🧑 Realistic man', 'rpm-female': '👩 Realistic woman', soldier: '🪖 Soldier (realistic)', michelle: '💃 Michelle (realistic)', xbot: '🤖 X Bot (Unity mannequin)' };
+const CHAR_INFO = { 'rpm-male': '🧑 Realistic man', 'rpm-female': '👩 Realistic woman', soldier: '🧔 Realistic man (Soldier)', michelle: '👩 Realistic woman (Michelle)', xbot: '🤖 X Bot (Unity mannequin)' };
 let CHAR_LIST = null; const CHARS = {}; // loaded characters, kept so switching back is instant
 async function charList() { if (CHAR_LIST) return CHAR_LIST; try { const r = await fetch('characters/list.json'); CHAR_LIST = r.ok ? await r.json() : []; } catch (e) { CHAR_LIST = []; } return CHAR_LIST; }
 function useChar(entry, id) { // show this character (null = the AI body)
