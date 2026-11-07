@@ -871,7 +871,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       let s0 = [0, 0, 0]; for (const d of [-1, 0, 1]) { const q = clamp(k + d, 1, n - 2); s0 = add(s0, sc(add(sub(P(q + 1)[j], sc(P(q)[j], 2)), P(q - 1)[j]), 1 / (dt * dt))); }
       s0 = sc(s0, 1 / 3); const l = len(s0); return l > 40 ? sc(s0, 40 / l) : s0;
     };
-    const zeta = 0.9 - 0.78 * b, state = J.map((_, j) => ({ q: F[0].rot[j].slice(), w: [0, 0, 0] })), out = [];
+    const zeta = 0.9 - 0.7 * b, state = J.map((_, j) => ({ q: F[0].rot[j].slice(), w: [0, 0, 0] })), out = [];
     for (let k = 0; k < n; k++) {
       const G = [], loc = [];
       for (let j = 0; j < J.length; j++) {
@@ -1862,7 +1862,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   const PEEK = { LeftArm: V(0.15, -0.85, 0.5), LeftForeArm: V(-0.3, 0.92, 0.25), RightArm: V(-0.15, -0.88, 0.45), RightForeArm: V(0.3, 0.93, 0.2) }; // Tyson peek-a-boo
   const LOWHANDS = { LeftArm: V(0.3, -1, 0.25), LeftForeArm: V(-0.1, -0.2, 1), RightArm: V(-0.3, -1, 0.15), RightForeArm: V(0.15, -0.5, 0.85) }; // Ali
   const ROLL = { LeftArm: V(0.15, -1, 0.3), LeftForeArm: V(-1, 0.05, 0.35), RightArm: V(-0.3, -0.85, 0.4), RightForeArm: V(0.3, 0.92, 0.4) }; // Mayweather shoulder roll
-  const ADDRESS = { LeftArm: V(-0.2, -0.85, 0.45), LeftForeArm: V(-0.1, -0.9, 0.4), RightArm: V(0.2, -0.85, 0.45), RightForeArm: V(0.1, -0.9, 0.4), LeftUpLeg: V(0.12, -1, 0.12), LeftLeg: V(0.05, -1, -0.12), RightUpLeg: V(-0.12, -1, 0.12), RightLeg: V(-0.05, -1, -0.12) };
+  const ADDRESS = { LeftArm: V(-0.22, -0.9, 0.38), LeftForeArm: V(-0.12, -0.95, 0.28), RightArm: V(0.22, -0.88, 0.42), RightForeArm: V(0.12, -0.95, 0.3), LeftUpLeg: V(0.12, -1, 0.12), LeftLeg: V(0.05, -1, -0.12), RightUpLeg: V(-0.12, -1, 0.12), RightLeg: V(-0.05, -1, -0.12) };
   const CHAIR = { LeftUpLeg: V(0.08, -0.05, 1), LeftLeg: V(0, -1, 0.08), RightUpLeg: V(-0.08, -0.05, 1), RightLeg: V(0, -1, 0.08) };
   const guardP = (extra = {}, o = {}) => pose({ ...GUARD, ...extra }, { hipsYaw: -38, chestYaw: -8, chestPitch: 8, headPitch: 14, plantL: 1, plantR: 1, ...o, guard: 1 });
   // each move: dur (s), keys [[time 0..1, pose]], optional travel (m/s forward), loop flag
@@ -1896,21 +1896,23 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     shuffle: { dur: 0.8, loop: true, keys: K([0, guardP()], [0.25, guardP({ LeftUpLeg: V(0.14, -0.95, 0.3), RightUpLeg: V(-0.12, -1, 0.05), RightLeg: V(-0.04, -1, -0.2) })], [0.5, guardP()], [0.75, guardP({ LeftUpLeg: V(0.14, -0.95, 0.55), LeftLeg: V(0.06, -1, -0.1), RightUpLeg: V(-0.12, -0.95, -0.3), RightLeg: V(-0.04, -0.9, -0.55) })], [1, guardP()]) },
     turn: { dur: 0.8, keys: K([0, pose()], [1, pose()]) },
     soccerkick: { dur: 1.1, side: 'R', legs: true, keys: K([0, pose()], [0.35, pose({ RightUpLeg: V(-0.05, -0.85, -0.5), RightLeg: V(0, -0.2, -1), LeftArm: V(0.7, -0.3, 0.4), RightArm: V(-0.6, -0.5, -0.4), LeftUpLeg: V(0.05, -1, 0.15), LeftLeg: V(0, -1, -0.1) }, { chestPitch: 5, chestYaw: -15 })], [0.55, pose({ RightUpLeg: V(-0.02, -0.4, 0.95), RightLeg: V(0, -0.3, 1), LeftArm: V(0.75, -0.2, -0.3), RightArm: V(-0.5, -0.5, 0.6) }, { chestPitch: -12, chestYaw: 15 })], [0.75, pose({ RightUpLeg: V(-0.02, 0.05, 1), RightLeg: V(0, 0.1, 1) }, { chestPitch: -15 })], [1, pose()]) },
-    golf: { dur: 2.8, side: 'R', all: true, keys: K([0, pose(ADDRESS, { chestPitch: 35, headPitch: 22 })], [0.12, pose(ADDRESS, { chestPitch: 35, headPitch: 22 })],
+    golf: { dur: 2.3, flow: true, side: 'R', all: true, keys: K([0, pose(ADDRESS, { chestPitch: 35, headPitch: 22 })], [0.12, pose(ADDRESS, { chestPitch: 35, headPitch: 22 })],
       [0.45, pose({ ...ADDRESS, LeftArm: V(-0.85, 0.35, 0.35), LeftForeArm: V(-0.5, 0.85, -0.1), RightArm: V(-0.6, 0.2, -0.6), RightForeArm: V(-0.1, 0.95, 0.3) }, { chestYaw: -85, hipsYaw: -40, chestPitch: 25, headPitch: 22 })],
-      [0.6, pose(ADDRESS, { chestYaw: 15, hipsYaw: 30, chestPitch: 33, headPitch: 22 })],
-      [0.78, pose({ ...ADDRESS, LeftArm: V(0.55, 0.5, -0.4), LeftForeArm: V(0.1, 0.9, -0.35), RightArm: V(0.85, 0.35, 0.3), RightForeArm: V(0.4, 0.85, -0.2), RightUpLeg: V(-0.05, -1, -0.2), RightLeg: V(0, -0.8, -0.6) }, { chestYaw: 95, hipsYaw: 75, chestPitch: -5, headPitch: -5 })],
+      [0.53, pose({ ...ADDRESS, LeftArm: V(-0.12, -0.72, 0.6), LeftForeArm: V(-0.05, -0.8, 0.55), RightArm: V(0.12, -0.72, 0.62), RightForeArm: V(0.05, -0.8, 0.55) }, { chestYaw: -40, hipsYaw: 0, chestPitch: 31, headPitch: 22 })], // downswing, hands at the right hip
+      [0.565, pose(ADDRESS, { chestYaw: 15, hipsYaw: 30, chestPitch: 33, headPitch: 22 })], // impact: back at the ball, fastest point
+      [0.6, pose({ ...ADDRESS, LeftArm: V(-0.16, -0.65, 0.73), LeftForeArm: V(-0.08, -0.7, 0.7), RightArm: V(0.02, -0.66, 0.74), RightForeArm: V(-0.04, -0.7, 0.7) }, { chestYaw: 20, hipsYaw: 40, chestPitch: 27, headPitch: 18 })], // through the ball, hands in front
+      [0.72, pose({ ...ADDRESS, LeftArm: V(0.55, 0.5, -0.4), LeftForeArm: V(0.1, 0.9, -0.35), RightArm: V(0.85, 0.35, 0.3), RightForeArm: V(0.4, 0.85, -0.2), RightUpLeg: V(-0.05, -1, -0.2), RightLeg: V(0, -0.8, -0.6) }, { chestYaw: 95, hipsYaw: 75, chestPitch: -5, headPitch: -5 })],
       [1, pose({ ...ADDRESS, LeftArm: V(0.55, 0.5, -0.4), LeftForeArm: V(0.1, 0.9, -0.35), RightArm: V(0.85, 0.35, 0.3), RightForeArm: V(0.4, 0.85, -0.2), RightUpLeg: V(-0.05, -1, -0.2), RightLeg: V(0, -0.8, -0.6) }, { chestYaw: 95, hipsYaw: 75, chestPitch: -5, headPitch: -5 })]) },
-    bat: { dur: 1.8, side: 'R', all: true, keys: K([0, pose({ LeftArm: V(-0.6, -0.1, 0.6), LeftForeArm: V(-0.6, 0.6, 0.3), RightArm: V(-0.9, -0.3, 0.1), RightForeArm: V(0.1, 0.9, 0.2), LeftUpLeg: V(0.18, -1, 0), RightUpLeg: V(-0.18, -1, 0), LeftLeg: V(0.05, -1, -0.1), RightLeg: V(-0.05, -1, -0.1) }, { chestYaw: -30, chestPitch: 12 })],
+    bat: { flow: true, dur: 1.8, side: 'R', all: true, keys: K([0, pose({ LeftArm: V(-0.6, -0.1, 0.6), LeftForeArm: V(-0.6, 0.6, 0.3), RightArm: V(-0.9, -0.3, 0.1), RightForeArm: V(0.1, 0.9, 0.2), LeftUpLeg: V(0.18, -1, 0), RightUpLeg: V(-0.18, -1, 0), LeftLeg: V(0.05, -1, -0.1), RightLeg: V(-0.05, -1, -0.1) }, { chestYaw: -30, chestPitch: 12 })],
       [0.3, pose({ LeftArm: V(-0.6, -0.1, 0.6), LeftForeArm: V(-0.6, 0.6, 0.3), RightArm: V(-0.9, -0.3, 0.1), RightForeArm: V(0.1, 0.9, 0.2), LeftUpLeg: V(0.12, -0.6, 0.75), LeftLeg: V(0.05, -1, 0) }, { chestYaw: -40, chestPitch: 12 })],
       [0.5, pose({ LeftArm: V(0.4, -0.1, 0.9), LeftForeArm: V(0.6, 0, 0.8), RightArm: V(0.1, -0.2, 1), RightForeArm: V(0.5, 0, 0.85), LeftUpLeg: V(0.2, -1, 0.3), RightUpLeg: V(-0.15, -1, -0.15), RightLeg: V(-0.05, -0.85, -0.5) }, { chestYaw: 60, hipsYaw: 40, chestPitch: 10 })],
       [0.75, pose({ LeftArm: V(0.9, 0.2, -0.1), LeftForeArm: V(0.4, 0.6, -0.6), RightArm: V(0.6, 0.3, 0.6), RightForeArm: V(0.6, 0.5, -0.4), LeftUpLeg: V(0.2, -1, 0.3), RightUpLeg: V(-0.15, -1, -0.15), RightLeg: V(-0.05, -0.85, -0.5) }, { chestYaw: 100, hipsYaw: 60 })], [1, pose({ LeftArm: V(0.9, 0.2, -0.1), LeftForeArm: V(0.4, 0.6, -0.6), RightArm: V(0.6, 0.3, 0.6), RightForeArm: V(0.6, 0.5, -0.4) }, { chestYaw: 90, hipsYaw: 50 })]) },
-    throw: { dur: 1.5, side: 'R', all: true, keys: K([0, pose()], [0.35, pose({ RightArm: V(-0.8, 0.3, -0.5), RightForeArm: V(-0.2, 1, -0.3), LeftArm: V(0.3, 0.2, 0.9), LeftForeArm: V(0.1, 0.3, 1), LeftUpLeg: V(0.1, 0.2, 0.9), LeftLeg: V(0, -1, 0.1) }, { chestYaw: -40 })],
+    throw: { flow: true, dur: 1.5, side: 'R', all: true, keys: K([0, pose()], [0.35, pose({ RightArm: V(-0.8, 0.3, -0.5), RightForeArm: V(-0.2, 1, -0.3), LeftArm: V(0.3, 0.2, 0.9), LeftForeArm: V(0.1, 0.3, 1), LeftUpLeg: V(0.1, 0.2, 0.9), LeftLeg: V(0, -1, 0.1) }, { chestYaw: -40 })],
       [0.6, pose({ RightArm: V(-0.3, 0.6, 0.8), RightForeArm: V(0, 0.4, 1), LeftArm: V(0.6, -0.6, -0.3), LeftUpLeg: V(0.12, -0.75, 0.6), LeftLeg: V(0, -1, -0.1), RightUpLeg: V(-0.1, -0.9, -0.4), RightLeg: V(0, -0.8, -0.6) }, { chestYaw: 30, chestPitch: 20 })],
       [0.8, pose({ RightArm: V(0.4, -0.6, 0.6), RightForeArm: V(0.6, -0.6, 0.5), LeftUpLeg: V(0.12, -0.75, 0.6), LeftLeg: V(0, -1, -0.1), RightUpLeg: V(-0.1, -0.9, -0.4), RightLeg: V(0, -0.8, -0.6) }, { chestYaw: 35, chestPitch: 35 })], [1, pose()]) },
-    serve: { dur: 1.8, side: 'R', all: true, keys: K([0, pose({ RightArm: V(-0.4, -0.8, 0.4), LeftArm: V(0.2, -0.6, 0.8) })], [0.35, pose({ LeftArm: V(0.1, 1, 0.2), LeftForeArm: V(0, 1, 0.1), RightArm: V(-0.9, 0.1, -0.3), RightForeArm: V(-0.1, 1, -0.4), LeftUpLeg: V(0.06, -0.9, 0.4), LeftLeg: V(0, -1, -0.3), RightUpLeg: V(-0.06, -0.9, 0.4), RightLeg: V(0, -1, -0.3) }, { chestPitch: -15 })],
+    serve: { flow: true, dur: 1.8, side: 'R', all: true, keys: K([0, pose({ RightArm: V(-0.4, -0.8, 0.4), LeftArm: V(0.2, -0.6, 0.8) })], [0.35, pose({ LeftArm: V(0.1, 1, 0.2), LeftForeArm: V(0, 1, 0.1), RightArm: V(-0.9, 0.1, -0.3), RightForeArm: V(-0.1, 1, -0.4), LeftUpLeg: V(0.06, -0.9, 0.4), LeftLeg: V(0, -1, -0.3), RightUpLeg: V(-0.06, -0.9, 0.4), RightLeg: V(0, -1, -0.3) }, { chestPitch: -15 })],
       [0.6, pose({ RightArm: V(-0.2, 1, 0.3), RightForeArm: V(0, 0.8, 0.6) }, { chestPitch: 5, chestYaw: 20 })], [0.8, pose({ RightArm: V(0.4, -0.5, 0.7), RightForeArm: V(0.6, -0.5, 0.5) }, { chestPitch: 30, chestYaw: 35 })], [1, pose()]) },
-    forehand: { dur: 1.4, side: 'R', all: true, keys: K([0, pose({ RightArm: V(-0.4, -0.6, 0.6), RightForeArm: V(0, -0.2, 1), LeftArm: V(0.3, -0.6, 0.7) })], [0.35, pose({ RightArm: V(-0.9, -0.3, -0.3), RightForeArm: V(-0.5, 0, -0.8), LeftArm: V(0.3, -0.3, 0.9), LeftForeArm: V(-0.4, 0, 0.9) }, { chestYaw: -60, hipsYaw: -30 })],
+    forehand: { flow: true, dur: 1.4, side: 'R', all: true, keys: K([0, pose({ RightArm: V(-0.4, -0.6, 0.6), RightForeArm: V(0, -0.2, 1), LeftArm: V(0.3, -0.6, 0.7) })], [0.35, pose({ RightArm: V(-0.9, -0.3, -0.3), RightForeArm: V(-0.5, 0, -0.8), LeftArm: V(0.3, -0.3, 0.9), LeftForeArm: V(-0.4, 0, 0.9) }, { chestYaw: -60, hipsYaw: -30 })],
       [0.6, pose({ RightArm: V(-0.1, -0.1, 1), RightForeArm: V(0.3, 0.2, 0.9) }, { chestYaw: 20, hipsYaw: 10 })], [0.8, pose({ RightArm: V(0.6, 0.1, 0.8), RightForeArm: V(0.7, 0.4, 0.4) }, { chestYaw: 55, hipsYaw: 30 })], [1, pose()]) },
     shoot: { dur: 1.5, side: 'R', all: true, keys: K([0, pose({ RightArm: V(-0.15, -0.2, 0.95), RightForeArm: V(0, 0.6, 0.8), LeftArm: V(0.3, -0.2, 0.95), LeftForeArm: V(-0.4, 0.6, 0.6) })],
       [0.3, pose({ RightArm: V(-0.15, 0.1, 0.95), RightForeArm: V(0, 0.95, 0.3), LeftArm: V(0.3, 0, 0.95), LeftForeArm: V(-0.3, 0.9, 0.3), LeftUpLeg: V(0.06, -0.6, 0.8), LeftLeg: V(0, -1, -0.45), RightUpLeg: V(-0.06, -0.6, 0.8), RightLeg: V(0, -1, -0.45) }, { chestPitch: 15 })],
@@ -2043,7 +2045,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   // boxing numbers: 1 jab, 2 cross, 3 lead hook, 4 rear hook, 5 lead uppercut, 6 rear uppercut
   const PUNCH_NUM = { 1: ['jab', null], 2: ['cross', null], 3: ['hook', 'lead'], 4: ['hook', 'rear'], 5: ['uppercut', 'lead'], 6: ['uppercut', 'rear'] };
   const STYLE_WORDS = {
-    boxing: /\b(box|boxer|boxing|fight|fighter|fighting|jab|cross|hook|uppercut|punch|punches|stance|guard|spar|sparring|mma|ufc|kickbox|kickboxing|muay|thai|karate|slip|weave|block|knee|elbow|teep|haymaker|combo|shadow ?box|overhand|feint|parry|pull counter|shoulder roll|step back|step in|stepping|step forward|side ?step|right hand|left hand|body shot|lead hand|rear hand)/,
+    boxing: /\b(footwork|circle left|circle right|pressure|on his toes|flat[ -]?footed|back foot|stick and move|box|boxer|boxing|fight|fighter|fighting|jab|cross|hook|uppercut|punch|punches|stance|guard|spar|sparring|mma|ufc|kickbox|kickboxing|muay|thai|karate|slip|weave|block|knee|elbow|teep|haymaker|combo|shadow ?box|overhand|feint|parry|pull counter|shoulder roll|step back|step in|stepping|step forward|side ?step|right hand|left hand|body shot|lead hand|rear hand)/,
     tired: /\b(tired|exhausted|sleepy|weak|sad|depressed|hot|desert|heat)\b/, proud: /\b(proud|confident|strut|swagger|cool|catwalk|model|runway|boss)\b/,
     sneaky: /\b(sneak|sneaky|sneaking|stealth|creep|creeping|crouch(ed)?|ninja|spy|tiptoe)\b/, happy: /\b(happy|excited|joyful|cheerful|bouncy)\b/,
     angry: /\b(angry|aggressive|furious|mad|rage|explosive|powerful)\b/, drunk: /\b(drunk|dizzy|wobbly|stumbl\w*|on ice|icy|slippery)\b/, old: /\b(old|elderly|old man|old woman|grandpa|grandma)\b/,
@@ -2058,6 +2060,23 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     south: /\b(southpaw|lefty|left handed|left-handed)\b/,
   };
   // themes with no specific moves: build a believable routine (varies each take)
+  // how each fighter moves: bounce (height m, beats/s), side-to-side sway (deg), and footwork between punches
+  const FOOTWORK = {
+    peekaboo: { bounce: 0.018, rate: 1.9, sway: 9, steps: ['fwd', 'fwd', 'left', 'right'], p: 0.45 },          // constant head movement, walks forward behind the guard
+    ali: { bounce: 0.05, rate: 2.6, sway: 3, steps: ['left', 'back', 'right', 'back', 'fwd'], p: 0.6 },          // high on his toes, dancing laterally, in and out
+    roll: { bounce: 0.008, rate: 1.1, sway: 4, steps: ['back', 'left'], p: 0.25 },                               // calm, nearly flat-footed, small steps
+    canelo: { bounce: 0.01, rate: 1.3, sway: 6, steps: ['fwd', 'fwd'], p: 0.3 },                                  // flat-footed, steady pressure
+    loma: { bounce: 0.035, rate: 2.4, sway: 4, steps: ['left', 'right', 'fwd', 'pivot'], p: 0.6 },               // angles and pivots
+    fury: { bounce: 0.03, rate: 1.8, sway: 5, steps: ['back', 'left', 'fwd'], p: 0.45 },                          // tall, bouncy, feints and steps
+    usyk: { bounce: 0.03, rate: 2.2, sway: 4, steps: ['right', 'left', 'right', 'back'], p: 0.6 },                // always moving sideways
+    pacquiao: { bounce: 0.045, rate: 2.7, sway: 3, steps: ['fwd', 'back', 'fwd', 'back'], p: 0.6 },               // explosive in-and-out
+    naseem: { bounce: 0.035, rate: 2, sway: 10, steps: ['back', 'left', 'right'], p: 0.5 },                       // swaying, hands low, unorthodox
+    royjones: { bounce: 0.04, rate: 2.2, sway: 8, steps: ['left', 'back'], p: 0.45 },                             // rhythm, hands down
+    ggg: { bounce: 0.012, rate: 1.4, sway: 3, steps: ['fwd', 'fwd', 'left'], p: 0.35 },                           // patient forward pressure, cuts the ring
+    joshua: { bounce: 0.02, rate: 1.6, sway: 3, steps: ['fwd', 'back'], p: 0.3 },
+    crawford: { bounce: 0.025, rate: 1.9, sway: 5, steps: ['back', 'right', 'fwd'], p: 0.4 },
+    boxing: { bounce: 0.025, rate: 1.8, sway: 4, steps: ['fwd', 'back', 'left', 'right'], p: 0.3 },
+  };
   // themes with no specific moves: build a believable routine. Each fighter has several; a new take picks another.
   // entry = [move, side ('lead'/'rear'/'left'/'right'), turn degrees, step ('fwd'/'back'/'left'/'right'), to the body]
   const ROUTINES = {
@@ -2163,7 +2182,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const jh = /\b(super|massive|huge|giant|insane|really high|very high|mega|sky ?high|moon)\b/.test(sg) ? 3 : /\b(high|big|tall)\b/.test(sg) ? 1.8 : /\b(small|little|tiny|low|hop)\b/.test(sg) ? 0.5 : 1;
       const speed = (/\b(slow|slowly|gentle|gently|lazy|lazily)/.test(sg) ? 0.65 : /\b(fast|quick|quickly|rapid|rapidly|explosive|lightning|hard)/.test(sg) ? 1.4 : 1)
         * (st.tired || st.old ? 0.75 : st.sneaky ? 0.6 : st.heavy ? 0.55 : st.angry || st.happy ? 1.15 : st.peekaboo || st.loma || st.brucelee ? 1.2 : 1);
-      const back = /\b(backwards?|backward|reverse|in reverse|back up)\b/.test(sg), circle = /\b(in a circle|around in circles|circles|circle)\b/.test(sg);
+      const back = /\b(backwards?|backward|reverse|in reverse|back up|backpedal\w*|retreat\w*|back away|back off|(run|runs|running|jog|jogs|jogging|walk|walks|walking|move|moves|moving|sprint|sprints)\s+back)\b/.test(sg), circle = /\b(in a circle|around in circles|circles|circle)\b/.test(sg);
       const reps = Math.min(count, 20);
       for (let r = 0; r < reps; r++) for (const h of hits) {
         const before = sg.slice(Math.max(0, h.at - 24), h.at); const sm = before.match(SIDE_RE);
@@ -2182,7 +2201,20 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     }
     // a theme / fighter with no moves of its own ("do some boxing", "Mike Tyson", "golf") gets a routine
     const theme = Object.keys(THEME_WORDS).find(k => THEME_WORDS[k].test(t)) || ['naseem', 'royjones', 'peekaboo', 'fury', 'usyk', 'pacquiao', 'ggg', 'joshua', 'crawford', 'ali', 'roll', 'canelo', 'loma', 'brucelee', 'conor', 'muaythai', 'karate'].find(k => st[k]) || (st.boxing ? 'boxing' : null);
+    // boxing footwork words
+    if (/\b(circle|circles|circling) (to the )?left\b/.test(t)) for (let i = 0; i < 3; i++) plan.push({ move: 'stepmove', step: 'left', speed: 1.2, secs: null }, { move: 'turn', turn: 14, speed: 2, secs: null });
+    if (/\b(circle|circles|circling) (to the )?right\b|\bcircle\b(?! left)/.test(t) && !/circle (to the )?left/.test(t) && st.boxing && !/walk|run|jog/.test(t)) for (let i = 0; i < 3; i++) plan.push({ move: 'stepmove', step: 'right', speed: 1.2, secs: null }, { move: 'turn', turn: -14, speed: 2, secs: null });
+    if (/\b(pressure|walk (him|them|her) down|walks? down|stalk\w*|cut (off )?the ring|come forward|moves? forward)\b/.test(t) && st.boxing) for (let i = 0; i < 3; i++) plan.push({ move: 'stepmove', step: 'fwd', speed: 1, secs: null });
+    if (/\b(back foot|on the back foot|move away|moving away|get out|backs? off)\b/.test(t) && st.boxing) for (let i = 0; i < 2; i++) plan.push({ move: 'stepmove', step: 'back', speed: 1.1, secs: null });
+    if (/\b(footwork|move around|moving around|bounce around|dance around|stick and move|move his feet|movement)\b/.test(t) && st.boxing) for (const d of ['fwd', 'left', 'back', 'right']) plan.push({ move: 'stepmove', step: d, speed: 1.2, secs: null });
     if (!plan.length && theme) { const R_ = ROUTINES[theme], pick = R_[seed % R_.length]; for (const [move, side, turn, step, body] of pick) plan.push({ move: body ? ({ jab: 'bodyjab', hook: 'bodyhook', uppercut: 'bodyupper' })[move] || move : move, side: side || null, speed: st.peekaboo || st.loma || st.pacquiao ? 1.2 : st.fury ? 0.9 : 1, secs: null, turn, step: step || null, routine: true }); unknown.length = 0; }
+    // fighters move between punches the way they really do (seeded, so each take differs)
+    const fw = FOOTWORK[['peekaboo', 'ali', 'roll', 'canelo', 'loma', 'fury', 'usyk', 'pacquiao', 'naseem', 'royjones', 'ggg', 'joshua', 'crawford'].find(k => st[k]) || (st.boxing ? 'boxing' : '')];
+    if (fw && plan.some(p => p.routine)) { let r = (seed * 9301 + 49297) % 233280 || 7; const rnd = () => (r = (r * 9301 + 49297) % 233280) / 233280;
+      for (let i = plan.length - 1; i > 1; i--) if (!plan[i - 1].step && plan[i - 1].move !== 'stepmove' && rnd() < fw.p) { const d = fw.steps[Math.floor(rnd() * fw.steps.length)]; plan.splice(i, 0, d === 'pivot' ? { move: 'turn', turn: rnd() < 0.5 ? 35 : -35, speed: 1.8, secs: null } : { move: 'stepmove', step: d, speed: 1.2, secs: null }); } }
+    st.fw = fw || null;
+    if (/\b(on (his|her|the) toes|bouncy|bouncing|bounce)\b/.test(t)) st.fw = { ...(st.fw || FOOTWORK.boxing), bounce: 0.05, rate: 2.5 };
+    if (/\b(flat[ -]?foot\w*|planted|calm)\b/.test(t)) st.fw = { ...(st.fw || FOOTWORK.boxing), bounce: 0.006, rate: 1 };
     // Tyson style: bob & weave into the hooks
     if (st.peekaboo && plan.length && !plan.some(p => p.move === 'weave')) { const i = plan.findIndex(p => p.move === 'hook' || p.move === 'uppercut' || p.move === 'bodyhook'); if (i >= 0) plan.splice(i, 0, { move: 'weave', speed: 1.2, secs: null }); }
     if (st.boxing && plan.length && !['stance', 'shuffle'].includes(plan[0].move) && MOVES[plan[0].move] && (MOVES[plan[0].move].keys || [])[0] && MOVES[plan[0].move].keys[0][1].guard) plan.unshift({ move: 'stance', speed: 1, secs: 0.6 });
@@ -2195,6 +2227,11 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       if (t <= acc + d || i === plan.length - 1) { const lt = clamp(t - acc, 0, d); return { p, pose: movePose(p, lt), lt, i }; }
       acc += d;
     }
+  }
+  function blendPoseN(ps, ws) { // weighted mix of several poses (weights may be negative: spline)
+    const dirs = {}; for (const j in ps[1].dirs) { let v = [0, 0, 0]; ps.forEach((P, i) => { if (ws[i]) v = add(v, sc(P.dirs[j], ws[i])); }); dirs[j] = len(v) > 1e-6 ? norm(v) : ps[1].dirs[j]; }
+    const o = { dirs }; for (const k of ['hipsYaw', 'hipsPitch', 'hipsRoll', 'chestYaw', 'chestPitch', 'chestRoll', 'headPitch', 'headYaw', 'rootY', 'guard', 'ext', 'dip', 'shift', 'cover', 'pivotL', 'pivotR', 'plantL', 'plantR', 'shrL', 'shrR', 'proL', 'proR']) o[k] = ps.reduce((acc, P, i) => acc + (P[k] || 0) * ws[i], 0);
+    o.air = ps[1].air || ps[2].air; return o;
   }
   const PAIRS = [['LeftArm', 'RightArm'], ['LeftForeArm', 'RightForeArm'], ['LeftUpLeg', 'RightUpLeg'], ['LeftLeg', 'RightLeg']];
   const mx = v => [-v[0], v[1], v[2]], close = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2] > 0.995;
@@ -2224,8 +2261,12 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     else {
       let u = M_.loop ? (lt % cyc) / cyc : clamp(lt / cyc, 0, 1);
       const K = p.guardTurn ? MOVES.stepmove.keys : M_.keys; let k = 0; while (k < K.length - 2 && u > K[k + 1][0]) k++;
-      const [t0, a] = K[k], [t1, b] = K[k + 1], w = ss(clamp((u - t0) / Math.max(1e-6, t1 - t0), 0, 1));
-      P_ = blendPose(a, b, w);
+      const [t0, a] = K[k], [t1, b] = K[k + 1], lu = clamp((u - t0) / Math.max(1e-6, t1 - t0), 0, 1);
+      if (M_.flow && K.length > 2) { // swings: a smooth curve through all the key poses, so the club / bat / arm never stops mid-swing
+        const i0 = Math.max(0, k - 1), i3 = Math.min(K.length - 1, k + 2), u2 = lu * lu, u3 = u2 * lu;
+        const w4 = [(-u3 + 2 * u2 - lu) / 2, (3 * u3 - 5 * u2 + 2) / 2, (-3 * u3 + 4 * u2 + lu) / 2, (u3 - u2) / 2];
+        P_ = blendPoseN([K[i0][1], a, b, K[i3][1]], k === 0 ? [0, w4[0] + w4[1], w4[2], w4[3]] : k + 1 === K.length - 1 ? [w4[0], w4[1], w4[2] + w4[3], 0] : w4);
+      } else P_ = blendPose(a, b, ss(lu));
       if (p.height && p.height !== 1 && P_.air) P_.rootY *= p.height; // jumps go as high as asked (more time in the air too)
     }
     if (p.mirror) { MOVES_ALL_FLAG = !!M_.all; P_ = mirrorPose(P_, !M_.all, !!M_.legs); MOVES_ALL_FLAG = false; }
@@ -2307,7 +2348,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     function bikeSolve(P_, th) {
       const { G, Hq, Cq } = torsoG(P_, 0), f = fk(rest, locOf(G), [0, BIKE.hip[1], 0]), pos = f.pos, org = [0, 0, -BIKE.hip[2]]; // root sits above the saddle
       for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
-        const a = th + (sx > 0 ? 0 : Math.PI), ped = add(add(org, BIKE.bb), [sx * BIKE.tread, -Math.cos(a) * BIKE.crank, Math.sin(a) * BIKE.crank]);
+        const a = th + (sx > 0 ? 0 : Math.PI), ped = add(add(org, BIKE.bb), [sx * BIKE.tread, -Math.cos(a) * BIKE.crank, -Math.sin(a) * BIKE.crank]); // pedals go round forwards: bottom of the stroke sweeps back
         const [ul, ll] = ik2(pos[ix[S + 'UpLeg']], add(ped, [0, 0.075, -0.03]), LL1, LL2, [sx * 0.15, 0.2, 1]);
         P_.dirs[S + 'UpLeg'] = toF(Hq, ul); P_.dirs[S + 'Leg'] = toF(Hq, ll);
         const [ua, la] = ik2(pos[ix[S + 'Arm']], add(add(org, BIKE.bar), [sx * BIKE.grip, 0, 0]), LA1, LA2, [sx * 0.6, -0.6, -0.4]);
@@ -2363,10 +2404,12 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         const gw = clamp(P_.guard || 0, 0, 1);
         if (style.peekaboo && !kicking) { P_.dip = (P_.dip || 0) - 0.06 * gw; P_.chestPitch += 10 * gw; P_.chestRoll = (P_.chestRoll || 0) + Math.sin(t * 2 * Math.PI * 0.9) * 6 * gw; } // crouched, head always moving
         if (style.roll) { P_.chestYaw -= 12 * gw; P_.headPitch += 4 * gw; }
-        if (!kicking) { // light bounce on the balls of the feet, head & shoulders never still
-          const b = (Math.sin(t * 2 * Math.PI * vBounce) + 1) / 2;
-          P_.dip = (P_.dip || 0) - 0.025 * b * gw;
+        if (!kicking) { // the fighter's rhythm: bounce on the balls of the feet, head & shoulders never still
+          const F_ = style.fw || { bounce: 0.025, rate: vBounce, sway: 4 }, rate = F_.rate * (0.93 + (vBounce - 1.4) * 0.1);
+          const b = Math.abs(Math.sin(t * Math.PI * rate)); // one dip per beat
+          P_.dip = (P_.dip || 0) - F_.bounce * b * gw;
           P_.headPitch += Math.sin(t * 2 * Math.PI * 0.6) * 4 * gw; P_.chestYaw += Math.sin(t * 2 * Math.PI * 0.45) * 4 * gw;
+          P_.chestRoll = (P_.chestRoll || 0) + Math.sin(t * Math.PI * rate * 0.5) * F_.sway * gw; // side-to-side sway in time with the bounce
         }
       }
       if (style.tired) { P_.chestPitch += 18; P_.headPitch += 14; for (const j of ['LeftArm', 'RightArm']) P_.dirs[j] = lerpN(P_.dirs[j], BASE[j], 0.5); }
@@ -4494,6 +4537,7 @@ function prepModel(obj, map) {
   if (anim) { const J = anim.rest.joints, rw = []; J.forEach((j, i) => { rw[i] = j.parent < 0 ? [0, 0, 0] : rw[j.parent].map((v, c) => v + j.offset[c]); }); ourHipsY = -rw[anim.rest.index.LeftFoot][1] + (anim.M.ankleH || 0.07); }
   const s = (ourHipsY || 0.95) / Math.max(1e-6, hipsY); wrap.scale.setScalar(s); wrap.updateMatrixWorld(true);
   const box2 = new THREE.Box3().setFromObject(obj); wrap.position.y -= box2.min.y; wrap.updateMatrixWorld(true);
+  const footH = Math.min(P('LeftFoot').y, P('RightFoot').y) - new THREE.Box3().setFromObject(obj).min.y; // this character's ankle height above its soles
   const info = {};
   const CHILD = { Hips: 'Spine', Spine: 'Spine1', Spine1: 'Spine2', Spine2: 'Neck', Neck: 'Head' };
   for (const S of ['Left', 'Right']) Object.assign(CHILD, { [S + 'Shoulder']: S + 'Arm', [S + 'Arm']: S + 'ForeArm', [S + 'ForeArm']: S + 'Hand', [S + 'UpLeg']: S + 'Leg', [S + 'Leg']: S + 'Foot', [S + 'Foot']: S + 'ToeBase' });
@@ -4510,7 +4554,7 @@ function prepModel(obj, map) {
     }
     info[k] = { b, restW, C, local0: b.quaternion.clone(), pos0: b.position.clone() };
   }
-  return { wrap, info, keys, hips0: map.Hips.position.clone() };
+  return { wrap, info, keys, hips0: map.Hips.position.clone(), footH };
 }
 function poseModel() {
   if (!MODEL.on || !MODEL.obj || !character) return;
@@ -4522,9 +4566,17 @@ function poseModel() {
     I.b.parent.getWorldQuaternion(pw); I.b.quaternion.copy(pw.invert().multiply(w)); I.b.updateMatrixWorld(true);
   }
   const hp = character.bones[0].getWorldPosition(new THREE.Vector3()), hb = info.Hips.b;
+  // feet: keep this character's soles exactly where the AI body's soles are (no sinking into the floor, no floating)
+  if (info.LeftFoot && info.RightFoot) {
+    hb.position.copy(hb.parent.worldToLocal(hp.clone())); wrap.updateMatrixWorld(true);
+    const ix = anim.rest.index, aiF = Math.min(character.bones[ix.LeftFoot].getWorldPosition(new THREE.Vector3()).y, character.bones[ix.RightFoot].getWorldPosition(new THREE.Vector3()).y) - (anim.M.ankleH || 0.07);
+    const mF = Math.min(info.LeftFoot.b.getWorldPosition(new THREE.Vector3()).y, info.RightFoot.b.getWorldPosition(new THREE.Vector3()).y) - (MODEL.prep.footH || 0.07);
+    hp.y += aiF - mF;
+  }
   hb.position.copy(hb.parent.worldToLocal(hp)); wrap.updateMatrixWorld(true);
 }
-const CHAR_INFO = { 'rpm-male': '🧑 Realistic man', 'rpm-female': '👩 Realistic woman', soldier: '🧔 Realistic man (Soldier)', michelle: '👩 Realistic woman (Michelle)', xbot: '🤖 X Bot (Unity mannequin)' };
+const CHAR_INFO = { 'rpm-male': '🧑 Realistic man', 'rpm-female': '👩 Realistic woman', soldier: '🧔 Realistic man (Soldier)', michelle: '👩 Realistic woman (Michelle)', xbot: '🧍 Slim mannequin (Mixamo X Bot)', 'bab-hvgirl': '👩 Casual woman (HVGirl)' };
+const charName = id => CHAR_INFO[id] || (id.startsWith('bab-') ? '🧍 ' + id.slice(4).replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : id);
 let CHAR_LIST = null; const CHARS = {}; // loaded characters, kept so switching back is instant
 async function charList() { if (CHAR_LIST) return CHAR_LIST; try { const r = await fetch('characters/list.json'); CHAR_LIST = r.ok ? await r.json() : []; } catch (e) { CHAR_LIST = []; } return CHAR_LIST; }
 function useChar(entry, id) { // show this character (null = the AI body)
@@ -4545,8 +4597,8 @@ async function pickChar(id, quiet) {
   if (CHARS[id]) return useChar(CHARS[id], id);
   if (id === 'mine') return restoreModel(true);
   const it = (await charList()).find(c => c.id === id); if (!it) return;
-  if (!quiet) toast('Loading ' + (CHAR_INFO[id] || id) + '…');
-  try { const r = await fetch('characters/' + it.file); if (!r.ok) throw new Error('not available offline yet'); const e = await parseModel(await r.blob(), it.file); e.name = CHAR_INFO[id] || id; CHARS[id] = e; useChar(e, id); if (!quiet) toast((CHAR_INFO[id] || id) + ' ready. It plays your motion now.'); }
+  if (!quiet) toast('Loading ' + charName(id) + '…');
+  try { const r = await fetch('characters/' + it.file); if (!r.ok) throw new Error('not available offline yet'); const e = await parseModel(await r.blob(), it.file); e.name = charName(id); CHARS[id] = e; useChar(e, id); if (!quiet) toast(charName(id) + ' ready. It plays your motion now.'); }
   catch (e) { if (!quiet) toast('Could not load that character: ' + e.message, true, 7000); }
 }
 async function parseModel(blob, name) {
@@ -4589,7 +4641,7 @@ function setModelOn(on) {
 function updateModelBtn() { $('tModel').classList.toggle('on', MODEL.on); $('tModel').textContent = MODEL.on ? '🧍 ' + (MODEL.name || 'Character').replace(/^\S+\s/, '').replace(/\s*\(.*\)$/, '').slice(0, 14) : '🧍 Character'; }
 async function fillCharMenu() {
   const list = await charList(), cur = MODEL.on ? MODEL.id : 'ai', mineName = localStorage.getItem('nocap-model');
-  const items = [['ai', '🦴 AI body (default)'], ...list.map(c => [c.id, CHAR_INFO[c.id] || c.id]), ...(mineName ? [['mine', '⭐ My character: ' + mineName]] : [])];
+  const items = [['ai', '🦴 AI body (default)'], ...list.map(c => [c.id, charName(c.id)]), ...(mineName ? [['mine', '⭐ My character: ' + mineName]] : [])];
   $('mmList').innerHTML = items.map(([id, nm]) => `<button data-id="${id}" class="${id === cur ? 'cur' : ''}">${nm}${id === cur ? ' ✓' : ''}</button>`).join('') + (list.length ? '' : '<small style="display:block;opacity:.7;padding:4px 8px">The ready-made characters arrive with the next app update.</small>');
 }
 $('mmList').onclick = e => { const b = e.target.closest('button'); if (!b) return; $('modelMenu').classList.remove('open'); pickChar(b.dataset.id); };
@@ -4636,6 +4688,7 @@ function buildProp(kind) {
       h.add(main, thumb, cuff); h.userData.side = S; g.add(h);
     }
   } else if (kind === 'golf') {
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.0215, 14, 10), PM(0xffffff)); ball.name = 'golfball'; g.userData.ball = ball; scene.add(ball); ball.castShadow = true;
     const shaft = cyl(0.006, 0.005, 0.86, PM(0xb8bcc4)); shaft.position.y = -0.55; const grip = cyl(0.013, 0.011, 0.26, PM(0x222222)); grip.position.y = -0.13;
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.03, 0.05), PM(0x30343a)); head.position.set(0.035, -0.99, 0); g.add(shaft, grip, head);
   } else if (kind === 'bat') {
@@ -4675,6 +4728,18 @@ function jointW(name) { // where a joint is in the scene: on your character if o
   const ix = anim.rest.index, mb = MODEL.on && MODEL.map && MODEL.map[name];
   return (mb || character.bones[ix[name]]).getWorldPosition(_pv());
 }
+function golfSetup() { // where the ball sits (in front of the feet, one club-length from the hands at address) and when it's hit
+  if (PR.golfFor === anim) return PR.golf; PR.golfFor = anim;
+  const ix = anim.rest.index, F = []; for (let k = 0; k < anim.n; k++) F.push(S.fk(anim.rest, anim.locals[k], anim.rootPos[k]).pos);
+  const f0 = F[0], hands = k => F[k][ix.LeftHand].map((v, c) => (v + F[k][ix.RightHand][c]) / 2);
+  const h0 = hands(0), feet = f0[ix.LeftFoot].map((v, c) => (v + f0[ix.RightFoot][c]) / 2), fwd = [h0[0] - feet[0], 0, h0[2] - feet[2]], fl = Math.hypot(fwd[0], fwd[2]) || 1;
+  const L = 0.95, drop = h0[1] - 0.02, reach = Math.sqrt(Math.max(0.01, L * L - drop * drop));
+  const ball = [h0[0] + fwd[0] / fl * reach * 0.6, 0.0215, h0[2] + fwd[2] / fl * reach * 0.6];
+  let hitK = -1, top = 0; for (let k = 1; k < anim.n; k++) if (hands(k)[1] > hands(top)[1]) top = k; // top of the backswing
+  for (let k = top; k < anim.n; k++) if (hands(k)[1] <= h0[1] + 0.03) { hitK = k; break; } // hands back down at the ball = impact
+  const side = [-fwd[2] / fl, 0, fwd[0] / fl]; // the ball flies off along the target line (to the golfer's left)
+  PR.golf = { ball, handY: h0[1], hitK, v: [side[0] * 25, 0, side[2] * 25] }; return PR.golf;
+}
 function footballKick() { // when (and how hard) a foot strikes the ball: worked out once per motion
   if (PR.kickFor === anim) return PR.kick; PR.kickFor = anim; PR.kick = null;
   const ix = anim.rest.index, F = []; for (let k = 0; k < anim.n; k++) F.push(S.fk(anim.rest, anim.locals[k], anim.rootPos[k]).pos);
@@ -4687,7 +4752,7 @@ function footballKick() { // when (and how hard) a foot strikes the ball: worked
 function updateProps(k, t) {
   if (!anim || !character) return;
   const mode0 = $('propMode').value, mode = mode0 === 'auto' ? propAuto() : mode0;
-  for (const key in PR.built) PR.built[key].visible = key === mode;
+  for (const key in PR.built) { PR.built[key].visible = key === mode; if (PR.built[key].userData.ball) PR.built[key].userData.ball.visible = key === mode; }
   if (mode === 'none') return;
   const g = PR.built[mode] || (PR.built[mode] = buildProp(mode)); g.visible = true;
   const ix = anim.rest.index, bq = nm => character.bones[ix[nm]].getWorldQuaternion(_pq());
@@ -4695,7 +4760,17 @@ function updateProps(k, t) {
   const handFrame = S2 => { const q = bq(S2 + 'Hand'), sx = S2 === 'Left' ? 1 : -1; return { q, fing: new THREE.Vector3(sx, 0, 0).applyQuaternion(q), palm: new THREE.Vector3(0, -1, 0).applyQuaternion(q) }; };
   const along = (obj, top, dir) => { obj.position.copy(top); obj.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir.clone().normalize()); };
   if (mode === 'gloves') for (const h of g.children) { const S2 = h.userData.side; h.position.copy(hand(S2)); h.quaternion.copy(bq(S2 + 'Hand')); }
-  else if (mode === 'golf' || mode === 'bat') {
+  else if (mode === 'golf') {
+    const L = hand('Left'), Rh = hand('Right'), grip = L.clone().add(Rh).multiplyScalar(0.5), G0 = golfSetup(), ball = g.userData.ball;
+    let dir = Rh.clone().sub(L); if (dir.length() < 0.04) dir = Rh.clone().sub(fore('Right')); dir.normalize();
+    // hands low (address, impact): the club points at the ball, so the head reaches the ground; hands high: it follows the wrists
+    const toBall = new THREE.Vector3(...G0.ball).sub(grip), wl = THREE.MathUtils.clamp((G0.handY + 0.25 - grip.y) / 0.3, 0, 1);
+    if (toBall.length() > 0.05) dir.lerp(toBall.normalize(), wl).normalize();
+    along(g, grip.clone().addScaledVector(dir, -0.08), dir);
+    const tt = (k - G0.hitK) / anim.fps; ball.visible = true;
+    if (G0.hitK < 0 || tt < 0) ball.position.set(...G0.ball); else ball.position.set(G0.ball[0] + G0.v[0] * tt, Math.max(0.0215, G0.ball[1] + 9 * tt - 4.9 * tt * tt), G0.ball[2] + G0.v[2] * tt);
+  }
+  else if (mode === 'bat') {
     const L = hand('Left'), Rh = hand('Right'); let dir = Rh.clone().sub(L);
     if (dir.length() < 0.04) dir = Rh.clone().sub(fore('Right')); dir.normalize(); // hands stacked on the grip: the shaft runs from the top hand through the bottom hand (else it carries on from the forearm)
     along(g, L.clone().addScaledVector(dir, -0.06), dir);
@@ -4714,8 +4789,8 @@ function updateProps(k, t) {
     const yaw = (tr && tr.on ? tr.yaw : 0) * Math.PI / 180, q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
     g.quaternion.copy(q); g.position.copy(hips).sub(new THREE.Vector3(...B.hip).applyQuaternion(q)); g.position.y = 0;
     const th = tr && tr.on ? tr.crank : t * 7, dist = tr && tr.on ? tr.dist : t * 4.5;
-    rw.rotation.x = fw.rotation.x = dist / 0.34; crank.rotation.x = -th; // crank arms line up with the pedals (and the rider's feet)
-    for (const pd of pedals) { const sx = pd.userData.sx, a = th + (sx > 0 ? 0 : Math.PI); pd.position.set(sx * B.tread, B.bb[1] - Math.cos(a) * B.crank, B.bb[2] + Math.sin(a) * B.crank); }
+    rw.rotation.x = fw.rotation.x = dist / 0.34; crank.rotation.x = th; // crank arms line up with the pedals (and the rider's feet)
+    for (const pd of pedals) { const sx = pd.userData.sx, a = th + (sx > 0 ? 0 : Math.PI); pd.position.set(sx * B.tread, B.bb[1] - Math.cos(a) * B.crank, B.bb[2] - Math.sin(a) * B.crank); }
   }
 }
 function fillProps() {
