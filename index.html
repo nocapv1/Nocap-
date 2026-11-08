@@ -7230,9 +7230,9 @@ function mlModels() {
   }
   ML_CACHE = { sig, models }; return models;
 }
-function mlSample(model, rnd, prefZ) { // a new punch from the learned range
+function mlSample(model, rnd, prefZ, spread = 0.9) { // a new punch from the learned range (spread: how adventurous)
   const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
-  const z = model.comps.map((c, i) => { let x = gauss() * 0.9 + (prefZ && prefZ[i] ? prefZ[i] * 0.6 : 0); return Math.max(-2.2, Math.min(2.2, x)); });
+  const z = model.comps.map((c, i) => { let x = gauss() * spread + (prefZ && prefZ[i] ? prefZ[i] * 0.6 : 0); return Math.max(-2.2, Math.min(2.2, x)); });
   const feat = model.mean.slice(); model.comps.forEach((c, i) => { const w = z[i] * c.sd; for (let d = 0; d < feat.length; d++) feat[d] += w * c.v[d]; });
   const q = []; let o = 0; for (let f = 0; f < 22; f++) { q.push([]); for (let j = 0; j < 7; j++) { q[f].push(S.qnorm(S.qmul(model.ref[f][j], qexp([feat[o], feat[o + 1], feat[o + 2]])))); o += 3; } }
   return { q, z };
@@ -7542,12 +7542,43 @@ const expandSynonyms = t => { let x = ' ' + String(t).toLowerCase() + ' '; for (
 
 const PM_CACHE = {}; for (const m of POSE_MOVES) m.rx = new RegExp(m.re, 'i');
 const poseMoveData = pm => PM_CACHE[pm.id] || (PM_CACHE[pm.id] = poseMove(pm, PM_CACHE.__base || (PM_CACHE.__base = S.textToMotion('idle', 30, 0))));
+// ---- ⭐ my moves: everything you 👍 keep is saved as its own named move, and makes new variants of itself every time ----
+let MYMOVES = []; try { MYMOVES = JSON.parse(localStorage.getItem('nocap-mymoves') || '[]'); } catch (e) {}
+const saveMyMoves = () => { try { localStorage.setItem('nocap-mymoves', JSON.stringify(MYMOVES)); return true; } catch (e) { toast('Phone storage is full, so that move could not be saved.', true); return false; } };
+const myBase = m => m.kind === 'punch' ? PV_NAME[m.key].replace(/ \((left|right)\)/i, '').toLowerCase() : MV_NAME[m.key].replace(/^\S+\s/, '').replace(/ \(any way\)/, '').toLowerCase();
+function addMyMove(m) { const base = myBase(m); let i = 1; while (MYMOVES.some(x => x.name === `my ${base} ${i}`)) i++; m.name = `my ${base} ${i}`; m.id = Date.now() + Math.floor(Math.random() * 1000); m.at = Date.now(); MYMOVES.push(m); if (MYMOVES.length > 200) MYMOVES.shift(); return saveMyMoves() ? m : null; }
+// a punch close to the kept one: its place in the learned range, nudged a little each time
+function mlNear(model, q, rnd, spread = 0.35) {
+  if (!model || !model.comps) return { q, z: [] }; const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const x = []; for (let f = 0; f < 22; f++) for (let j = 0; j < 7; j++) x.push(...qlog(S.qmul(S.qconj(model.ref[f][j]), q[f][j]))); for (let i = 0; i < x.length; i++) x[i] -= model.mean[i];
+  const z0 = model.comps.map(c => { let s = 0; for (let d = 0; d < x.length; d++) s += x[d] * c.v[d]; return s / (c.sd || 1); }), z = z0.map(v => Math.max(-2.6, Math.min(2.6, v + gauss() * spread)));
+  // keep what the components don't describe (the kept punch's own detail) and move only along the learned directions
+  const feat = model.mean.map((m0, d) => m0 + x[d]); model.comps.forEach((c, i) => { const w = (z[i] - z0[i]) * c.sd; for (let d = 0; d < feat.length; d++) feat[d] += w * c.v[d]; });
+  const out = []; let o = 0; for (let f = 0; f < 22; f++) { out.push([]); for (let j = 0; j < 7; j++) { out[f].push(S.qnorm(S.qmul(model.ref[f][j], qexp([feat[o], feat[o + 1], feat[o + 2]])))); o += 3; } }
+  return { q: out, z };
+}
+// a movement close to the kept one: the same real pieces, sometimes re-ordered, one or two swapped for a similar piece going the same way, new timing
+function myMovePieces(m, rnd, wantSt) {
+  const all = MOVELIB ? MOVELIB.moves.flatMap(bm => bm.clips.map(c => ({ c, bm }))) : [], byId = id => all.find(x => x.c.cid === id);
+  let seq = m.clips.map(byId).filter(Boolean); if (!seq.length) return null; seq = seq.slice();
+  if (seq.length > 1 && rnd() < 0.5) for (let i = seq.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [seq[i], seq[j]] = [seq[j], seq[i]]; }
+  seq = seq.map(x => { if (rnd() > 0.35) return x; const sib = x.bm.clips.filter(c => c !== x.c && c.dir === x.c.dir); return sib.length ? { c: sib[Math.floor(rnd() * sib.length)], bm: x.bm } : x; });
+  return { pieces: seq.map(x => learnedPiece({ data: x.c.data }, rnd, x.c.stance ? x.c.stance !== wantSt : undefined)), clips: seq.map(x => x.c.cid) };
+}
+function myMoveAnim(m, rnd) { // one new variant of a kept move, as a whole animation
+  if (m.kind === 'move') { const r = myMovePieces(m, rnd, 'orth'); return r ? { anim: { ...stitchPieces(r.pieces), choices: { clips: r.clips }, strikes: [] }, clips: r.clips } : null; }
+  const [type, side] = m.key.split('|'), a = S.textToMotion(PV_PHRASE[m.key], 30, Math.floor(rnd() * 1e6)), st = (a.strikes || []).find(x => x.type === type) || (a.strikes || [])[0]; if (!st) return null;
+  const smp = mlNear(mlModels()[m.key], m.q, rnd), out = { ...a, locals: a.locals.map(l => l.slice()), rootPos: a.rootPos.map(r => r.slice()) }; applyModelPunch(out, a, { k: st.k, side, type }, smp);
+  return { anim: out, smp };
+}
+const myMoveFor = st => { const l = ' ' + st.toLowerCase() + ' '; const exact = MYMOVES.filter(m => l.includes(' ' + m.name + ' ')); if (exact.length) return exact[exact.length - 1];
+  const loose = MYMOVES.filter(m => l.includes(' ' + m.name.replace(/ \d+$/, '') + ' ')); return loose.length ? loose[Math.floor(Math.random() * loose.length)] : null; };
 function smartTextMotion0(txt0, seed) {
   let txt = expandSynonyms(applyWordMap(txt0)); const BM = MOVELIB ? MOVELIB.moves : [];
   if (BM.length && GYM_RE.test(txt) && !BM.some(m => m.rx.test(txt))) { // "gymnastics" on its own: a little floor routine, different each time
     const r = tRand(seed * 7 + 3), pool = ['cartwheel', 'backflip', 'front handspring', 'side flip', 'forward roll', 'cartwheel', 'handstand', 'splits']; const pick = [];
     while (pick.length < 3) { const x = pool[Math.floor(r() * pool.length)]; if (!pick.includes(x)) pick.push(x); } txt = pick.join(', then '); }
-  if (!LEARNED.length && !BM.some(m => m.rx.test(txt)) && !POSE_MOVES.some(m => m.rx.test(txt))) return cleanMotion(S.textToMotion(txt, 30, seed));
+  if (!LEARNED.length && !BM.some(m => m.rx.test(txt)) && !POSE_MOVES.some(m => m.rx.test(txt)) && !(MYMOVES.length && myMoveFor(txt))) return cleanMotion(S.textToMotion(txt, 30, seed));
   const steps = txt.split(/\s*(?:,|;|\band then\b|\bthen\b|\bfollowed by\b|\bafter that\b)\s*/i).map(s => s.trim()).filter(Boolean);
   const rnd = tRand(seed * 2654435761), pieces = [], plan = [], unknown = [], styles = [], usedClips = []; let used = false, procN = 0;
   steps.forEach((st, i) => {
@@ -7556,7 +7587,14 @@ function smartTextMotion0(txt0, seed) {
     // your taught / imported moves win, but when a built-in move fits the words (e.g. "strafe"), only a taught move whose own name is in the prompt
     const bmHit = BM.some(bmFits), lst = st.toLowerCase();
     const tk = tToks(st), scored = LEARNED.filter(m => !m.study && m.data && m.data.n > 5 && (!bmHit || (m.words || []).some(w => w && lst.includes(w)))).map(m => ({ m, s: tScore(tk, m) })).filter(x => x.s >= 3).sort((a, b) => b.s - a.s);
-    if (scored.length) {
+    const mine = MYMOVES.length ? myMoveFor(st) : null;
+    if (mine) { // ⭐ one of your kept moves: a fresh variant of it every time
+      let cnt = 1; for (const w of (' ' + st.toLowerCase() + ' ').replace(' ' + mine.name + ' ', ' ').replace(' ' + mine.name.replace(/ \d+$/, '') + ' ', ' ').split(/\s+/)) { if (/^\d+$/.test(w)) cnt = Math.min(30, +w); else if (T_NUM[w]) cnt = T_NUM[w]; }
+      for (let c = 0; c < cnt; c++) { const v = mine.kind === 'move' ? myMovePieces(mine, rnd, /\b(southpaw|lefty)\b/i.test(txt) ? 'south' : 'orth') : null;
+        if (v) { pieces.push(...v.pieces); usedClips.push(...v.clips); } else { const r = myMoveAnim(mine, rnd); if (!r) continue; procN++; pieces.push({ rest: r.anim.rest, locals: r.anim.locals, rootPos: r.anim.rootPos, M: r.anim.M }); }
+        plan.push('⭐ ' + mine.name); }
+      used = true;
+    } else if (scored.length) {
       const top = scored.filter(x => x.s >= scored[0].s - 1);
       for (let c = 0; c < count; c++) { const m = top[Math.floor(rnd() * top.length)].m; pieces.push(learnedPiece(m, rnd)); plan.push('🧠 ' + m.name); }
       used = true;
@@ -7567,7 +7605,7 @@ function smartTextMotion0(txt0, seed) {
       const boxing = bm.id === 'footwork' || bm.id === 'shadowbox' || bm.id === 'pivot', wantSt = /\b(southpaw|lefty|left[- ]handed)\b/i.test(txt) ? 'south' : 'orth';
       const effDir = c => c.stance && c.stance !== wantSt ? ({ left: 'right', right: 'left' })[c.dir] || c.dir : c.dir;
       let clips = bm.clips; if (bm.id === 'footwork' || bm.id === 'pivot') { const dl = /\bleft\b/.test(st), dr = /\bright\b/.test(st), want = /\b(strafe|strafing|strafes|lateral|side to side|sideways)\b/.test(st) && !dl && !dr ? ['left', 'right'] : dl ? ['left'] : dr ? ['right'] : /\b(forward|forwards|pressure|in|advance)\b/.test(st) ? ['fwd'] : /\b(back|backwards|retreat|away)\b/.test(st) ? ['back'] : null; if (want) { const f = clips.filter(c => want.includes(effDir(c))); if (f.length) clips = f; } }
-      const many = /\d|\b(once|one|single|double|triple|two|three|twice)\b/.test(st) ? count : bm.id === 'footwork' ? 3 : bm.id === 'shadowbox' ? 2 : count; let last = -1;
+      const many = /\d|\b(once|one|single|double|triple|two|three|twice)\b/.test(st) ? count : bm.id === 'footwork' ? 5 : bm.id === 'shadowbox' ? 2 : count; let last = -1;
       // 👍 / 👎 on takes that used a clip make it come up more / less
       const cw = clips.map(c => Math.exp(Math.max(-3, Math.min(3, ((LIKES.clip || {})[c.cid]) || 0))));
       for (let c = 0; c < many; c++) { let r0 = rnd() * cw.reduce((x, y) => x + y), ci = 0; while (ci < clips.length - 1 && r0 > cw[ci]) { r0 -= cw[ci]; ci++; } if (clips.length > 1 && ci === last) ci = (ci + 1) % clips.length; last = ci;
@@ -7672,6 +7710,7 @@ function renderTeach() {
     const lib = libOn() && BUILTIN ? BUILTIN.segs.length : 0;
     head = `<div class="mini" style="margin-bottom:8px;padding:8px;border:1px solid var(--line);border-radius:10px">${lib ? `📚 Pro library on: ${lib} real punches<br>` : '📚 Pro library off (tick it under Create)<br>'}${can.length ? `🧠 Can make <b>new</b>: ${can.join(', ')}` : '🧠 Needs at least 3 clear punches of a kind before it can make new ones'}${KEPT.length ? `<br>👍 ${KEPT.length} kept move${KEPT.length > 1 ? 's' : ''} of his own` : ''}${LIKES.count ? `<br>👍👎 ${LIKES.count} rating${LIKES.count > 1 ? 's' : ''} steering it` : ''}</div>`; } catch (e) {}
   try { teachStat(); } catch (e) {}
+  if (MYMOVES.length) head += `<div class="mini" style="margin-bottom:8px;padding:8px;border:1px solid var(--line);border-radius:10px"><b>⭐ My moves</b> (type the name in Text to motion; each time is a new version)<br>` + MYMOVES.slice().reverse().map(m => `<span style="display:inline-block;margin:3px 4px 0 0;padding:2px 8px;border:1px solid var(--line);border-radius:9px">${m.name} <a href="#" data-delmy="${m.id}" style="color:inherit;text-decoration:none">✕</a></span>`).join('') + '</div>';
   $('tchList').innerHTML = head + (studied.length ? `<div class="sub">Studied videos <span class="mini">${studied.length} video${studied.length > 1 ? 's' : ''} · ${tp} real punch${tp === 1 ? '' : 'es'} learned</span></div>` : '') + studied.map(m => `<div class="row" style="gap:6px"><label style="flex:1">🎬 <b>${(m.src || m.name).slice(0, 30)}</b> <span class="mini">${sumOf(m)}${m.words && m.words.length ? ' · ' + m.words.join(', ') : ''}</span></label><button class="btn small" data-del="${m.id}">🗑</button></div>`).join('')
     + (moves.length ? '<div class="sub">Taught moves</div>' : '') + moves.map(m => `<div class="row" style="gap:6px"><label style="flex:1">🧠 <b>${m.words.join(', ')}</b> <span class="mini">${(m.n / 30).toFixed(1)}s</span></label><button class="btn small" data-try="${m.id}">▶ Try</button><button class="btn small" data-del="${m.id}">🗑</button></div>`).join('')
     + (Object.keys(WORDMAP).length ? '<div class="sub">Word links</div>' : '') + Object.entries(WORDMAP).map(([k, v]) => `<div class="row" style="gap:6px"><label style="flex:1">🔗 "${k}" → "${v}"</label><button class="btn small" data-wdel="${k}">🗑</button></div>`).join('');
@@ -7719,13 +7758,35 @@ function previewMove(key) {
   if (!MOVELIB || !MOVELIB.moves.length) return null; const seed = Math.floor(Math.random() * 1e6), a = smartTextMotion0(MV_PROMPT[key], seed);
   return { anim: a, key, mv: true, clips: (a.choices && a.choices.clips) || [], n: (TVP && TVP.key === key ? TVP.n : 0) + 1, t0: performance.now() };
 }
+// 🎬 real single punches (whole body) from the pro boxing sessions: shown alongside the AI-made ones, in one stance (orthodox)
+let REALP = null, REALP_LOADING = null;
+function loadRealPunches() {
+  if (REALP) return Promise.resolve(REALP); if (REALP_LOADING) return REALP_LOADING;
+  REALP_LOADING = fetch('learned/cmu-punches.json').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(j => {
+    j.punches.forEach((c, i) => { const d = c.data; d.locals = d.frames.map(fr => { const l = new Array(d.rest.joints.length); for (const x in d.still) l[+x] = d.still[x]; d.move.forEach((x, m) => { l[x] = fr[m]; }); return l; }); delete d.frames; c.cid = 'rp:' + c.src + ':' + c.at; c.side = c.stance === 'south' ? (c.arm === 'Left' ? 'Right' : 'Left') : c.arm; });
+    REALP = j.punches; return REALP; }).catch(e => { REALP_LOADING = null; throw e; });
+  return REALP_LOADING;
+}
+function previewReal(key) {
+  if (!REALP) return null; const [type, side] = key.split('|'), pool = REALP.filter(c => c.type === type && c.side === side); if (!pool.length) return null;
+  const w = pool.map(c => Math.exp(Math.max(-3, Math.min(3, ((LIKES.clip || {})[c.cid]) || 0)))); let r = Math.random() * w.reduce((x, y) => x + y), i = 0; while (i < pool.length - 1 && r > w[i]) { r -= w[i]; i++; }
+  if (TVP && TVP.clip === pool[i] && pool.length > 1) i = (i + 1) % pool.length;
+  const c = pool[i], a = stitchPieces([learnedPiece({ data: c.data }, tRand(Math.floor(Math.random() * 1e6)), c.stance === 'south')]);
+  return { anim: a, key, real: true, clip: c, n: (TVP && TVP.key === key ? TVP.n : 0) + 1, t0: performance.now(), pool: pool.length };
+}
+function previewMine(id) { const m = MYMOVES.find(x => String(x.id) === String(id)); if (!m) return null; const r = myMoveAnim(m, tRand(Math.floor(Math.random() * 1e6))); if (!r) return null;
+  return { anim: r.anim, key: 'my:' + m.id, my: m, mv: m.kind === 'move', clips: r.clips || [], smp: r.smp || { z: [] }, n: (TVP && TVP.key === 'my:' + m.id ? TVP.n : 0) + 1, t0: performance.now() }; }
 function previewVariation(key) {
+  if (key && key.startsWith('my:')) return previewMine(key.slice(3));
   if (key && key.startsWith('mv:')) return previewMove(key);
+  if (key && key.startsWith('real:')) { const k2 = key.slice(5); if (k2 === 'any') { const ks = Object.keys(PV_PHRASE).filter(k => REALP && REALP.some(c => k === c.type + '|' + c.side)); return ks.length ? previewReal(ks[Math.floor(Math.random() * ks.length)]) : null; } return previewReal(k2); }
+  if ((!key || key === 'any' || PV_PHRASE[key]) && REALP && Math.random() < 0.4) { // every so often show a real one of that punch too
+    const ks = (!key || key === 'any') ? Object.keys(PV_PHRASE) : [key], k3 = ks[Math.floor(Math.random() * ks.length)], r = previewReal(k3); if (r) return r; }
   const M = mlModels(), keys = Object.keys(M).filter(k => M[k].comps && PV_PHRASE[k]); if (!keys.length) return null;
   if (!key || key === 'any' || !M[key] || !M[key].comps) key = keys[Math.floor(Math.random() * keys.length)];
   const seed = Math.floor(Math.random() * 1e6), a = S.textToMotion(PV_PHRASE[key], 30, seed), [type, side] = key.split('|');
   const st = (a.strikes || []).find(x => x.type === type) || (a.strikes || [])[0]; if (!st) return null;
-  const smp = mlSample(M[key], tRand(seed * 13 + 1), (LIKES.latent || {})[key] || null), out = { ...a, locals: a.locals.map(l => l.slice()), rootPos: a.rootPos.map(r => r.slice()) };
+  const smp = mlSample(M[key], tRand(seed * 13 + 1), (LIKES.latent || {})[key] || null, 1.25), out = { ...a, locals: a.locals.map(l => l.slice()), rootPos: a.rootPos.map(r => r.slice()) };
   applyModelPunch(out, a, { k: st.k, side, type }, smp);
   return { anim: out, smp, key, n: (TVP && TVP.key === key ? TVP.n : 0) + 1, t0: performance.now() };
 }
@@ -7733,10 +7794,13 @@ function rateClips(ids, v) { LIKES.clip = LIKES.clip || {}; for (const id of ids
 function tvNext() { TVP = previewVariation($('tvMove').value) || null; if (TVR && TVP) { const r = TVP.anim.rootPos[0], d = new THREE.Vector3(r[0] - TVR.ctl.target.x, 0.95 - TVR.ctl.target.y, r[2] - TVR.ctl.target.z); TVR.ctl.target.add(d); TVR.cam.position.add(d); } tvInfo(); }
 function tvInfo() {
   const M = mlModels(), keys = Object.keys(M).filter(k => M[k].comps && PV_PHRASE[k]), cur = $('tvMove').value;
-  $('tvMove').innerHTML = (keys.length ? '<optgroup label="Punches"><option value="any">🎲 Any punch</option>' + keys.map(k => `<option value="${k}">${PV_NAME[k]}</option>`).join('') + '</optgroup>' : '')
-    + (MOVELIB && MOVELIB.moves.length ? '<optgroup label="Movement">' + Object.keys(MV_NAME).map(k => `<option value="${k}">${MV_NAME[k]}</option>`).join('') + '</optgroup>' : ''); if ([...$('tvMove').options].some(o => o.value === cur)) $('tvMove').value = cur;
-  for (const id of ['tvUp', 'tvDown', 'tvRetry']) $(id).disabled = !TVP; $('tvN').hidden = !TVP;
-  $('tvInfo').innerHTML = TVP && TVP.mv ? `<b>${MV_NAME[TVP.key]}</b> · version #${TVP.n}: ${TVP.clips.length} real piece${TVP.clips.length === 1 ? '' : 's'} chained a new way${Object.keys(LIKES.clip || {}).length ? ' · your 👍👎 steer which pieces come up' : ''}`
+  $('tvMove').innerHTML = (MYMOVES.length ? '<optgroup label="⭐ My moves (new versions each time)">' + MYMOVES.slice().reverse().map(m => `<option value="my:${m.id}">⭐ ${m.name}</option>`).join('') + '</optgroup>' : '') + (keys.length ? '<optgroup label="Punches"><option value="any">🎲 Any punch</option>' + keys.map(k => `<option value="${k}">${PV_NAME[k]}</option>`).join('') + '</optgroup>' : '')
+    + (REALP ? '<optgroup label="Real punches (pro boxers)"><option value="real:any">🎬 Any real punch</option>' + Object.keys(PV_PHRASE).filter(k => REALP.some(c => k === c.type + '|' + c.side)).map(k => `<option value="real:${k}">🎬 ${PV_NAME[k]} (${REALP.filter(c => k === c.type + '|' + c.side).length})</option>`).join('') + '</optgroup>' : '')
+    + (MOVELIB && MOVELIB.moves.length ? '<optgroup label="Movement">' + Object.keys(MV_NAME).map(k => `<option value="${k}">${MV_NAME[k]}</option>`).join('') + '</optgroup>' : ''); if (TV_PICKED && [...$('tvMove').options].some(o => o.value === cur)) $('tvMove').value = cur; else if ([...$('tvMove').options].some(o => o.value === 'any')) $('tvMove').value = 'any';
+  for (const id of ['tvUp', 'tvDown', 'tvRetry']) $(id).disabled = !TVP; $('tvN').hidden = !TVP || !!TVP.real || !!TVP.mv;
+  $('tvInfo').innerHTML = TVP && TVP.my ? `<b>⭐ ${TVP.my.name}</b> · new version #${TVP.n} of your move · 👍 saves this version as another move of yours`
+    : TVP && TVP.real ? `<b>🎬 ${PV_NAME[TVP.key]}</b> · a real punch from a pro boxing session (${TVP.pool} of this kind) · 👍 adds it to his own punches`
+    : TVP && TVP.mv ? `<b>${MV_NAME[TVP.key]}</b> · version #${TVP.n}: ${TVP.clips.length} real piece${TVP.clips.length === 1 ? '' : 's'} chained a new way${Object.keys(LIKES.clip || {}).length ? ' · your 👍👎 steer which pieces come up' : ''}`
     : TVP ? `<b>${PV_NAME[TVP.key]}</b> · new version #${TVP.n}, made up from ${M[TVP.key].n} real punches it learned${KEPT.length ? ` · ${KEPT.length} kept 👍` : ''}`
     : (BUILTIN_LOADING && !BUILTIN ? 'Loading what it knows…' : 'Nothing to show yet. Study a few videos below (3+ clear punches of a kind) and it starts making its own.');
 }
@@ -7764,6 +7828,7 @@ function tvDraw() {
 }
 function openTeach() {
   if (!MOVELIB) loadMoveLib().then(() => tvInfo()).catch(() => {});
+  if (!REALP) loadRealPunches().then(() => tvInfo()).catch(() => {});
   $('teachModal').style.display = 'grid'; lockPage(); ML_FORCE_LIB = true; ML_CACHE = null; showTeachTab('vid'); renderTeach(); fillTeachSources();
   const go = () => { if (!TVP) tvNext(); else tvInfo(); }; if (!BUILTIN) { tvInfo(); loadBuiltin().then(() => { ML_CACHE = null; go(); }).catch(() => go()); } else go();
   requestAnimationFrame(tvDraw);
@@ -7775,12 +7840,25 @@ async function closeTeach() {
   toast('🧠 Saved. Everything it learned is kept on this phone.');
 }
 function teachStat() { try { const M = mlModels(), n = Object.values(M).filter(m => m.comps).length, vids = LEARNED.filter(m => m.study).length; $('teachStat').textContent = `${vids} video${vids === 1 ? '' : 's'} studied · ${KEPT.length} kept move${KEPT.length === 1 ? '' : 's'}${n ? ` · can make ${n} kinds of punch` : ''}`; } catch (e) {} }
+$('tchList').addEventListener('click', e => { const a = e.target.closest('[data-delmy]'); if (!a) return; e.preventDefault(); const m = MYMOVES.find(x => String(x.id) === a.dataset.delmy); if (!m || !confirm(`Delete "${m.name}"?`)) return; MYMOVES = MYMOVES.filter(x => x !== m); saveMyMoves(); renderTeach(); tvInfo(); });
 $('teachOpen').onclick = openTeach; $('tmSave').onclick = closeTeach;
-$('tvMove').onchange = () => { TVP = null; tvNext(); }; $('tvRetry').onclick = tvNext;
-$('tvUp').onclick = () => { if (!TVP) return; if (TVP.mv) { rateClips(TVP.clips, 1); toast('👍 Kept: those pieces of movement come up more from now on.'); tvNext(); return; } const [type, arm] = TVP.key.split('|'), r3 = v => Math.round(v * 1000) / 1000; KEPT.push({ type, arm, q: TVP.smp.q.map(f => f.map(q => q.map(r3))), at: Date.now() }); if (KEPT.length > 300) KEPT.shift();
+let TV_PICKED = false;
+$('tvMove').onchange = () => { TV_PICKED = true; TVP = null; tvNext(); }; $('tvRetry').onclick = tvNext;
+const R3 = v => Math.round(v * 1000) / 1000, roundQ = q => q.map(f => f.map(x => x.map(R3)));
+const keptMsg = m => m ? `👍 Saved as "${m.name}". Pick it under ⭐ My moves to watch new versions of it, or type it in Text to motion.` : '👍 Kept.';
+$('tvUp').onclick = () => { if (!TVP) return;
+  if (TVP.my) { // a version of one of your moves you like: saved as another move of its own (so it makes its own versions too)
+    const m0 = TVP.my, m = addMyMove(m0.kind === 'move' ? { kind: 'move', key: m0.key, clips: TVP.clips.slice() } : { kind: 'punch', key: m0.key, q: roundQ(TVP.smp.q) });
+    if (m0.kind === 'move') rateClips(TVP.clips, 1); else if (TVP.smp.z && TVP.smp.z.length) steerLatent(m0.key, TVP.smp.z, 1); toast(keptMsg(m), false, 6000); tvInfo(); tvNext(); return; }
+  if (TVP.real) { // its arm path joins his own punches (taken round the punch's peak), and that real one comes up more
+    const a = TVP.anim, [type, side] = TVP.key.split('|'), ix = a.rest.index, names = ML_J(side), r3 = v => Math.round(v * 1000) / 1000; let pk = 0, best = -1;
+    for (let k = 10; k + 12 <= a.n; k++) { const P = S.fk(a.rest, a.locals[k], a.rootPos[k]).pos, e = Math.hypot(...[0, 1, 2].map(c => P[ix[side + 'Hand']][c] - P[ix[side + 'Arm']][c])); if (e > best) { best = e; pk = k; } } // the punch's peak, with room either side
+    let mm = null; if (pk >= 10 && pk + 12 <= a.n && names.every(nm => ix[nm] != null)) { const seg = a.locals.slice(pk - 10, pk + 12).map(l => names.map(nm => l[ix[nm]].map(r3))); mm = addMyMove({ kind: 'punch', key: TVP.key, q: seg, from: TVP.clip.cid }); KEPT.push({ type, arm: side, q: seg, at: Date.now(), real: true }); if (KEPT.length > 300) KEPT.shift(); try { localStorage.setItem('nocap-kept', JSON.stringify(KEPT)); } catch (e) { KEPT.pop(); } ML_CACHE = null; }
+    rateClips([TVP.clip.cid], 1); toast(keptMsg(mm), false, 6000); tvNext(); return; }
+  if (TVP.mv) { rateClips(TVP.clips, 1); toast(keptMsg(addMyMove({ kind: 'move', key: TVP.key, clips: TVP.clips.slice() })), false, 6000); tvNext(); return; } const [type, arm] = TVP.key.split('|'), r3 = v => Math.round(v * 1000) / 1000; KEPT.push({ type, arm, q: TVP.smp.q.map(f => f.map(q => q.map(r3))), at: Date.now() }); if (KEPT.length > 300) KEPT.shift();
   try { localStorage.setItem('nocap-kept', JSON.stringify(KEPT)); } catch (e) { KEPT.pop(); toast('Phone storage is full, so it could not keep that one.', true); return; }
-  steerLatent(TVP.key, TVP.smp.z, 1); ML_CACHE = null; toast('👍 Kept. It is one of his moves now.'); tvNext(); };
-$('tvDown').onclick = () => { if (!TVP) return; if (TVP.mv) { rateClips(TVP.clips, -1); toast('👎 Discarded: those pieces come up less.'); tvNext(); return; } steerLatent(TVP.key, TVP.smp.z, -1); toast('👎 Discarded. Less like that from now on.'); tvNext(); };
+  steerLatent(TVP.key, TVP.smp.z, 1); ML_CACHE = null; toast(keptMsg(addMyMove({ kind: 'punch', key: TVP.key, q: roundQ(TVP.smp.q) })), false, 6000); tvNext(); };
+$('tvDown').onclick = () => { if (!TVP) return; if (TVP.my) { if (TVP.my.kind === 'move') rateClips(TVP.clips, -1); else if (TVP.smp.z && TVP.smp.z.length) steerLatent(TVP.my.key, TVP.smp.z, -1); toast('👎 Discarded that version.'); tvNext(); return; } if (TVP.real) { rateClips([TVP.clip.cid], -1); toast('👎 Discarded: that one comes up less.'); tvNext(); return; } if (TVP.mv) { rateClips(TVP.clips, -1); toast('👎 Discarded: those pieces come up less.'); tvNext(); return; } steerLatent(TVP.key, TVP.smp.z, -1); toast('👎 Discarded. Less like that from now on.'); tvNext(); };
 
 $('tchSave').onclick = teachSave;
 // ---- 📥 import an animation file (FBX / GLB / BVH, e.g. one you downloaded from Mixamo) as a move your AI knows ----
