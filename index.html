@@ -1218,6 +1218,10 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       if (fixedLegs) FL = feetLocal();
     }
     const { C, floor } = contactsFrom(FL, rootPos);
+    // Deslide (built into new video captures): the body only travels the way its planted feet allow. While a foot is on the floor it
+    // cannot move, so the hips' sideways / forward travel is taken from the planted foot (lowest foot trusted most), never from the
+    // AI's guess of where the body is. Only when both feet are off the floor (a hop / jump) does the video's own travel carry it.
+    if (opt.deslide && n > 2) rootPos = deslideRoot(FL, rootPos, floor, fps);
     if (opt.footLock) {
       let c = [0, 0, 0]; const anchor = { Left: null, Right: null };
       const alpha = clamp(dt * 20, 0.05, 1);
@@ -1296,7 +1300,47 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     }
     if (opt.proLimits !== false) locals = proLimits(rest, locals, true); // final say: nothing leaves a human range of motion
     rootPos = floorFinder(rest, locals, rootPos, C, M, fps, true);
+    if (opt.deslide && n > 2) { // once more on the finished legs (the smoothing passes above nudge them), so nothing slides in the end result
+      const FLf = locals.map(l => { const { pos, rot } = fk(rest, l), o = {}; for (const S of ['Left', 'Right']) { const an = pos[ix[S + 'Foot']], toe = pos[ix[S + 'ToeBase']], tip = add(toe, qrot(rot[ix[S + 'ToeBase']], [0, 0, 0.05])), heel = [an[0], an[1] - M.ankleH, an[2]]; o[S] = { low: Math.min(heel[1], toe[1], tip[1]), c: toe, ball: toe }; } return o; });
+      rootPos = deslideRoot(FLf, rootPos, 0, fps);
+    }
     return { rest, fps, n, rootPos, locals, contacts: C, hasHands: { Left: !!HL, Right: !!HR }, M, fov: opt.fov };
+  }
+
+  // ---- Deslide: the body only travels the way its supporting foot allows ----
+  // The foot carrying the weight (the lower one; both share it when level) can't move on the floor, so the hips' travel comes from
+  // that foot, never from the AI's guess of where the body is. Boxers on their toes still count. Only when he's clearly in the air
+  // (a hop / jump) does the video's own travel carry him.
+  let DESLIDE_PULL = 1.0, DESLIDE_BASE = 0.5;
+  function deslideRoot(FL, rootPos, floor, fps) {
+    const n = rootPos.length;
+    const hL = FL.map(f => f.Left.low), hR = FL.map(f => f.Right.low), win = Math.max(1, Math.round(0.05 * fps));
+    const wL = loess(hL.map((l, k) => clamp(0.5 + (hR[k] - l) / 0.03, 0, 1)), win).map(v => clamp(v, 0, 1));
+    const airW = loess(rootPos.map((r, k) => (Math.min(hL[k], hR[k]) + r[1] - floor > 0.08 ? 1 : 0)), win).map(v => clamp(v, 0, 1));
+    const st = [];
+    for (let k = 1; k < n; k++) {
+      const w = (wL[k] + wL[k - 1]) / 2, u = airW[k];
+      const P = (j, S) => FL[j][S].toe || FL[j][S].c; // the ball of the foot: boxers pivot on it, so it's the point that truly stays put
+      const fx = -(w * (P(k, 'Left')[0] - P(k - 1, 'Left')[0]) + (1 - w) * (P(k, 'Right')[0] - P(k - 1, 'Right')[0]));
+      const fz = -(w * (P(k, 'Left')[2] - P(k - 1, 'Left')[2]) + (1 - w) * (P(k, 'Right')[2] - P(k - 1, 'Right')[2]));
+      st.push([u * (rootPos[k][0] - rootPos[k - 1][0]) + (1 - u) * fx, u * (rootPos[k][2] - rootPos[k - 1][2]) + (1 - u) * fz]);
+    }
+    const h = Math.max(1, Math.round(0.03 * fps)), sx = loess(st.map(v => v[0]), h), sz = loess(st.map(v => v[1]), h);
+    const out = [rootPos[0].slice()];
+    for (let k = 1; k < n; k++) out.push([out[k - 1][0] + sx[k - 1], rootPos[k][1], out[k - 1][2] + sz[k - 1]]);
+    // never drift away from where the video really has him: a slow pull (≈1.5 s) back onto the video's path. Too slow to show as a
+    // slide, but it stops turns / pivots adding up into travel that never happened.
+    // The pull happens mostly while the weight is moving from one foot to the other (a step) or in the air, when the hips are
+    // meant to travel anyway, and only a whisper while a foot is planted.
+    const H = Math.max(2, Math.round(DESLIDE_PULL * fps));
+    const ex = loess(out.map((o, k) => rootPos[k][0] - o[0]), H), ez = loess(out.map((o, k) => rootPos[k][2] - o[2]), H);
+    const sw = wL.map((v, k) => (k ? Math.abs(v - wL[k - 1]) : 0)), swS = loess(sw, win);
+    let cx = ex[0], cz = ez[0];
+    return out.map((o, k) => {
+      const g = clamp(DESLIDE_BASE / fps + swS[k] * 1.5 + airW[k] * 0.3, 0, 1);
+      cx += g * (ex[k] - cx); cz += g * (ez[k] - cz);
+      return [o[0] + cx, o[1], o[2] + cz];
+    });
   }
 
   // ---- intelligent floor finder ----
@@ -4238,6 +4282,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <h2><span class="n">3</span>Refine <span style="margin-left:auto;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400">applies instantly</span></h2>
     <div class="row"><label>Smoothing <span class="mini">left = snappy · right = very smooth</span></label><span><input type="range" id="smooth" min="0" max="1" step="0.01" value="0.6"></span><span class="val" id="smoothV">0.60</span></div>
     <div class="sub">Feet</div>
+    <div class="row"><label>Deslide <span class="mini">feet stay put on the floor, no ice-skating · on for every new video</span></label><input type="checkbox" id="deslide" checked></div>
     <div class="row"><label>Anti-slide <span class="mini">applied while processing</span></label><input type="checkbox" id="footLock"></div>
     <input type="checkbox" id="antiJitter" checked hidden>
     <div class="row"><label>Foot lock <span class="mini">plant &amp; flatten on the floor</span></label><input type="checkbox" id="footIK"></div>
@@ -4813,6 +4858,7 @@ async function loadVideo(file, name, opts = {}) {
   info.innerHTML = `<span style="color:var(--accent);font-weight:600">✓ Video loaded</span> — ${name} · ${W}×${H} · ${D.toFixed(1)}s` + (converted ? ' · converted' : '') + '<br>Then tap <b>Generate motion</b> (✂️ on the play bar re-opens the trim window).';
   $('drop').innerHTML = '<b>✓ ' + name.replace(/[<>&]/g, '') + '</b><br>Tap to choose a different video';
   
+  if (!opts.fromLibrary) $('deslide').checked = true; // every new video is converted with the deslider built in
   if (D > 0.5 && !opts.fromLibrary && !window.__studyQuiet) setTimeout(openTrimWindow, 300); // studying for the AI: no trim window, it watches the whole video
   $('go').disabled = false; drawOverlay(); $('bigPlay').style.display = 'block';
   $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel(); requestRender();
@@ -5095,6 +5141,7 @@ function runTextMotion(txt, existingId, seed) {
       seed = (Math.floor(Math.random() * 1e5) + 1) * 8 + c;
     }
   }
+  if (!existingId) { trim = { s: 0, e: null }; try { renderTrim(); } catch (e) {} } // a new animation plays as a whole, never cut to the last one's trim
   const tkey = 'ttm|' + txt + '|' + seed; let a;
   if (existingId && BAKE && BAKE.key === tkey && BAKE.anim) a = { ...BAKE.anim, rootPos: BAKE.anim.rootPos.map(r => r.slice()) }; // exactly as it was made
   else { try { a = smartTextMotion(txt, seed); } catch (e) { toast(e.message, true, 9000); return; } BAKE = { key: tkey, anim: { ...a, rootPos: a.rootPos.map(r => r.slice()) }, fresh: true }; }
@@ -5351,7 +5398,7 @@ $('armOutSeg').onclick = e => { const b = e.target.closest('button'); if (!b) re
 
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, lowerBody: $('lowerBody').value, armPose: $('armPose').value, armOut: $('armOut').value, faceGuard: $('faceGuard').checked, antiFloat: $('antiFloat').checked, contactHeight: +$('contact').value, contactSpeed: 0.6, ...($('stanceHold').checked ? { stanceHold: true } : {}), ...($('steadyLegs').checked ? { steadyLegs: true } : {}) }; // only added when on, so saved takes keep their exact baked result
+  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, lowerBody: $('lowerBody').value, armPose: $('armPose').value, armOut: $('armOut').value, faceGuard: $('faceGuard').checked, antiFloat: $('antiFloat').checked, contactHeight: +$('contact').value, contactSpeed: 0.6, ...($('stanceHold').checked ? { stanceHold: true } : {}), ...($('steadyLegs').checked ? { steadyLegs: true } : {}), ...($('deslide').checked ? { deslide: true } : {}) }; // only added when on, so saved takes keep their exact baked result
 }
 let solveT;
 let BAKE = null; // { key, anim } – the motion exactly as it was made for the open take
@@ -5371,7 +5418,7 @@ function solve(rebuild = false) {
 }
 $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#fingerSeg button').forEach(x => x.classList.toggle('on', x === b)); solve(); };
 for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('change', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 30); }); // update once you let go (no stutter while dragging)
-for (const id of ['armOut', 'faceGuard', 'antiFloat', 'stanceHold', 'steadyLegs', 'solverVer', 'armPose', 'lowerBody', 'footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
+for (const id of ['deslide', 'armOut', 'faceGuard', 'antiFloat', 'stanceHold', 'steadyLegs', 'solverVer', 'armPose', 'lowerBody', 'footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
 
 function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON', 'editBtn']) $(id).disabled = !on; if (on && !MODEL.obj) setTimeout(() => restoreModel(), 0); else if (on && MODEL.obj) { if (MODEL.on && CHARS[MODEL.id]) useChar(CHARS[MODEL.id], MODEL.id); else scene.add(MODEL.prep.wrap); } } // re-fit the character to the new motion's skeleton
 function showStats() {
@@ -5646,9 +5693,20 @@ $('play').onclick = () => (playing ? pause() : play());
 // ---------- trim window (opens on upload, and from ✂️) ----------
 const TM = { s: 0, e: 0, cur: 0, playing: false, raf: 0, last: 0 };
 function tmDur() { return dur() || 0; }
+// no video behind this take (Text to motion, imported or library animations): the trim window shows the 3D character instead
+const tm3D = () => !codecSrc && !videoURL && !!anim;
+function tmDraw3D(t) {
+  try {
+    applyAt(t); renderer.render(scene, camera);
+    const src = renderer.domElement, c = $('tCv');
+    if (c.width !== src.width || c.height !== src.height) { c.width = src.width; c.height = src.height; }
+    const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height); g.drawImage(src, 0, 0);
+  } catch (e) {}
+}
 function tmShow(t) { // show the frame at time t
   TM.cur = Math.max(0, Math.min(tmDur(), t));
-  if (codecSrc) { const k = Math.round(Math.min(previews.length - 1, Math.max(0, TM.cur * previewFps))); const b = previews[k] || firstPreview; if (b) createImageBitmap(b).then(bmp => { const c = $('tCv'); c.width = bmp.width; c.height = bmp.height; c.getContext('2d').drawImage(bmp, 0, 0); bmp.close?.(); }).catch(() => {}); }
+  if (tm3D()) tmDraw3D(TM.cur);
+  else if (codecSrc) { const k = Math.round(Math.min(previews.length - 1, Math.max(0, TM.cur * previewFps))); const b = previews[k] || firstPreview; if (b) createImageBitmap(b).then(bmp => { const c = $('tCv'); c.width = bmp.width; c.height = bmp.height; c.getContext('2d').drawImage(bmp, 0, 0); bmp.close?.(); }).catch(() => {}); }
   else if (!TM.playing) { try { $('tVid').currentTime = TM.cur; } catch (e) {} }
   tmRender();
 }
@@ -5661,11 +5719,11 @@ function tmStop() { TM.playing = false; cancelAnimationFrame(TM.raf); $('tVid').
 function tmPlay() {
   if (TM.cur < TM.s || TM.cur >= TM.e - 0.03) TM.cur = TM.s;
   TM.playing = true; $('tPlay').textContent = '❚❚'; TM.last = performance.now();
-  if (!codecSrc) { const v = $('tVid'); v.currentTime = TM.cur; v.play().catch(() => {}); }
+  if (!codecSrc && !tm3D()) { const v = $('tVid'); v.currentTime = TM.cur; v.play().catch(() => {}); }
   const step = now => {
     if (!TM.playing) return;
-    if (codecSrc) { TM.cur += (now - TM.last) / 1000; TM.last = now; tmShow(TM.cur); } else { TM.cur = $('tVid').currentTime; tmRender(); }
-    if (TM.cur >= TM.e) { TM.cur = TM.s; if (!codecSrc) $('tVid').currentTime = TM.s; } // loop the chosen part
+    if (codecSrc || tm3D()) { TM.cur += (now - TM.last) / 1000; TM.last = now; tmShow(TM.cur); } else { TM.cur = $('tVid').currentTime; tmRender(); }
+    if (TM.cur >= TM.e) { TM.cur = TM.s; if (!codecSrc && !tm3D()) $('tVid').currentTime = TM.s; } // loop the chosen part
     TM.raf = requestAnimationFrame(step);
   };
   TM.raf = requestAnimationFrame(step);
@@ -5683,11 +5741,11 @@ function openTrimWindow() {
   pause();
   const [s, e] = trimRange(); TM.s = s; TM.e = e; TM.cur = s;
   const v = $('tVid'), c = $('tCv');
-  if (codecSrc) { v.style.display = 'none'; c.style.display = 'block'; v.removeAttribute('src'); }
+  if (codecSrc || tm3D()) { v.style.display = 'none'; c.style.display = 'block'; v.removeAttribute('src'); }
   else { c.style.display = 'none'; v.style.display = 'block'; if (v.src !== videoURL) { v.src = videoURL; v.load(); } }
   $('trimModal').style.display = 'grid'; lockPage(); tmShow(s);
 }
-function closeTrimWindow() { tmStop(); if ($('trimModal').style.display !== 'none') { $('trimModal').style.display = 'none'; unlockPage(); } }
+function closeTrimWindow() { tmStop(); if ($('trimModal').style.display !== 'none') { $('trimModal').style.display = 'none'; unlockPage(); if (tm3D()) { try { applyAt(curTime); } catch (e) {} needRender = true; } } }
 $('tClose').onclick = closeTrimWindow;
 $('tPlay').onclick = () => (TM.playing ? tmStop() : tmPlay());
 $('tSetA').onclick = () => { TM.s = Math.min(TM.cur, TM.e - 0.1); tmRender(); };
@@ -5800,9 +5858,9 @@ const LIB = {
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 const LATE_SETTINGS = ['elbowGuard', 'proLimits'];
-const settingIds = ['elbowGuard', 'proLimits', 'armOut', 'faceGuard', 'antiFloat', 'stanceHold', 'steadyLegs', 'solverVer', 'propMode', 'physOn', 'physStr', 'physBounce', 'physWobble', 'physSway', 'physWeight', 'physRagdoll', 'physArms', 'physBody', 'physLegs', 'clipSpeed', 'evenPace', 'armPose', 'lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
+const settingIds = ['deslide', 'elbowGuard', 'proLimits', 'armOut', 'faceGuard', 'antiFloat', 'stanceHold', 'steadyLegs', 'solverVer', 'propMode', 'physOn', 'physStr', 'physBounce', 'physWobble', 'physSway', 'physWeight', 'physRagdoll', 'physArms', 'physBody', 'physLegs', 'clipSpeed', 'evenPace', 'armPose', 'lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
 const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; s.edits = JSON.parse(JSON.stringify(EDITS)); return s; };
-const writeSettings = s => { if (!s) return; const raw = s; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; for (const id of LATE_SETTINGS) if (!(id in raw)) delete s[id]; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); EDITS = s.edits ? JSON.parse(JSON.stringify(s.edits)) : { keys: {}, root: {}, spread: 0.5 }; try { edSyncLocks(); } catch (e) {} };
+const writeSettings = s => { if (!s) return; const raw = s; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; for (const id of LATE_SETTINGS) if (!(id in raw)) delete s[id]; if (!('deslide' in raw)) s.deslide = false; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); EDITS = s.edits ? JSON.parse(JSON.stringify(s.edits)) : { keys: {}, root: {}, spread: 0.5 }; try { edSyncLocks(); } catch (e) {} };
 const DEFAULT_SETTINGS = readSettings(); // the app's starting settings, used for anything a take never saved
 for (const id of settingIds) $(id).addEventListener('change', () => setTimeout(() => recordChange(), 0));
 $('fingerSeg').addEventListener('click', () => setTimeout(() => recordChange(), 0));
@@ -5828,8 +5886,9 @@ function recordChange(extra) { // call after something changed
   const now = snap();
   if (lastSnap && JSON.stringify(now.settings) === JSON.stringify(lastSnap.settings) && !extra) return;
   history.push(extra ? { ...lastSnap, ...extra } : lastSnap); if (history.length > 50) history.shift();
-  lastSnap = now; updateUndo(); autosave();
+  lastSnap = now; updateUndo(); USER_EDIT = true; autosave();
 }
+let USER_EDIT = false; // set by a real change you made (Refine slider, Refine again, edits) since the take was opened
 // saved almost at once (and straight away if you leave the app), so every slider you move stays with that animation
 document.addEventListener('visibilitychange', () => { if (document.hidden && AUTOSAVE_FN) { clearTimeout(autosaveT); AUTOSAVE_FN(); } });
 let AUTOSAVE_FN = null;
@@ -5845,6 +5904,16 @@ function autosave() {
       if (BAKE && BAKE.fresh) { take.baked = { key: BAKE.key, anim: BAKE.anim }; BAKE.fresh = false; } // keep the result itself: future app updates never change it
       const after = JSON.stringify(ns) + '|' + ((take.meta && take.meta.scans) || 0) + '|' + ((take.frames && take.frames.length) || 0);
       const changed = before !== after; if (changed) take.mod = Date.now(); // edited takes move to the top of the Library
+      const userEdit = USER_EDIT; USER_EDIT = false;
+      if (changed && userEdit && RATED[take.id] === 1) {
+        // 👍 liked takes are never changed: the refined version is saved as a new take (shown now), the liked one stays exactly as it was
+        const orig = await LIB.get(take.id), nid = Date.now();
+        const copy = { ...take, id: nid, name: (orig.name || 'take').replace(/ \(refined( \d+)?\)$/, '') + ' (refined)', date: new Date().toISOString(), mod: Date.now() };
+        if (take.prompt) ttmSeeds[nid] = ttmSeeds[take.id] || take.seed || 0;
+        await LIB.put(copy); currentTakeId = nid; flashSaved(); renderLibrary(); rateUI();
+        toast('👍 Your liked version is kept as it was. This refined version is saved as a new take (shown now).', false, 5000);
+        return;
+      }
       await LIB.put(take); flashSaved(); if (changed) renderLibrary();
     } catch (e) { console.warn('autosave failed', e); }
   }, 150);
@@ -5963,7 +6032,8 @@ $('libList').onclick = async e => {
 renderLibrary();
 // open a saved take in the main view (restore = quietly put it back, e.g. after the AI studied videos in the background)
 async function openTake(take, edit, restore) {
-    clearTimeout(autosaveT);
+  if (AUTOSAVE_FN) { clearTimeout(autosaveT); try { await AUTOSAVE_FN(); } catch (e) {} } // finish saving the take you're leaving first
+  clearTimeout(autosaveT); USER_EDIT = false;
   if (take.prompt) { quiet = true; writeSettings(take.settings); quiet = false; ttmSeeds[take.id] = take.seed || 0; BAKE = take.baked || null; runTextMotion(take.prompt, take.id, take.seed || 0); resetHistory(); if (edit) openEditor(); return; }
   const vblob = take.videoBuf ? new Blob([take.videoBuf], { type: take.videoType || 'video/mp4' }) : take.video;
   if (vblob) await loadVideo(vblob, take.videoName || take.name, { fromLibrary: true });
@@ -8123,7 +8193,7 @@ function rate(v) {
   const id = currentTakeId; (async () => { try { const t = await LIB.get(id); if (t) { LAST_BINNED = t; clearTimeout(BIN_T); BIN_T = setTimeout(() => { LAST_BINNED = null; rateUI(); }, 15000); await LIB.del(id); }
     toast('👎 Binned: it\'s gone from your Library and it learned less like that. ↩ brings it back.', false, 6000); renderLibrary(); await nextTake(); } catch (e) {} })();
 }
-$('rateNext').onclick = () => nextTake();
+$('rateNext').onclick = async () => { if (AUTOSAVE_FN) { clearTimeout(autosaveT); try { await AUTOSAVE_FN(); } catch (e) {} } nextTake(); };
 $('rateUndo').onclick = async () => { const t = LAST_BINNED; if (!t) return; LAST_BINNED = null; delete RATED[t.id]; try { localStorage.setItem('nocap-rated', JSON.stringify(RATED)); await putTake(t); } catch (e) {} renderLibrary(); openTake(t, false, true); toast('↩ Brought back.'); rateUI(); };
 $('newBadge').onclick = () => toast(`N = new: ${$('newBadge').dataset.n} move${+$('newBadge').dataset.n === 1 ? '' : 's'} in this animation ${+$('newBadge').dataset.n === 1 ? 'was' : 'were'} made up by your AI from what it learned (not copied from a video).`, false, 6000);
 $('rateUp').onclick = () => rate(1); $('rateDown').onclick = () => rate(-1);
