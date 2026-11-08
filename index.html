@@ -5757,6 +5757,9 @@ $('scrub').addEventListener('input', () => { pause(); curTime = +$('scrub').valu
 document.addEventListener('keydown', e => { const tg = e.target; if ($('editModal').style.display === 'flex' || tg.isContentEditable || tg.tagName === 'TEXTAREA' || tg.tagName === 'SELECT' || (tg.tagName === 'INPUT' && tg.type !== 'range' && tg.type !== 'checkbox') || $('ttmModal').style.display === 'grid') return; if (e.code === 'Space') { e.preventDefault(); playing ? pause() : play(); } });
 let last = performance.now(), lastVT = -1, stallT = 0, lastSync = 0;
 function loop(now) {
+  try { loopBody(now); } catch (e) { loopErr(e); } requestAnimationFrame(loop);
+}
+function loopBody(now) {
   const dt = (now - last) / 1000; last = now;
   if (playing) {
     // the 3D always moves on a steady clock; the video is gently sped up / slowed down to stay in step (no jumps, no waiting on video stutters)
@@ -5768,13 +5771,14 @@ function loop(now) {
       if (vid.paused || vid.ended) vid.play().catch(() => {});
     }
     { const [s, e] = playRange(); if (curTime >= e - 0.01 || curTime < s - 0.05) { curTime = s; if (vid.src) { vid.currentTime = s; lastSync = now; vid.play().catch(() => {}); } } }
-    applyAt(curTime); drawOverlay(); updateTimeLabel(); needRender = true;
+    try { applyAt(curTime); drawOverlay(); } catch (e) { loopErr(e); } updateTimeLabel(); needRender = true;
   }
   if (aimMesh.visible !== aimOn()) aimShow();
   if (controls.update()) needRender = true;
-  if (needRender && !document.hidden) { renderer.render(scene, camera); needRender = false; }
-  requestAnimationFrame(loop);
+  if (needRender && !document.hidden) { try { renderer.render(scene, camera); } catch (e) { loopErr(e); } needRender = false; }
 }
+// one bad frame (a glitchy model, prop or physics step) must never freeze the 3D: it's skipped and noted once
+let LOOP_ERR = 0; function loopErr(e) { if (LOOP_ERR++ === 0) { console.error(e); toast('A frame failed to draw and was skipped (' + (e && e.message || e) + '). Playback carries on.', true, 8000); } }
 requestAnimationFrame(loop);
 vid.addEventListener('seeked', () => { if (pendingSeek != null) { const t = pendingSeek; pendingSeek = null; vid.currentTime = t; } else if (!playing) drawOverlay(); });
 vid.addEventListener('waiting', () => ($('tlabel').style.opacity = 0.5));
@@ -7595,7 +7599,7 @@ const GUARD_WORDS = [[/\b(philly( shell)?|shoulder roll guard|mayweather|floyd|c
   [/\b(ali|hands low|low guard|ali style)\b/i, 'ali'], [/\b(high guard|earmuffs|canelo|tight guard)\b/i, 'high'], [/\b(long guard|klitschko|lomachenko|range finder)\b/i, 'long'],
   [/\b(cross ?-?arm(s|ed)? guard|foreman|archie moore|armadillo)\b/i, 'crossarm'], [/\b(hands down|naseem|prince naseem|roy jones|hands by (his|my) (sides|waist))\b/i, 'handsdown']];
 const guardFromText = t => { for (const [re, g] of GUARD_WORDS) if (re.test(t)) return g; return null; };
-function applyGuard(a, style, lead = 'Left') {
+function applyGuard(a, style, lead = 'Left', onlySide = null) {
   const G = GUARDS[style]; if (!G) return a; const rest = a.rest, ix = rest.index, J = rest.joints, n = a.n;
   const ax = (v, d) => { const h = d * Math.PI / 360, s = Math.sin(h); return [v[0] * s, v[1] * s, v[2] * s, Math.cos(h)]; };
   const nrm = v => { const l = Math.hypot(...v) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }, sub = (p, q) => [p[0] - q[0], p[1] - q[1], p[2] - q[2]], add = (p, q, s = 1) => [p[0] + q[0] * s, p[1] + q[1] * s, p[2] + q[2] * s];
@@ -7613,7 +7617,7 @@ function applyGuard(a, style, lead = 'Left') {
   const drift = {}; for (const sd of ['Left', 'Right']) { const rel = F0.map(f => S.qrot(S.qconj(f.rot[ix.Spine2]), sub(f.pos[ix[sd + 'Hand']], f.pos[ix.Neck]))), m = [0, 1, 2].map(c => rel.reduce((s, r) => s + r[c], 0) / n); drift[sd] = rel.map(r => sub(r, m).map(v => Math.max(-0.04, Math.min(0.04, v * 0.3)))); }
   for (let k = 0; k < n; k++) {
     const f = S.fk(rest, locals[k], a.rootPos[k]), C = f.rot[ix.Spine2], N = f.pos[ix.Neck];
-    for (const sd of ['Left', 'Right']) {
+    for (const sd of ['Left', 'Right']) { if (onlySide && sd !== onlySide) continue;
       const role = sd === lead ? 'lead' : 'rear', sg = sd === 'Left' ? 1 : -1, t = G[role], iA = ix[sd + 'Arm'], iF = ix[sd + 'ForeArm'], iH = ix[sd + 'Hand'], iS = ix[sd + 'Shoulder'];
       const T = add(N, S.qrot(C, add([sg * t[0], t[1], t[2]], drift[sd][k]))), Sh = f.pos[iA], E0 = f.pos[iF], H0 = f.pos[iH];
       const la = Math.hypot(...sub(E0, Sh)), lb = Math.hypot(...sub(H0, E0)); let dv = sub(T, Sh), d = Math.hypot(...dv); d = Math.max(Math.abs(la - lb) + 1e-3, Math.min((la + lb) * 0.995, d)); dv = nrm(dv);
@@ -7641,7 +7645,10 @@ function smartTextMotion0(txt0, seed) {
     // your taught / imported moves win, but when a built-in move fits the words (e.g. "strafe"), only a taught move whose own name is in the prompt
     const bmHit = BM.some(bmFits), lst = st.toLowerCase();
     const tk = tToks(st), scored = LEARNED.filter(m => !m.study && m.data && m.data.n > 5 && (!bmHit || (m.words || []).some(w => w && lst.includes(w)))).map(m => ({ m, s: tScore(tk, m) })).filter(x => x.s >= 3).sort((a, b) => b.s - a.s);
-    const mine = MYMOVES.length ? myMoveFor(st) : null;
+    let mine = MYMOVES.length ? myMoveFor(st) : null;
+    if (!mine && MYMOVES.length && !/\bmy\b/i.test(st)) { // things you 👍 liked come up when you ask for that kind of move (about half the time; the rest stays fresh)
+      const pool = MYMOVES.filter(m => new RegExp('\\b' + myBase(m).replace(/[^a-z ]/g, ' ').trim().replace(/\s+/g, '\\s+') + '\\b', 'i').test(lst));
+      if (pool.length && rnd() < 0.5) mine = pool[Math.floor(rnd() * pool.length)]; }
     if (mine) { // ⭐ one of your kept moves: a fresh variant of it every time
       let cnt = 1; for (const w of (' ' + st.toLowerCase() + ' ').replace(' ' + mine.name + ' ', ' ').replace(' ' + mine.name.replace(/ \d+$/, '') + ' ', ' ').split(/\s+/)) { if (/^\d+$/.test(w)) cnt = Math.min(30, +w); else if (T_NUM[w]) cnt = T_NUM[w]; }
       for (let c = 0; c < cnt; c++) { const v = mine.kind === 'move' ? myMovePieces(mine, rnd, /\b(southpaw|lefty)\b/i.test(txt) ? 'south' : 'orth') : null;
@@ -7811,19 +7818,19 @@ function steerLatent(key, z, v) { LIKES.latent = LIKES.latent || {}; const mu = 
 // 🦶 movement too: real footwork / pivots / shadow boxing pieces, chained a new way each time; 👍 / 👎 make those pieces come up more / less
 const MV_PROMPT = { 'mv:any': 'footwork', 'mv:left': 'strafe left', 'mv:right': 'strafe right', 'mv:fwd': 'move forward', 'mv:back': 'move back', 'mv:pivot': 'pivot', 'mv:shadow': 'shadow boxing', 'mv:sneak': 'sneak', 'mv:crawl': 'crawl' };
 const MV_NAME = { 'mv:any': '🦶 Footwork (any way)', 'mv:left': '🦶 Strafe left', 'mv:right': '🦶 Strafe right', 'mv:fwd': '🦶 Step in / forward', 'mv:back': '🦶 Step back', 'mv:pivot': '🦶 Pivot / turn', 'mv:shadow': '🥊 Shadow boxing on the move', 'mv:sneak': '🦶 Stealth walk', 'mv:crawl': '🦶 Crawl' };
-function stepsAnim(dir, seed) { // in / out steps from key poses, given the real boxers' bounce and upper-body life (learned from the recordings)
+function stepsAnim(dir, seed, lifeSeed) { // in / out steps from key poses, given the real boxers' bounce and upper-body life (learned from the recordings)
   const r = tRand(seed), n = 2 + Math.floor(r() * 3), w = dir === 'fwd' ? ['step in', 'step in', 'shuffle', 'step in'] : ['step back', 'step back', 'shuffle', 'step back'];
   const words = []; for (let i = 0; i < n; i++) words.push(i === 0 ? w[0] : w[Math.floor(r() * w.length)]);
-  let a = cleanMotion(S.textToMotion('boxing ' + words.join(' then '), 30, seed)); try { if (BUILTIN || LEARNED.length) a = applyLearnedFeel(a, 'footwork', tRand(seed * 3 + 1)); } catch (e) {}
+  let a = cleanMotion(S.textToMotion('boxing ' + words.join(' then '), 30, seed)); try { if (BUILTIN || LEARNED.length) a = applyLearnedFeel(a, 'footwork', tRand(lifeSeed != null ? lifeSeed : seed * 3 + 1)); } catch (e) {}
   return { ...a, strikes: [] };
 }
 function previewMove(key, guard) {
   if (!MOVELIB || !MOVELIB.moves.length) return null; const seed = Math.floor(Math.random() * 1e6); let a, synth = false;
-  if ((key === 'mv:fwd' || key === 'mv:back') && Math.random() < 0.5) { a = stepsAnim(key === 'mv:fwd' ? 'fwd' : 'back', seed); synth = true; } else a = smartTextMotion0(MV_PROMPT[key], seed);
+  if ((key === 'mv:fwd' || key === 'mv:back') && Math.random() < 0.5) { a = stepsAnim(key === 'mv:fwd' ? 'fwd' : 'back', seed); synth = true; } else a = smartTextMotion0(MV_PROMPT[key], seed); const base = a;
   // most versions get a famous guard on top (the legs and body stay real); some keep the boxer's own
   const g = guard !== undefined ? guard : key !== 'mv:shadow' && key !== 'mv:sneak' && key !== 'mv:crawl' && Math.random() < 0.7 ? Object.keys(GUARDS)[Math.floor(Math.random() * Object.keys(GUARDS).length)] : null;
   if (g) a = applyGuard(a, g, 'Left');
-  return { anim: a, key, mv: true, guard: g, synth, clips: (a.choices && a.choices.clips) || [], n: (TVP && TVP.key === key ? TVP.n : 0) + 1, t0: performance.now() };
+  return { anim: a, base, seed, key, mv: true, guard: g, synth, clips: (a.choices && a.choices.clips) || [], n: (TVP && TVP.key === key ? TVP.n : 0) + 1, look: 1, t0: performance.now() };
 }
 // 🎬 real single punches (whole body) from the pro boxing sessions: shown alongside the AI-made ones, in one stance (orthodox)
 let REALP = null, REALP_LOADING = null;
@@ -7835,11 +7842,11 @@ function loadRealPunches() {
   return REALP_LOADING;
 }
 function previewReal(key) {
-  if (!REALP) return null; const [type, side] = key.split('|'), pool = REALP.filter(c => c.type === type && c.side === side); if (!pool.length) return null;
+  if (!REALP) return null; const [type, side] = key.split('|'), pool = REALP.filter(c => c.type === type && c.side === side && !((LIKES.ban || {})[c.cid])); if (!pool.length) return null;
   const w = pool.map(c => Math.exp(Math.max(-3, Math.min(3, ((LIKES.clip || {})[c.cid]) || 0)))); let r = Math.random() * w.reduce((x, y) => x + y), i = 0; while (i < pool.length - 1 && r > w[i]) { r -= w[i]; i++; }
   if (TVP && TVP.clip === pool[i] && pool.length > 1) i = (i + 1) % pool.length;
   const c = pool[i], a = stitchPieces([learnedPiece({ data: c.data }, tRand(Math.floor(Math.random() * 1e6)), c.stance === 'south')]);
-  return { anim: a, key, real: true, clip: c, n: (TVP && TVP.key === key ? TVP.n : 0) + 1, t0: performance.now(), pool: pool.length };
+  return { anim: a, key, real: true, clip: c, n: (TVP && TVP.key === key ? TVP.n : 0) + 1, look: 1, t0: performance.now(), pool: pool.length };
 }
 function previewMine(id) { const m = MYMOVES.find(x => String(x.id) === String(id)); if (!m) return null; const r = myMoveAnim(m, tRand(Math.floor(Math.random() * 1e6))); if (!r) return null;
   return { anim: r.anim, key: 'my:' + m.id, my: m, mv: m.kind === 'move', clips: r.clips || [], smp: r.smp || { z: [] }, n: (TVP && TVP.key === 'my:' + m.id ? TVP.n : 0) + 1, t0: performance.now() }; }
@@ -7855,7 +7862,7 @@ function previewVariation(key) {
   const st = (a.strikes || []).find(x => x.type === type) || (a.strikes || [])[0]; if (!st) return null;
   const smp = mlSample(M[key], tRand(seed * 13 + 1), (LIKES.latent || {})[key] || null, 1.25), out = { ...a, locals: a.locals.map(l => l.slice()), rootPos: a.rootPos.map(r => r.slice()) };
   applyModelPunch(out, a, { k: st.k, side, type }, smp);
-  return { anim: out, smp, key, n: (TVP && TVP.key === key ? TVP.n : 0) + 1, t0: performance.now() };
+  return { anim: out, smp, key, baseA: a, st, n: (TVP && TVP.key === key ? TVP.n : 0) + 1, look: 1, t0: performance.now() };
 }
 function rateClips(ids, v) { LIKES.clip = LIKES.clip || {}; for (const id of ids) LIKES.clip[id] = Math.max(-3, Math.min(3, (LIKES.clip[id] || 0) + (v > 0 ? 1 : -0.8))); LIKES.count = (LIKES.count || 0) + 1; try { localStorage.setItem('nocap-likes', JSON.stringify(LIKES)); } catch (e) {} S.setPrefs(LIKES); }
 function tvNext() { TVP = previewVariation($('tvMove').value) || null; if (TVR && TVP) { const r = TVP.anim.rootPos[0], d = new THREE.Vector3(r[0] - TVR.ctl.target.x, 0.95 - TVR.ctl.target.y, r[2] - TVR.ctl.target.z); TVR.ctl.target.add(d); TVR.cam.position.add(d); } tvInfo(); }
@@ -7865,11 +7872,11 @@ function tvInfo() {
     + (REALP ? '<optgroup label="Real punches (pro boxers)"><option value="real:any">🎬 Any real punch</option>' + Object.keys(PV_PHRASE).filter(k => REALP.some(c => k === c.type + '|' + c.side)).map(k => `<option value="real:${k}">🎬 ${PV_NAME[k]} (${REALP.filter(c => k === c.type + '|' + c.side).length})</option>`).join('') + '</optgroup>' : '')
     + (MOVELIB && MOVELIB.moves.length ? '<optgroup label="Movement">' + Object.keys(MV_NAME).map(k => `<option value="${k}">${MV_NAME[k]}</option>`).join('') + '</optgroup>' : ''); if (TV_PICKED && [...$('tvMove').options].some(o => o.value === cur)) $('tvMove').value = cur; else if ([...$('tvMove').options].some(o => o.value === 'any')) $('tvMove').value = 'any';
   for (const id of ['tvUp', 'tvDown', 'tvRetry']) $(id).disabled = !TVP; $('tvN').hidden = !TVP || !!TVP.real || !!TVP.mv;
-  const gTxt = TVP && TVP.guard ? ` · 🛡️ ${GUARDS[TVP.guard].name}` : '';
+  const gTxt = (TVP && TVP.guard ? ` · 🛡️ ${GUARDS[TVP.guard].name}` : '') + (TVP && TVP.look > 1 ? ` · look ${TVP.look}` : '');
   $('tvInfo').innerHTML = TVP && TVP.my ? `<b>⭐ ${TVP.my.name}</b>${gTxt} · new version #${TVP.n} of your move · 👍 saves this version as another move of yours` : TVP && TVP.my ? `<b>⭐ ${TVP.my.name}</b> · new version #${TVP.n} of your move · 👍 saves this version as another move of yours`
-    : TVP && TVP.real ? `<b>🎬 ${PV_NAME[TVP.key]}</b> · a real punch from a pro boxing session (${TVP.pool} of this kind) · 👍 adds it to his own punches`
+    : TVP && TVP.real ? `<b>🎬 ${PV_NAME[TVP.key]}</b>${gTxt} · a real punch from a pro boxing session (${TVP.pool} of this kind) · 👍 adds it to his own punches`
     : TVP && TVP.mv ? `<b>${MV_NAME[TVP.key]}</b>${gTxt} · version #${TVP.n}: ${TVP.synth ? 'steps made from key poses with the real boxers\' bounce' : `${TVP.clips.length} real piece${TVP.clips.length === 1 ? '' : 's'} chained a new way`}${Object.keys(LIKES.clip || {}).length ? ' · your 👍👎 steer which pieces come up' : ''}`
-    : TVP ? `<b>${PV_NAME[TVP.key]}</b> · new version #${TVP.n}, made up from ${M[TVP.key].n} real punches it learned${KEPT.length ? ` · ${KEPT.length} kept 👍` : ''}`
+    : TVP ? `<b>${PV_NAME[TVP.key]}</b>${gTxt} · new version #${TVP.n}, made up from ${M[TVP.key].n} real punches it learned${KEPT.length ? ` · ${KEPT.length} kept 👍` : ''}`
     : (BUILTIN_LOADING && !BUILTIN ? 'Loading what it knows…' : 'Nothing to show yet. Study a few videos below (3+ clear punches of a kind) and it starts making its own.');
 }
 // the preview shows the actual 3D body (its own little viewer: drag to look around)
@@ -7927,8 +7934,28 @@ $('tvVariants').onclick = async () => { $('tvVariants').disabled = true; try { a
 // once, the first time after this update: a starter set
 setTimeout(async () => { try { if (localStorage.getItem('nocap-variants-v1')) return; localStorage.setItem('nocap-variants-v1', '1'); const n = await makeNocapVariants(2, true); if (n) toast(`📁 New: ${n} NoCap variants in your Library (real movement + famous guards).`, false, 7000); } catch (e) {} }, 6000);
 $('teachOpen').onclick = openTeach; $('tmSave').onclick = closeTeach;
+
+// 🔁 Retry = the SAME animation with a different look (another guard / block style, other timing, a nudge to the punch's shape).
+// A brand-new one only comes after you've 👍 kept or 👎 discarded this one.
+function retryLook() {
+  if (!TVP) return tvNext(); const P0 = TVP, r = tRand(Math.floor(Math.random() * 1e6)), gs = [null, ...Object.keys(GUARDS)], nextG = cur => { const opts = gs.filter(g => g !== cur); return opts[Math.floor(r() * opts.length)]; };
+  let nx = null;
+  if (P0.my) nx = previewMine(P0.my.id);
+  else if (P0.mv) { let base = P0.base;
+    if (P0.synth) base = stepsAnim(P0.key === 'mv:fwd' ? 'fwd' : 'back', P0.seed, Math.floor(r() * 1e6));
+    else if (P0.clips.length) { const all = MOVELIB.moves.flatMap(bm => bm.clips), seq = P0.clips.map(id => all.find(c => c.cid === id)).filter(Boolean); if (seq.length) base = { ...stitchPieces(seq.map(c => learnedPiece({ data: c.data }, r, c.stance ? c.stance !== 'orth' : undefined))), choices: { clips: P0.clips.slice() }, strikes: [] }; }
+    const g = P0.key === 'mv:shadow' || P0.key === 'mv:sneak' || P0.key === 'mv:crawl' ? null : nextG(P0.guard);
+    nx = { ...P0, base, guard: g, anim: g ? applyGuard(base, g, 'Left') : base }; }
+  else if (P0.real) { const c = P0.clip, side = P0.key.split('|')[1], g = nextG(P0.guard || null);
+    let a = stitchPieces([learnedPiece({ data: c.data }, r, c.stance === 'south')]); if (g) a = applyGuard(a, g, 'Left', side === 'Left' ? 'Right' : 'Left'); // the other hand's guard changes
+    nx = { ...P0, anim: a, guard: g }; }
+  else if (P0.baseA) { const M = mlModels(), [type, side] = P0.key.split('|'), smp = mlNear(M[P0.key], P0.smp.q, r, 0.45), g = nextG(P0.guard || null), a = P0.baseA;
+    let out = { ...a, locals: a.locals.map(l => l.slice()), rootPos: a.rootPos.map(x => x.slice()) }; applyModelPunch(out, a, { k: P0.st.k, side, type }, smp); if (g) out = applyGuard(out, g, 'Left', side === 'Left' ? 'Right' : 'Left');
+    nx = { ...P0, anim: out, smp: { q: smp.q, z: smp.z.length ? smp.z : P0.smp.z }, guard: g }; }
+  if (!nx) return tvNext(); nx.look = (P0.look || 1) + 1; nx.n = P0.n; nx.t0 = performance.now(); TVP = nx; tvInfo();
+}
 let TV_PICKED = false;
-$('tvMove').onchange = () => { TV_PICKED = true; TVP = null; tvNext(); }; $('tvRetry').onclick = tvNext;
+$('tvMove').onchange = () => { TV_PICKED = true; TVP = null; tvNext(); }; $('tvRetry').onclick = retryLook;
 const R3 = v => Math.round(v * 1000) / 1000, roundQ = q => q.map(f => f.map(x => x.map(R3)));
 const keptMsg = m => m ? `👍 Saved as "${m.name}". Pick it under ⭐ My moves to watch new versions of it, or type it in Text to motion.` : '👍 Kept.';
 $('tvUp').onclick = () => { if (!TVP) return;
@@ -7943,7 +7970,7 @@ $('tvUp').onclick = () => { if (!TVP) return;
   if (TVP.mv) { rateClips(TVP.clips, 1); toast(keptMsg(addMyMove({ kind: 'move', key: TVP.key, clips: TVP.clips.slice(), guard: TVP.guard || null, synth: !!TVP.synth })), false, 6000); tvNext(); return; } const [type, arm] = TVP.key.split('|'), r3 = v => Math.round(v * 1000) / 1000; KEPT.push({ type, arm, q: TVP.smp.q.map(f => f.map(q => q.map(r3))), at: Date.now() }); if (KEPT.length > 300) KEPT.shift();
   try { localStorage.setItem('nocap-kept', JSON.stringify(KEPT)); } catch (e) { KEPT.pop(); toast('Phone storage is full, so it could not keep that one.', true); return; }
   steerLatent(TVP.key, TVP.smp.z, 1); ML_CACHE = null; toast(keptMsg(addMyMove({ kind: 'punch', key: TVP.key, q: roundQ(TVP.smp.q) })), false, 6000); tvNext(); };
-$('tvDown').onclick = () => { if (!TVP) return; if (TVP.my) { if (TVP.my.kind === 'move') rateClips(TVP.clips, -1); else if (TVP.smp.z && TVP.smp.z.length) steerLatent(TVP.my.key, TVP.smp.z, -1); toast('👎 Discarded that version.'); tvNext(); return; } if (TVP.real) { rateClips([TVP.clip.cid], -1); toast('👎 Discarded: that one comes up less.'); tvNext(); return; } if (TVP.mv) { rateClips(TVP.clips, -1); toast('👎 Discarded: those pieces come up less.'); tvNext(); return; } steerLatent(TVP.key, TVP.smp.z, -1); toast('👎 Discarded. Less like that from now on.'); tvNext(); };
+$('tvDown').onclick = () => { if (!TVP) return; if (TVP.real) { LIKES.ban = LIKES.ban || {}; LIKES.ban[TVP.clip.cid] = 1; } if (TVP.mv && !TVP.my) rateClips(TVP.clips, -1); if (TVP.my) { if (TVP.my.kind === 'move') rateClips(TVP.clips, -1); else if (TVP.smp.z && TVP.smp.z.length) steerLatent(TVP.my.key, TVP.smp.z, -1); toast('👎 Discarded that version.'); tvNext(); return; } if (TVP.real) { rateClips([TVP.clip.cid], -1); toast('👎 Deleted: that real punch won\'t be shown again.'); tvNext(); return; } if (TVP.mv) { rateClips(TVP.clips, -1); toast('👎 Discarded: never saved, and those steps come up much less now.'); tvNext(); return; } steerLatent(TVP.key, TVP.smp.z, -1); toast('👎 Discarded. Less like that from now on.'); tvNext(); };
 
 $('tchSave').onclick = teachSave;
 // ---- 📥 import an animation file (FBX / GLB / BVH, e.g. one you downloaded from Mixamo) as a move your AI knows ----
