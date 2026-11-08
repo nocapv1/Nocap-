@@ -4304,7 +4304,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       <div class="vtools">
         <button class="btn small on" id="tBody">Body</button>
         <button class="btn small" id="tBones">Bones</button>
-        <button class="btn small on" id="tFollow">Follow</button>
+        <button class="btn small on" id="tFollow" title="Frame the whole move (the camera stays still while it plays)">Frame</button>
         <button class="btn small" id="tReset">Video angle</button>
         <button class="btn small" id="tModel" title="Change character: the AI body, realistic people, or your own (FBX / GLB / VRM)">🧍 Character</button>
         <button class="btn small" id="tProps" title="Props: boxing gloves, golf club, bat, racket, balls, bike">🎒 Props</button>
@@ -4392,6 +4392,12 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       <div class="row"><label>Part</label><span style="display:flex;gap:6px;align-items:center"><input type="number" id="tchA" step="0.1" min="0" value="0" style="width:72px"> to <input type="number" id="tchB" step="0.1" min="0" value="0" style="width:72px"> s</span></div>
       <input id="tchWords" placeholder="words for it, e.g. jab, quick punch, boxing" style="width:100%;margin:6px 0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px">
       <button class="btn primary" id="tchSave" style="width:100%">✅ Teach this move</button>
+      <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px">
+        <div class="mini" style="margin-bottom:6px"><b>📥 Import animation files</b>: FBX, GLB or BVH from Mixamo, ActorCore, ActionForge packs or any rig. Type the words above first (or it uses the file name), then pick one or more files. Only use files you're allowed to use.</div>
+        <input type="file" id="tchImportFile" accept=".fbx,.glb,.gltf,.bvh" multiple hidden>
+        <button class="btn" id="tchImport" style="width:100%">📥 Import animation files</button>
+        <div id="tchImportMsg" class="mini" style="margin-top:6px"></div>
+      </div>
     </div>
     <div data-pane="words" hidden>
       <div class="mini" style="margin:4px 0 8px">Teach it your own words for things it already knows.</div>
@@ -5454,10 +5460,22 @@ function applyAt(t) {
   if (MODEL.on) poseModel();
   updateProps(k, t);
   ['Left', 'Right'].forEach((s, i) => { b[anim.rest.index[s + 'Foot']].getWorldPosition(_v); footMarks[i].position.x = _v.x; footMarks[i].position.z = _v.z; footMarks[i].material.opacity = anim.contacts[k][s] ? 0.9 : 0; });
-  if ($('tFollow').classList.contains('on')) followCam(b);
+  if ($('tFollow').classList.contains('on')) frameAnim();
 }
 // Follow camera: glides after a smoothed body position, and the camera and the point it looks at move together, so hip sway,
 // bobbing and punches never shake the view (before, the camera jumped with every hip movement while its aim lagged behind).
+// Framing: the camera never moves while a motion plays (no shake at all). When a new motion opens, it is framed once so the
+// whole move (every step and jump in it) fits in view, keeping the angle you were looking from. Drag to look around any time.
+let FRAMED = null;
+function frameAnim(force) {
+  if (!anim || (!force && FRAMED === anim)) return; FRAMED = anim;
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const r of anim.rootPos) { x0 = Math.min(x0, r[0]); x1 = Math.max(x1, r[0]); z0 = Math.min(z0, r[2]); z1 = Math.max(z1, r[2]); y0 = Math.min(y0, r[1]); y1 = Math.max(y1, r[1]); }
+  const tgt = new THREE.Vector3((x0 + x1) / 2, Math.max(0.95, (y0 + y1) / 2 + 0.1), (z0 + z1) / 2), span = Math.max(x1 - x0, z1 - z0, (y1 - y0) * 1.3);
+  const off = camera.position.clone().sub(controls.target), dist = Math.max(3.2, Math.min(14, 4.3 + span * 1.25)); if (off.length() < 0.01) off.set(0.6, 0.4, 4.3);
+  off.setLength(dist); controls.target.copy(tgt); camera.position.copy(tgt).add(off); controls.update();
+  key.position.set(tgt.x + 3, 6, tgt.z + 4); key.target.position.copy(tgt); requestRender();
+}
 const FW = { p: null, last: 0 };
 function followCam(b) {
   b[0].getWorldPosition(_v); const tgt = new THREE.Vector3(_v.x, Math.max(0.95, _v.y), _v.z); // follows up too: no ceiling on jumps
@@ -5489,7 +5507,7 @@ document.addEventListener('click', () => $('themeMenu').classList.remove('open')
 document.querySelectorAll('#themeMenu button').forEach(b => b.classList.toggle('on', b.dataset.t === document.documentElement.dataset.theme));
 toggle('tBody', on => character && (character.mesh.visible = on && !MODEL.on));
 toggle('tBones', on => character && character.helper && (character.helper.visible = on));
-toggle('tFollow', () => {});
+toggle('tFollow', on => { if (on) frameAnim(true); });
 toggle('tOverlay', () => drawOverlay());
 // ---- 🎯 punch target in the 3D view: switch on, then drag the red ball; every punch turns to it and lands on it ----
 const aimMesh = new THREE.Group(); aimMesh.visible = false; scene.add(aimMesh);
@@ -7646,6 +7664,73 @@ $('tvUp').onclick = () => { if (!TVP) return; const [type, arm] = TVP.key.split(
 $('tvDown').onclick = () => { if (!TVP) return; steerLatent(TVP.key, TVP.smp.z, -1); toast('👎 Discarded. Less like that from now on.'); tvNext(); };
 
 $('tchSave').onclick = teachSave;
+// ---- 📥 import an animation file (FBX / GLB / BVH, e.g. one you downloaded from Mixamo) as a move your AI knows ----
+// The file's skeleton is played, its joints are read like a camera would see them, and the app's own solver turns that into a
+// move on the app's body (any rig naming: Mixamo, ActorCore / Character Creator, 3ds Max Biped, Blender / Rigify, CMU…).
+function animRole(name) {
+  let n = String(name).toLowerCase().replace(/^.*[:|]/, '').replace(/mixamorig\d*|cc_base_|bip0?1|^def[-_]|^org[-_]|^b[-_]/g, '').replace(/[^a-z0-9]/g, '');
+  let side = null; const PARTS = ['upperarm', 'forearm', 'lowerarm', 'arm', 'hand', 'upleg', 'upperleg', 'thigh', 'calf', 'shin', 'lowerleg', 'leg', 'foot', 'ankle', 'toebase', 'toe', 'clavicle', 'shoulder'];
+  const strip = (pre, post) => { for (const [a, sd] of [['left', 'L'], ['right', 'R']]) { if (n.startsWith(a)) { side = sd; n = n.slice(a.length); return; } if (n.endsWith(a)) { side = sd; n = n.slice(0, -a.length); return; } }
+    for (const [a, sd] of [['l', 'L'], ['r', 'R']]) { if (n.startsWith(a) && PARTS.some(p => n.slice(1).startsWith(p))) { side = sd; n = n.slice(1); return; } if (n.endsWith(a) && PARTS.some(p => n.slice(0, -1).endsWith(p))) { side = sd; n = n.slice(0, -1); return; } } };
+  strip();
+  if (/thumb|index|middle|ring|pinky|finger|end$|nub$|twist|roll|share/.test(n)) return null;
+  const part = /^(hips?|pelvis|hip|root)$/.test(n) && !side ? 'hips' : /^head(top)?$/.test(n) && !side ? 'head' : /^neck\d?$/.test(n) && !side ? 'neck'
+    : /(forearm|lowerarm|elbow)/.test(n) ? 'elbow' : /(upperarm|^arm$)/.test(n) ? 'shoulder' : /^(hand|wrist)$/.test(n) ? 'wrist'
+    : /(upleg|upperleg|thigh)/.test(n) ? 'hip' : /(calf|shin|lowerleg|knee|^leg$)/.test(n) ? 'knee' : /^(foot|ankle)$/.test(n) ? 'ankle' : /^(toebase|toe|toes|ball)$/.test(n) ? 'toe' : null;
+  if (!part) return null; if (['shoulder', 'elbow', 'wrist', 'hip', 'knee', 'ankle', 'toe'].includes(part) && !side) return null;
+  return side ? side + part : part;
+}
+async function importAnimFile(file) {
+  const ext = (file.name.split('.').pop() || '').toLowerCase(); let root = null, clip = null;
+  if (ext === 'bvh') { const { BVHLoader } = await import('three/addons/loaders/BVHLoader.js'); const r = new BVHLoader().parse(await file.text()); root = new THREE.Group(); root.add(r.skeleton.bones[0]); clip = r.clip; }
+  else if (ext === 'fbx') { const { FBXLoader } = await import('three/addons/loaders/FBXLoader.js'); root = new FBXLoader().parse(await file.arrayBuffer(), ''); clip = (root.animations || [])[0]; }
+  else if (ext === 'glb' || ext === 'gltf') { const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js'); const buf = await file.arrayBuffer(); const g = await new Promise((res, rej) => new GLTFLoader().parse(buf, '', res, rej)); root = g.scene; clip = (g.animations || [])[0]; }
+  else throw new Error('use an FBX, GLB or BVH file');
+  if (!clip || !clip.duration) throw new Error('that file has no animation in it (download it "with skin" or as an animation)');
+  const bones = {}; root.traverse(o => { if (!(o.isBone || o.type === 'Bone' || o.isObject3D)) return; const r = animRole(o.name); if (r && !bones[r]) bones[r] = o; });
+  const need = ['hips', 'head', 'Lshoulder', 'Lelbow', 'Lwrist', 'Rshoulder', 'Relbow', 'Rwrist', 'Lhip', 'Lknee', 'Lankle', 'Rhip', 'Rknee', 'Rankle'], miss = need.filter(r => !bones[r]);
+  if (miss.length) throw new Error('could not find these joints in the rig: ' + miss.join(', '));
+  const mixer = new THREE.AnimationMixer(root), act = mixer.clipAction(clip); act.play();
+  const N = Math.max(2, Math.round(clip.duration * 30) + 1), W = r => { const v = new THREE.Vector3(); bones[r].getWorldPosition(v); return [v.x, v.y, v.z]; }, raw = [];
+  for (let k = 0; k < N; k++) { mixer.setTime(Math.min(clip.duration, k / 30)); root.updateMatrixWorld(true); const f = {}; for (const r in bones) f[r] = W(r); raw.push(f); }
+  // size (legs ≈ 0.86 m) and facing (turned to face the "camera" at the start)
+  const d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]), f0 = raw[0], sc = 0.86 / (d(f0.Lhip, f0.Lknee) + d(f0.Lknee, f0.Lankle) || 1);
+  const lat0 = [f0.Lshoulder[0] - f0.Rshoulder[0], f0.Lshoulder[2] - f0.Rshoulder[2]], fwd0 = [lat0[1], -lat0[0]], yaw = Math.atan2(fwd0[0], fwd0[1]), cy = Math.cos(-yaw), sy = Math.sin(-yaw);
+  const T = p => { const x = p[0] * sc, y = p[1] * sc, z = p[2] * sc; return [x * cy + z * sy, y, -x * sy + z * cy]; };
+  let floor = Infinity; for (const f of raw) for (const r of ['Lankle', 'Rankle', 'Ltoe', 'Rtoe']) if (f[r]) floor = Math.min(floor, T(f[r])[1]); floor -= 0.07;
+  const add = (a, b, s = 1) => [a[0] + b[0] * s, a[1] + b[1] * s, a[2] + b[2] * s], sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], nrm = a => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; }, crs = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const frames = raw.map((f0_, k) => { const f = {}; for (const r in f0_) { const p = T(f0_[r]); f[r] = [p[0], p[1] - floor, p[2]]; }
+    const neck = f.neck || add(f.Lshoulder, sub(f.Rshoulder, f.Lshoulder), 0.5), up = nrm(sub(f.head, neck)), lat = nrm(sub(f.Lshoulder, f.Rshoulder)), fwd = nrm(crs(lat, up));
+    const hc = add(f.head, up, 0.09), nose = add(add(hc, fwd, 0.09), up, -0.01), L = {};
+    L[0] = nose; L[1] = add(add(nose, lat, 0.02), up, 0.03); L[2] = add(add(nose, lat, 0.035), up, 0.03); L[3] = add(add(nose, lat, 0.05), up, 0.03); L[4] = add(add(nose, lat, -0.02), up, 0.03); L[5] = add(add(nose, lat, -0.035), up, 0.03); L[6] = add(add(nose, lat, -0.05), up, 0.03);
+    L[7] = add(add(hc, lat, 0.075), fwd, -0.01); L[8] = add(add(hc, lat, -0.075), fwd, -0.01); L[9] = add(add(nose, up, -0.045), lat, 0.02); L[10] = add(add(nose, up, -0.045), lat, -0.02);
+    for (const [s, a] of [['L', 0], ['R', 1]]) {
+      L[11 + a] = f[s + 'shoulder']; L[13 + a] = f[s + 'elbow']; L[15 + a] = f[s + 'wrist'];
+      const fa = nrm(sub(f[s + 'wrist'], f[s + 'elbow'])), side = nrm(crs(fa, up)); L[19 + a] = add(f[s + 'wrist'], fa, 0.09); L[17 + a] = add(L[19 + a], side, s === 'L' ? -0.03 : 0.03); L[21 + a] = add(add(f[s + 'wrist'], fa, 0.05), side, s === 'L' ? 0.03 : -0.03);
+      L[23 + a] = f[s + 'hip']; L[25 + a] = f[s + 'knee']; L[27 + a] = f[s + 'ankle'];
+      const toe = f[s + 'toe'] || add(add(f[s + 'ankle'], [fwd[0], 0, fwd[2]], 0.14), [0, -1, 0], 0.05), ff = nrm([toe[0] - L[27 + a][0], 0, toe[2] - L[27 + a][2]]);
+      L[29 + a] = add([L[27 + a][0], L[27 + a][1] - 0.05, L[27 + a][2]], ff, -0.05); L[31 + a] = toe; }
+    const hcn = add(L[23], sub(L[24], L[23]), 0.5), D = 4, F = 1.1, pw = [], pi = [];
+    for (let m = 0; m < 33; m++) { const q = L[m]; pw.push([q[0] - hcn[0], -(q[1] - hcn[1]), -(q[2] - hcn[2])]); const dz = D - q[2]; pi.push([0.5 + F * q[0] / dz * 0.5, 0.5 - F * (q[1] - 1.0) / dz * 0.5, 0.99]); }
+    return { t: k / 30, pw, pi, hl: null, hr: null, hil: null, hir: null }; });
+  const a = S.solveAll(frames, { fps: 30, W: 1000, H: 1000, fov: 'auto', smooth: 0.35, handMode: 'limited', antiJitter: true, elbowGuard: true, proLimits: true, lowerBody: 'ai', armPose: 'side', armOut: '', contactHeight: 0.07, contactSpeed: 0.6 });
+  const q4 = x => Math.round(x * 1e4) / 1e4, r0 = a.rootPos[0];
+  return { rest: a.rest, M: a.M || null, n: a.n, locals: a.locals.map(l => l.map(q => q.map(q4))), rootPos: a.rootPos.map(r => [q4(r[0] - r0[0]), q4(r[1]), q4(r[2] - r0[2])]) };
+}
+$('tchImport').onclick = () => $('tchImportFile').click();
+$('tchImportFile').onchange = async () => {
+  const files = [...$('tchImportFile').files]; $('tchImportFile').value = ''; if (!files.length) return;
+  const typed = $('tchWords').value.split(/[,;\n]/).map(s => s.trim().toLowerCase()).filter(Boolean), done = [];
+  $('tchImportMsg').textContent = 'Reading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '…';
+  for (const f of files) {
+    try { const data = await importAnimFile(f), base = f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase(), words = typed.length ? typed : [base];
+      const id = Date.now() + Math.floor(Math.random() * 1000); await (await caches.open('nocap-learned')).put('/m/' + id, new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } }));
+      LEARNED.push({ id, name: words[0], words, n: data.n, data, imported: f.name }); saveLearnedIndex(); ML_CACHE = null; done.push(`✓ "${words[0]}" (${(data.n / 30).toFixed(1)}s)`); }
+    catch (e) { console.error(e); done.push(`✗ ${f.name}: ${e.message}`); }
+  }
+  renderTeach(); $('tchImportMsg').innerHTML = done.join('<br>') + (done.some(x => x[0] === '✓') ? '<br>Type those words in Text to motion and he does that move.' : '');
+};
+
 // ---- 👍 / 👎: rate made-up motion; it remembers which choices you liked (punch shapes, pace, which of your real punches) ----
 let LIKES = {}; try { LIKES = JSON.parse(localStorage.getItem('nocap-likes') || '{}'); } catch (e) {} S.setPrefs(LIKES);
 let RATED = {}; try { RATED = JSON.parse(localStorage.getItem('nocap-rated') || '{}'); } catch (e) {}

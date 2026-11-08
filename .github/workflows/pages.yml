@@ -44,7 +44,7 @@ jobs:
           cp -r $D/three/examples/jsm/controls $D/three/examples/jsm/exporters $D/three/examples/jsm/utils _site/vendor/three/examples/jsm/
           # character loaders (preview on your own FBX / GLB / VRM model)
           mkdir -p _site/vendor/three/examples/jsm/loaders _site/vendor/three/examples/jsm/libs _site/vendor/three/examples/jsm/curves
-          cp $D/three/examples/jsm/loaders/FBXLoader.js $D/three/examples/jsm/loaders/GLTFLoader.js _site/vendor/three/examples/jsm/loaders/
+          cp $D/three/examples/jsm/loaders/FBXLoader.js $D/three/examples/jsm/loaders/GLTFLoader.js $D/three/examples/jsm/loaders/BVHLoader.js _site/vendor/three/examples/jsm/loaders/
           cp $D/three/examples/jsm/libs/fflate.module.js _site/vendor/three/examples/jsm/libs/
           cp $D/three/examples/jsm/curves/NURBSCurve.js $D/three/examples/jsm/curves/NURBSUtils.js _site/vendor/three/examples/jsm/curves/
           mkdir -p _site/vendor/tasks-vision
