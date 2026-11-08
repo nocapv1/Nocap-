@@ -14,6 +14,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem('nocap-theme')||'gold'}catch(e){document.documentElement.dataset.theme='gold'}</script>
 <style>
+#rateBar[hidden]{display:none!important} #rateBar .rb{min-height:0!important;width:38px;height:38px;padding:0;border-radius:50%;font-size:17px;background:var(--glass);backdrop-filter:blur(8px)} #rateBar .rb.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)} #rateBar .rb:disabled{opacity:.35}
 #teachBox [hidden]{display:none!important} #tchTabs .btn.on{border-color:var(--accent);color:var(--accent);font-weight:700}
 :root,[data-theme="gold"]{
   --bg:#050505; --panel:#0c0c0b; --panel2:#141310; --line:#2b2616; --text:#f4ecd6; --dim:#a99c78; --faint:#6e644b;
@@ -4328,7 +4329,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       <input type="file" id="modelFile" accept=".fbx,.glb,.gltf,.vrm" hidden>
       <div id="three"></div>
       <button id="newBadge" hidden title="New: made by your AI from what it learned" style="position:absolute;right:8px;bottom:8px;z-index:6;width:24px;height:24px;padding:0;border:0;border-radius:50%;background:var(--accent);color:#04201d;font:800 13px/24px system-ui,sans-serif;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.4)">N</button>
-      <div id="rateBar" hidden style="position:absolute;left:8px;bottom:8px;z-index:6;display:flex;gap:6px;align-items:center;background:var(--glass);border:1px solid var(--line);border-radius:12px;padding:5px 8px;font-size:13px;backdrop-filter:blur(8px)"><span id="rateTxt">Like this one?</span><button class="btn small" id="rateUp" title="More like this">👍</button><button class="btn small" id="rateDown" title="Less like this">👎</button><button class="btn small" id="rateAgain" hidden>↻ Another</button></div>
+      <div id="rateBar" hidden style="position:absolute;right:8px;top:50%;transform:translateY(-50%);z-index:6;display:flex;flex-direction:column;gap:10px;align-items:center"><span id="rateTxt" hidden></span><button class="btn small rb" id="rateUp" title="Like it: more like this">👍</button><button class="btn small rb" id="rateDown" title="Not for me: less like this">👎</button><button class="btn small rb" id="rateAgain" title="Another version">↻</button></div>
     </div>
   </div>
   <div class="timeline">
@@ -4358,7 +4359,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
 <div class="modal" id="teachModal"><div class="box">
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><b style="font-size:16px;white-space:nowrap">🧠 Teach my AI</b><button class="btn small primary" id="tmSave" style="margin-left:auto">💾 Save &amp; close</button></div>
   <div class="sub" style="margin-bottom:4px">▶ Watch what it learned</div>
-  <div style="position:relative"><canvas id="tvCv" style="display:block;width:100%;height:250px;background:#07090d;border:1px solid var(--line);border-radius:10px"></canvas>
+  <div style="position:relative"><div id="tvView" style="width:100%;height:260px;border:1px solid var(--line);border-radius:10px;overflow:hidden;touch-action:none"></div>
     <span id="tvN" hidden style="position:absolute;right:8px;top:8px;width:22px;height:22px;border-radius:50%;background:var(--accent);color:#04201d;font:800 12px/22px system-ui,sans-serif;text-align:center">N</span></div>
   <div id="tvInfo" class="mini" style="margin:6px 0"></div>
   <div class="row"><label>Move</label><select id="tvMove" style="max-width:62%"></select></div>
@@ -4401,6 +4402,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
 </div></div>
 <div class="modal" id="ttmModal"><div class="box">
   <div style="display:flex;align-items:center;margin-bottom:8px"><b style="font-size:16px">✍️ Text to motion</b><button class="btn small" id="ttmClose" style="margin-left:auto">✕</button></div>
+  <div style="display:flex;justify-content:flex-end;margin-bottom:4px"><button class="btn small" id="ttmClear" title="Clear the text">✕ Clear text</button></div>
   <textarea id="ttmText" rows="3" placeholder="e.g. boxing stance, then 3 jabs, a cross and a hook, then walk" style="width:100%;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px;resize:vertical"></textarea>
   <div id="ttmChips" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0"></div>
   <button class="btn primary" id="ttmGo">Create motion</button>
@@ -5050,6 +5052,7 @@ const TTM_EXAMPLES = ['Mike Tyson left hook', '1-2-3 then slip', 'southpaw jab c
 $('ttmChips').innerHTML = TTM_EXAMPLES.map(e => `<button class="btn small" data-e="${e}">${e}</button>`).join('');
 $('ttmChips').onclick = e => { const b = e.target.closest('button'); if (b) $('ttmText').value = b.dataset.e; };
 $('ttmBtn').onclick = () => { $('ttmModal').style.display = 'grid'; lockPage(); setTimeout(() => $('ttmText').focus(), 50); };
+$('ttmClear').onclick = () => { $('ttmText').value = ''; $('ttmText').focus(); };
 $('ttmClose').onclick = () => { $('ttmModal').style.display = 'none'; unlockPage(); };
 $('ttmText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('ttmGo').click(); } });
 $('ttmGo').onclick = () => { const txt = $('ttmText').value.trim(); if (!txt) { toast('Type what the character should do.', true); return; } runTextMotion(txt); };
@@ -5080,7 +5083,7 @@ function runTextMotion(txt, existingId, seed) {
   const id = existingId || Date.now(); currentTakeId = id; ttmSeeds[id] = seed; lastSeed = seed;
   if (!existingId) resetHistory();
   if (existingId && BAKE && BAKE.fresh) autosave();
-  if (!existingId) { BAKE.fresh = false; } if (!existingId) putTake({ id, name: videoName, date: new Date().toISOString(), dur: meta.dur, prompt: txt, seed, frames: null, meta, settings: readSettings(), thumb: null, status: 'done', ai: !!((a.choices && a.choices.latent && a.choices.latent.length) || (a.plan && a.plan.some(p => String(p).includes('🧠')))), baked: BAKE ? { key: BAKE.key, anim: BAKE.anim } : null }).catch(e => toast('Library save failed: ' + e.message, true));
+  if (!existingId) { BAKE.fresh = false; } if (!existingId) putTake({ id, name: videoName, date: new Date().toISOString(), dur: meta.dur, prompt: txt, seed, frames: null, meta, settings: readSettings(), thumb: null, status: 'done', ai: !!((a.choices && a.choices.latent && a.choices.latent.length) || (a.plan && a.plan.some(p => /🧠|🎬|✨/.test(String(p))))), baked: BAKE ? { key: BAKE.key, anim: BAKE.anim } : null }).catch(e => toast('Library save failed: ' + e.message, true));
 }
 $('refineBtn').onclick = refineAgain;
 
@@ -5819,8 +5822,10 @@ let LIBSEL = null, LIB_IDS = [], delSelArm = false; // ☑️ multi-select (decl
 // 🙈 "originals" = text-to-motion takes made only from the built-in moves (no new AI-made / taught moves in them). Video captures always show.
 let HIDE_ORIG = false; try { HIDE_ORIG = localStorage.getItem('nocap-hideorig') === '1'; } catch (e) {}
 function isOriginalTake(k) {
-  if (!k.prompt) return false; if (k.ai != null) return !k.ai;
-  const a = k.baked && k.baked.anim, c = a && a.choices; return !((c && c.latent && c.latent.length) || (a && a.plan && a.plan.some(p => String(p).includes('🧠'))));
+  if (!k.prompt) return false; // video captures are yours: always shown
+  const a = k.baked && k.baked.anim, c = a && a.choices, plan = (a && a.plan) || [];
+  // new = AI-made punches (🧠), real mocap moves (🎬) or key-pose moves (✨); everything else from text is an original
+  return !(k.ai || (c && c.latent && c.latent.length) || plan.some(p => /🧠|🎬|✨/.test(String(p))));
 }
 async function renderLibrary() {
   let takes = []; try { takes = (await LIB.all()).sort((a, b) => (+b.mod || +b.id || 0) - (+a.mod || +a.id || 0)); /* most recent first */ } catch (e) { $('libList').innerHTML = '<div class="hint">Library is not available in this browser mode.</div>'; return; }
@@ -7038,8 +7043,8 @@ function tScore(stepToks, m) {
 const tRand = seed => { let a = (seed >>> 0) || 1; return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
 const tYaw = q => { const f = S.qrot(q, [0, 0, 1]); return Math.atan2(f[0], f[2]); };
 const tQY = a => [0, Math.sin(a / 2), 0, Math.cos(a / 2)];
-function learnedPiece(m, rnd) {
-  const d = m.data, sp = 0.93 + 0.14 * rnd(), mirror = rnd() < 0.35, n0 = d.n, n = Math.max(2, Math.round((n0 - 1) / sp) + 1);
+function learnedPiece(m, rnd, mirrorAs) {
+  const d = m.data, sp = 0.93 + 0.14 * rnd(), mr = rnd() < 0.35, mirror = mirrorAs == null ? mr : !!mirrorAs,  n0 = d.n, n = Math.max(2, Math.round((n0 - 1) / sp) + 1);
   const J = d.rest.joints, partner = J.map((j, i) => { const nm = j.name.startsWith('Left') ? 'Right' + j.name.slice(4) : j.name.startsWith('Right') ? 'Left' + j.name.slice(5) : j.name; const p = J.findIndex(x => x.name === nm); return p < 0 ? i : p; });
   const locals = [], rootPos = [];
   for (let i = 0; i < n; i++) {
@@ -7261,7 +7266,7 @@ function applyLearnedFeel(a, prompt, rnd) {
   const segAll = pool.flatMap(({ m, L }) => L.segs.map((s0, i) => ({ ...s0, m, i }))), usedSegs = []; let swapped = 0;
   if (segAll.length || Object.values(MODELS).some(m => m.comps)) {
     let { F, peaks } = punchPeaks(a);
-    if (a.strikes && a.strikes.length) { // made-up motion knows its own punches: use them (the side is whichever fist is out further then)
+    if (a.strikes) { // made-up motion knows its own punches: use them (the side is whichever fist is out further then)
       peaks = a.strikes.filter(st => st.type === 'straight' || st.type === 'hook' || st.type === 'upper').map(st => { const f = F[st.k], ext = s0 => VA.len(VA.sub(f.pos[ix[s0 + 'Hand']], f.pos[ix[s0 + 'Arm']]));
         return { k: st.k, side: ext('Left') > ext('Right') ? 'Left' : 'Right', type: st.type }; }); }
     for (const p of peaks) {
@@ -7315,7 +7320,7 @@ const GYM_RE = /\b(gymnastics?|gymnast|acrobatics?|acrobatic|tumbling|floor rout
 function loadMoveLib() {
   if (MOVELIB) return Promise.resolve(MOVELIB); if (MOVELIB_LOADING) return MOVELIB_LOADING;
   MOVELIB_LOADING = fetch('learned/cmu-moves.json').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(j => {
-    for (const m of j.moves) { m.rx = new RegExp(m.re, 'i'); for (const c of m.clips) { const d = c.data; d.locals = d.frames.map(fr => { const l = new Array(d.rest.joints.length); for (const j in d.still) l[+j] = d.still[j]; d.move.forEach((j, i) => { l[j] = fr[i]; }); return l; }); delete d.frames; } }
+    for (const m of j.moves) { m.rx = new RegExp(m.re, 'i'); m.clips.forEach((c, i) => { c.cid = m.id + ':' + c.src + ':' + i; }); for (const c of m.clips) { const d = c.data; d.locals = d.frames.map(fr => { const l = new Array(d.rest.joints.length); for (const j in d.still) l[+j] = d.still[j]; d.move.forEach((j, i) => { l[j] = fr[i]; }); return l; }); delete d.frames; } }
     MOVELIB = j; return j; }).catch(e => { MOVELIB_LOADING = null; throw e; });
   return MOVELIB_LOADING;
 }
@@ -7423,7 +7428,7 @@ function smartTextMotion0(txt0, seed) {
     while (pick.length < 3) { const x = pool[Math.floor(r() * pool.length)]; if (!pick.includes(x)) pick.push(x); } txt = pick.join(', then '); }
   if (!LEARNED.length && !BM.some(m => m.rx.test(txt)) && !POSE_MOVES.some(m => m.rx.test(txt))) return S.textToMotion(txt, 30, seed);
   const steps = txt.split(/\s*(?:,|;|\band then\b|\bthen\b|\bfollowed by\b|\bafter that\b)\s*/i).map(s => s.trim()).filter(Boolean);
-  const rnd = tRand(seed * 2654435761), pieces = [], plan = [], unknown = [], styles = []; let used = false;
+  const rnd = tRand(seed * 2654435761), pieces = [], plan = [], unknown = [], styles = [], usedClips = []; let used = false, procN = 0;
   steps.forEach((st, i) => {
     let count = 1; for (const w of st.toLowerCase().split(/\s+/)) { if (/^\d+$/.test(w)) count = Math.min(30, +w); else if (T_NUM[w]) count = T_NUM[w]; }
     const tk = tToks(st), scored = LEARNED.filter(m => !m.study && m.data && m.data.n > 5).map(m => ({ m, s: tScore(tk, m) })).filter(x => x.s >= 3).sort((a, b) => b.s - a.s);
@@ -7434,18 +7439,24 @@ function smartTextMotion0(txt0, seed) {
     } else if (BM.some(m => m.rx.test(st) && !((m.noStrike || m.id === 'sneak') && COMBAT_RE.test(st)))) { // real mocap clip of that move (a random take of it, a little faster / slower, sometimes mirrored)
       const bm = BM.find(m => m.rx.test(st) && !((m.noStrike || m.id === 'sneak') && COMBAT_RE.test(st)));
       // footwork: which way (strafe / side to side = sideways, forward / pressure = in, back = out); a few different real pieces in a row
-      let clips = bm.clips; if (bm.id === 'footwork') { const want = /\b(strafe|strafing|strafes|lateral|side to side|sideways|left|right)\b/.test(st) ? ['left', 'right'] : /\b(forward|forwards|pressure|in|advance)\b/.test(st) ? ['fwd'] : /\b(back|backwards|retreat|away)\b/.test(st) ? ['back'] : null; if (want) { const f = clips.filter(c => want.includes(c.dir)); if (f.length) clips = f; } }
-      const many = /\d|\b(once|one|single|double|triple|two|three|twice)\b/.test(st) ? count : bm.id === 'footwork' ? 3 : bm.id === 'shadowbox' ? 2 : count; let last = -1;
-      for (let c = 0; c < many; c++) { let ci = Math.floor(rnd() * clips.length); if (clips.length > 1 && ci === last) ci = (ci + 1) % clips.length; last = ci; pieces.push(learnedPiece({ data: clips[ci].data }, rnd)); plan.push('🎬 ' + bm.name); }
+      // boxing clips keep ONE stance for the whole animation: orthodox unless you ask for southpaw (southpaw clips are mirrored to match, and the other way round)
+      const boxing = bm.id === 'footwork' || bm.id === 'shadowbox', wantSt = /\b(southpaw|lefty|left[- ]handed)\b/i.test(txt) ? 'south' : 'orth';
+      const effDir = c => c.stance && c.stance !== wantSt ? ({ left: 'right', right: 'left' })[c.dir] || c.dir : c.dir;
+      let clips = bm.clips; if (bm.id === 'footwork') { const dl = /\bleft\b/.test(st), dr = /\bright\b/.test(st), want = /\b(strafe|strafing|strafes|lateral|side to side|sideways)\b/.test(st) && !dl && !dr ? ['left', 'right'] : dl ? ['left'] : dr ? ['right'] : /\b(forward|forwards|pressure|in|advance)\b/.test(st) ? ['fwd'] : /\b(back|backwards|retreat|away)\b/.test(st) ? ['back'] : null; if (want) { const f = clips.filter(c => want.includes(effDir(c))); if (f.length) clips = f; } }
+      const many = /\d|\b(once|one|single|double|triple|two|three|twice)\b/.test(st) ? count : bm.id === 'footwork' ? 4 : bm.id === 'shadowbox' ? 2 : count; let last = -1;
+      // 👍 / 👎 on takes that used a clip make it come up more / less
+      const cw = clips.map(c => Math.exp(Math.max(-3, Math.min(3, ((LIKES.clip || {})[c.cid]) || 0))));
+      for (let c = 0; c < many; c++) { let r0 = rnd() * cw.reduce((x, y) => x + y), ci = 0; while (ci < clips.length - 1 && r0 > cw[ci]) { r0 -= cw[ci]; ci++; } if (clips.length > 1 && ci === last) ci = (ci + 1) % clips.length; last = ci;
+        const cl = clips[ci]; pieces.push(learnedPiece({ data: cl.data }, rnd, boxing && cl.stance ? cl.stance !== wantSt : undefined)); plan.push('🎬 ' + bm.name); usedClips.push(cl.cid); }
       used = true;
     } else if (POSE_MOVES.some(m => m.rx.test(st))) { // ✨ made from key poses, smoothly in between
       const pm = POSE_MOVES.find(m => m.rx.test(st)), reps = pm.reps && !/\d|\b(once|one|single|double|triple|two|three|twice)\b/.test(st) ? 3 : count;
       for (let c = 0; c < reps; c++) { pieces.push(learnedPiece({ data: poseMoveData(pm) }, rnd)); plan.push('✨ ' + pm.name); }
       used = true;
-    } else { const a = S.textToMotion(st, 30, seed + i * 7919); pieces.push({ rest: a.rest, locals: a.locals, rootPos: a.rootPos, M: a.M }); plan.push(...a.plan); unknown.push(...(a.unknown || [])); styles.push(...(a.styles || [])); }
+    } else { procN++; const a = S.textToMotion(st, 30, seed + i * 7919); pieces.push({ rest: a.rest, locals: a.locals, rootPos: a.rootPos, M: a.M }); plan.push(...a.plan); unknown.push(...(a.unknown || [])); styles.push(...(a.styles || [])); }
   });
   if (!used) return S.textToMotion(txt, 30, seed);
-  return { ...stitchPieces(pieces), plan, unknown, styles: [...new Set(styles)] };
+  return { ...stitchPieces(pieces), plan, unknown, styles: [...new Set(styles)], choices: { clips: usedClips }, strikes: procN ? undefined : [] }; // real / key-pose moves only: nothing to swap punches into
 }
 // ---- 🎬 study videos: capture many videos one after another and keep only what it tracked best ----
 let STUDY = null; // { follow } while studying: captures aren't saved to the Library and the person is picked automatically
@@ -7594,20 +7605,26 @@ function tvInfo() {
   $('tvInfo').innerHTML = TVP ? `<b>${PV_NAME[TVP.key]}</b> · new version #${TVP.n}, made up from ${M[TVP.key].n} real punches it learned${KEPT.length ? ` · ${KEPT.length} kept 👍` : ''}`
     : (BUILTIN_LOADING && !BUILTIN ? 'Loading what it knows…' : 'Nothing to show yet. Study a few videos below (3+ clear punches of a kind) and it starts making its own.');
 }
+// the preview shows the actual 3D body (its own little viewer: drag to look around)
+let TVR = null;
+function tvInit() {
+  if (TVR) return; const host = $('tvView'), r = new THREE.WebGLRenderer({ antialias: true });
+  r.setPixelRatio(Math.min(2, devicePixelRatio)); r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping; host.appendChild(r.domElement); r.domElement.style.width = '100%'; r.domElement.style.height = '100%'; r.domElement.style.display = 'block';
+  const sc = new THREE.Scene(); sc.background = new THREE.Color(TV('--scene-bg')); sc.add(new THREE.HemisphereLight(0xcfe7ff, 0x1a1f2a, 1.0));
+  const d = new THREE.DirectionalLight(0xffffff, 2.0); d.position.set(3, 6, 4); sc.add(d); const d2 = new THREE.DirectionalLight(0xffffff, 0.5); d2.position.set(-3, 2, -4); sc.add(d2);
+  sc.add(new THREE.GridHelper(20, 40, TV('--grid1'), TV('--grid2')));
+  const cam = new THREE.PerspectiveCamera(40, 1, 0.02, 100); cam.position.set(1.9, 1.45, 3.1); const ctl = new OrbitControls(cam, r.domElement); ctl.target.set(0, 0.95, 0); Object.assign(ctl, { enableDamping: true, dampingFactor: 0.12, rotateSpeed: 0.5, minDistance: 1, maxDistance: 9, maxPolarAngle: Math.PI / 2 - 0.05 });
+  TVR = { r, sc, cam, ctl, rig: null, rest: null, w: 0, h: 0 };
+}
 function tvDraw() {
-  const cv = $('tvCv'); if ($('teachModal').style.display === 'none') return; requestAnimationFrame(tvDraw);
-  const W = cv.clientWidth, H = cv.clientHeight, dpr = Math.min(2, devicePixelRatio || 1); if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
-  const x = cv.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, W, H); if (!TVP) return;
-  const a = TVP.anim, dur = a.n / 30 + 0.6, t = ((performance.now() - TVP.t0) / 1000) % dur, k = Math.min(a.n - 1, Math.floor(t * 30));
-  if (!TVP.box) { let y0 = 9, y1 = -9, r = 0; for (let q = 0; q < a.n; q += 3) { const P = S.fk(a.rest, a.locals[q], a.rootPos[q]).pos; for (const p of P) { y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); r = Math.max(r, Math.hypot(p[0] - a.rootPos[0][0], p[2] - a.rootPos[0][2])); } } TVP.box = { y0, y1, r }; }
-  const P = S.fk(a.rest, a.locals[k], a.rootPos[k]).pos, B = TVP.box, sc = Math.min(H * 0.8 / Math.max(0.5, B.y1 - B.y0), W * 0.42 / Math.max(0.4, B.r)), yaw = 0.6 + 0.25 * Math.sin(performance.now() / 2500), cy = Math.cos(yaw), sy = Math.sin(yaw);
-  const pr = p => { const dx = p[0] - a.rootPos[0][0], dz = p[2] - a.rootPos[0][2]; return [W / 2 + (dx * cy + dz * sy) * sc, H * 0.9 - (p[1] - B.y0) * sc, -dx * sy + dz * cy]; };
-  x.strokeStyle = '#ffffff22'; x.beginPath(); x.ellipse(W / 2, H * 0.9, W * 0.3, 10, 0, 0, 2 * Math.PI); x.stroke();
-  const side = TVP.key.split('|')[1], acc = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#d4af37';
-  const J = a.rest.joints, segs = J.map((j, i) => [i, j.parent]).filter(([i, p]) => p >= 0 && !/Hand(Thumb|Index|Middle|Ring|Pinky)/.test(J[i].name)).map(([i, p]) => ({ i, p, z: (pr(P[i])[2] + pr(P[p])[2]) / 2 })).sort((u, v) => u.z - v.z);
-  x.lineCap = 'round';
-  for (const { i, p } of segs) { const A = pr(P[p]), C = pr(P[i]), hot = J[i].name.startsWith(side) && /Arm|Hand/.test(J[i].name); x.strokeStyle = hot ? acc : '#d9d4c7'; x.lineWidth = hot ? 5 : 4; x.beginPath(); x.moveTo(A[0], A[1]); x.lineTo(C[0], C[1]); x.stroke(); }
-  const hd = a.rest.index.Head; if (hd != null) { const h = pr(P[hd]); x.fillStyle = '#d9d4c7'; x.beginPath(); x.arc(h[0], h[1] - 0.06 * sc, 0.09 * sc, 0, 2 * Math.PI); x.fill(); }
+  if ($('teachModal').style.display === 'none') return; requestAnimationFrame(tvDraw); tvInit();
+  const host = $('tvView'), W = host.clientWidth, H = host.clientHeight; if (!W || !H) return;
+  if (TVR.w !== W || TVR.h !== H) { TVR.r.setSize(W, H, false); TVR.cam.aspect = W / H; TVR.cam.updateProjectionMatrix(); TVR.w = W; TVR.h = H; }
+  if (TVP) { const a = TVP.anim; if (TVR.rest !== a.rest) { if (TVR.rig) TVR.sc.remove(TVR.rig.group); TVR.rig = makeRig(a.rest); TVR.sc.add(TVR.rig.group); TVR.rest = a.rest; }
+    const dur = a.n / 30 + 0.6, t = ((performance.now() - TVP.t0) / 1000) % dur, k = Math.min(a.n - 1, Math.floor(t * 30)), b = TVR.rig.bones;
+    b[0].position.set(...a.rootPos[k]); a.locals[k].forEach((q, j) => b[j].quaternion.set(q[0], q[1], q[2], q[3])); TVR.rig.group.visible = true; }
+  else if (TVR.rig) TVR.rig.group.visible = false;
+  TVR.ctl.update(); TVR.r.render(TVR.sc, TVR.cam);
 }
 function openTeach() {
   $('teachModal').style.display = 'grid'; lockPage(); ML_FORCE_LIB = true; ML_CACHE = null; showTeachTab('vid'); renderTeach(); fillTeachSources();
@@ -7635,8 +7652,7 @@ let RATED = {}; try { RATED = JSON.parse(localStorage.getItem('nocap-rated') || 
 function rateUI() {
   { const c0 = anim && baseAnim && baseAnim.choices, nw = c0 && c0.latent ? c0.latent.length : 0; $('newBadge').hidden = !nw; $('newBadge').dataset.n = nw; }
   const c = baseAnim && baseAnim.choices, show = !!(c && currentTakeId && ttmCaption); $('rateBar').hidden = !show; if (!show) return;
-  const r = RATED[currentTakeId]; $('rateUp').hidden = $('rateDown').hidden = !!r; $('rateAgain').hidden = !r;
-  $('rateTxt').textContent = r === 1 ? '👍 Got it — more like this' : r === -1 ? '👎 Got it — less like this' : 'Like this one?';
+  const r = RATED[currentTakeId]; $('rateUp').classList.toggle('on', r === 1); $('rateDown').classList.toggle('on', r === -1); $('rateUp').disabled = r === -1; $('rateDown').disabled = r === 1;
 }
 function rate(v) {
   const c = baseAnim && baseAnim.choices; if (!c || !currentTakeId || RATED[currentTakeId]) return;
@@ -7644,6 +7660,7 @@ function rate(v) {
   for (const k of c.forms || []) add('form', k, v * 0.7);
   add('pace', c.pace, v * 0.5);
   for (const k of c.learned || []) add('learned', k, v * 0.8);
+  for (const k of c.clips || []) add('clip', k, v * 0.9);
   LIKES.latent = LIKES.latent || {}; for (const { key, z } of c.latent || []) { const mu = LIKES.latent[key] || z.map(() => 0); LIKES.latent[key] = z.map((x, i) => Math.max(-2, Math.min(2, (mu[i] || 0) + (v > 0 ? 0.35 : -0.2) * (x - (mu[i] || 0))))); }
   LIKES.count = (LIKES.count || 0) + 1; RATED[currentTakeId] = v;
   try { localStorage.setItem('nocap-likes', JSON.stringify(LIKES)); localStorage.setItem('nocap-rated', JSON.stringify(RATED)); } catch (e) {}
