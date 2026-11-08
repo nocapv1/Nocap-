@@ -14,6 +14,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem('nocap-theme')||'gold'}catch(e){document.documentElement.dataset.theme='gold'}</script>
 <style>
+#teachBox [hidden]{display:none!important} #tchTabs .btn.on{border-color:var(--accent);color:var(--accent);font-weight:700}
 :root,[data-theme="gold"]{
   --bg:#050505; --panel:#0c0c0b; --panel2:#141310; --line:#2b2616; --text:#f4ecd6; --dim:#a99c78; --faint:#6e644b;
   --accent:#d4af37; --accent2:#9c7c1f; --accent3:#f3dc93; --on-accent:#1a1404; --glass:rgba(5,5,5,.85);
@@ -4298,6 +4299,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       <div class="physpanel" id="propsPanel"><b>🎒 Props</b><div id="propList" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px"></div><small>✨ Auto picks the right prop from your motion (golf swing → club, punches → gloves, ride a bike → bike…).</small></div>
       <input type="file" id="modelFile" accept=".fbx,.glb,.gltf,.vrm" hidden>
       <div id="three"></div>
+      <button id="newBadge" hidden title="New: made by your AI from what it learned" style="position:absolute;right:8px;bottom:8px;z-index:6;width:24px;height:24px;padding:0;border:0;border-radius:50%;background:var(--accent);color:#04201d;font:800 13px/24px system-ui,sans-serif;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.4)">N</button>
       <div id="rateBar" hidden style="position:absolute;left:8px;bottom:8px;z-index:6;display:flex;gap:6px;align-items:center;background:var(--glass);border:1px solid var(--line);border-radius:12px;padding:5px 8px;font-size:13px;backdrop-filter:blur(8px)"><span id="rateTxt">Like this one?</span><button class="btn small" id="rateUp" title="More like this">👍</button><button class="btn small" id="rateDown" title="Less like this">👎</button><button class="btn small" id="rateAgain" hidden>↻ Another</button></div>
     </div>
   </div>
@@ -4333,29 +4335,42 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <div class="mini" style="margin-top:4px">Tap again for a fresh variation of the same prompt · Enter = create</div>
   <div style="display:flex;gap:6px;margin-top:8px"><button class="btn" id="ttmTeachBtn" style="flex:1">🧠 Teach my AI</button></div>
   <label class="row" style="margin-top:6px;gap:8px"><input type="checkbox" id="ttmFeel"> <span>🧠 Use what my AI learned <span class="mini">makes <i>new</i> punches and natural movement in the style it learned — never a copy</span></span></label>
-  <label class="row" style="gap:8px"><input type="checkbox" id="ttmLib"> <span>📚 Include the pro boxing library <span class="mini">182 real punches from studio motion capture (CMU)</span></span></label>
+  <label class="row" style="gap:8px"><input type="checkbox" id="ttmLib"> <span>📚 Include the pro boxing library <span class="mini">219 real punches from studio motion capture (CMU)</span></span></label>
   <div class="mini" style="opacity:.7">Library data obtained from mocap.cs.cmu.edu. The database was created with funding from NSF EIA-0196217.</div>
   <div id="ttmKnown" class="mini" style="margin-top:6px"></div>
   <div id="teachBox" hidden style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
     <b>🧠 Teach your AI</b>
-    <div class="mini" style="margin:4px 0 8px">Give it videos to study — fights, pads, bag work, sparring, your own clips. It watches each one, keeps the punches it saw most clearly and the way the body moves, and throws the rest away. Then turn on <b>Move like my videos</b> and made-up motion uses what it learned. The more good videos, the better it gets. Everything stays on this phone.</div>
-    <input type="file" id="stFiles" accept="video/*,.mov,.mp4,.m4v,.webm" multiple hidden>
-    <button class="btn primary" id="stGo" style="width:100%">🎬 Choose videos to study (pick as many as you like)</button>
-    <div style="display:flex;gap:6px;margin-top:6px"><input id="stUrl" placeholder="…or paste a video link" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:9px;font-size:16px"><button class="btn" id="stUrlGo">Study</button></div>
-    <input id="stWords" placeholder="what's in them (optional), e.g. boxing, canelo, southpaw" style="width:100%;margin:6px 0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px">
-    <div class="row"><label>Two people in shot? Follow</label><select id="stFollow"><option value="big">the biggest (closest)</option><option value="left">the one on the left</option><option value="right">the one on the right</option></select></div>
-    <button class="btn" id="stStop" hidden style="width:100%">Stop studying</button>
-    <div id="stMsg" class="mini" style="margin-top:6px"></div>
-    <details style="margin-top:10px"><summary class="sub" style="cursor:pointer">Teach one exact move</summary>
-    <div class="mini" style="margin:4px 0 8px">Pick a clip and the part with one move, give it words, and whenever a prompt uses those words it performs <i>that</i> move.</div>
-    <div class="row"><label>Move from</label><select id="tchSrc" style="max-width:60%"></select></div>
-    <div class="row"><label>Part</label><span style="display:flex;gap:6px;align-items:center"><input type="number" id="tchA" step="0.1" min="0" value="0" style="width:72px"> to <input type="number" id="tchB" step="0.1" min="0" value="0" style="width:72px"> s</span></div>
-    <input id="tchWords" placeholder="words for it, e.g. jab, quick punch, boxing" style="width:100%;margin:6px 0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px">
-    <button class="btn primary" id="tchSave" style="width:100%">Teach this move</button>
-    </details>
-    <div class="sub" style="margin-top:10px">Word links <span class="mini">teach it your own words for things it already knows</span></div>
-    <div style="display:flex;gap:6px;align-items:center"><input id="wmFrom" placeholder="when I say… (scrap)" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:9px;font-size:16px"><input id="wmTo" placeholder="it means… (boxing)" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:9px;font-size:16px"><button class="btn" id="wmAdd">Add</button></div>
-    <div id="tchList" style="margin-top:10px"></div>
+    <div id="tchTabs" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0">
+      <button class="btn small on" data-tab="vid">🎬 Learn from videos</button><button class="btn small" data-tab="move">🎯 One move</button><button class="btn small" data-tab="words">🔗 My words</button><button class="btn small" data-tab="know">📚 What it knows</button>
+    </div>
+    <div data-pane="vid">
+      <div class="mini" style="margin-bottom:8px"><b>1.</b> Pick your videos (fights, pads, bag work, sparring) · <b>2.</b> Tap <b>OK</b>. It watches each one, keeps the clearest punches and movement, and learns how they vary, so it can make <i>new</i> moves in that style. Everything stays on this phone.</div>
+      <input type="file" id="stFiles" accept="video/*,.mov,.mp4,.m4v,.webm" multiple hidden>
+      <button class="btn" id="stGo" style="width:100%">🎬 Choose videos</button>
+      <div id="stPicked" class="mini" style="margin-top:6px"></div>
+      <details style="margin-top:6px"><summary class="mini" style="cursor:pointer">Options (link, words, which person)</summary>
+        <div style="display:flex;gap:6px;margin-top:6px"><input id="stUrl" placeholder="paste a direct video link" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px"><button class="btn" id="stUrlGo">Add</button></div>
+        <input id="stWords" placeholder="what's in them (optional), e.g. boxing, southpaw" style="width:100%;margin:6px 0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px">
+        <div class="row"><label>Two people in shot? Follow</label><select id="stFollow"><option value="big">the biggest (closest)</option><option value="left">the one on the left</option><option value="right">the one on the right</option></select></div>
+      </details>
+      <button class="btn primary" id="stOk" hidden style="width:100%;margin-top:8px">✅ OK, start learning</button>
+      <div id="stProgWrap" hidden style="margin-top:8px"><div class="progress" style="display:block"><i id="stBar" style="width:0%"></i></div><div id="stPct" class="mini" style="margin-top:4px"></div></div>
+      <button class="btn" id="stStop" hidden style="width:100%;margin-top:6px">Stop</button>
+      <div id="stMsg" class="mini" style="margin-top:6px"></div>
+      <button class="btn primary" id="stDone" hidden style="width:100%;margin-top:6px">👍 OK</button>
+    </div>
+    <div data-pane="move" hidden>
+      <div class="mini" style="margin:4px 0 8px">Pick a clip and the part with one move, give it words, and whenever a prompt uses those words it performs <i>that</i> move.</div>
+      <div class="row"><label>Move from</label><select id="tchSrc" style="max-width:60%"></select></div>
+      <div class="row"><label>Part</label><span style="display:flex;gap:6px;align-items:center"><input type="number" id="tchA" step="0.1" min="0" value="0" style="width:72px"> to <input type="number" id="tchB" step="0.1" min="0" value="0" style="width:72px"> s</span></div>
+      <input id="tchWords" placeholder="words for it, e.g. jab, quick punch, boxing" style="width:100%;margin:6px 0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px">
+      <button class="btn primary" id="tchSave" style="width:100%">✅ Teach this move</button>
+    </div>
+    <div data-pane="words" hidden>
+      <div class="mini" style="margin:4px 0 8px">Teach it your own words for things it already knows.</div>
+      <div style="display:flex;gap:6px;align-items:center"><input id="wmFrom" placeholder="when I say… (scrap)" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px"><input id="wmTo" placeholder="it means… (boxing)" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px"><button class="btn" id="wmAdd">Add</button></div>
+    </div>
+    <div data-pane="know" hidden><div id="tchList"></div></div>
   </div>
   <div class="hint">Type it how you'd say it — typos are fine. <b>Boxing:</b> jab, cross, hook, uppercut, body shot, slip, bob &amp; weave, block, combos like 1-2-3, left / right / lead / rear, southpaw. <b>Fighters:</b> Tyson, Ali, Mayweather, Canelo, Lomachenko, Bruce Lee, McGregor, Muay Thai, karate. <b>Sports:</b> ride a bike, golf, baseball bat / pitch, tennis serve / forehand, basketball dribble / shoot, football kick. <b>Moves:</b> walk, run, backwards, in a circle, turn, jump, kick, knee, elbow, teep, squat, lunge, jumping jacks, stretch, sit down, push, pull, lift, wave, clap, point, bow, salute, shrug, nod, look around, think, flex, celebrate, dance, spin. <b>Moods &amp; places:</b> tired, proud, sneaky, happy, angry, drunk, old, zombie, in the rain, windy, on ice, uphill, underwater, soldier march, carrying a box. Just a theme ("workout", "Mike Tyson") makes a full routine. Tap Create again for a new variation. 🧠 Teach my AI learns any move from a video, e.g. a real Tyson hook clip.</div>
 </div></div>
@@ -4460,7 +4475,7 @@ const HAND_URL = new URL('models/hand_landmarker.task', location.href).href;
 
 // ---------- UI helpers ----------
 let toastT;
-function toast(msg, err = false, ms = 4500) { const t = $('toast'); t.textContent = msg; t.className = 'toast' + (err ? ' err' : ''); t.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => (t.style.display = 'none'), ms); }
+function toast(msg, err = false, ms = 4500) { if (window.__studyQuiet) { (window.__studyNotes = window.__studyNotes || []).push(msg); return; } const t = $('toast'); t.textContent = msg; t.className = 'toast' + (err ? ' err' : ''); t.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => (t.style.display = 'none'), ms); }
 const fmt = s => `${s.toFixed(2)}s`;
 async function saveFile(data, name, type) {
   const blob = data instanceof Blob ? data : new Blob([data], { type: type || 'application/octet-stream' });
@@ -4738,7 +4753,7 @@ async function loadVideo(file, name, opts = {}) {
   info.innerHTML = `<span style="color:var(--accent);font-weight:600">✓ Video loaded</span> — ${name} · ${W}×${H} · ${D.toFixed(1)}s` + (converted ? ' · converted' : '') + '<br>Then tap <b>Generate motion</b> (✂️ on the play bar re-opens the trim window).';
   $('drop').innerHTML = '<b>✓ ' + name.replace(/[<>&]/g, '') + '</b><br>Tap to choose a different video';
   
-  if (D > 0.5 && !opts.fromLibrary) setTimeout(openTrimWindow, 300);
+  if (D > 0.5 && !opts.fromLibrary && !window.__studyQuiet) setTimeout(openTrimWindow, 300); // studying for the AI: no trim window, it watches the whole video
   $('go').disabled = false; drawOverlay(); $('bigPlay').style.display = 'block';
   $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel(); requestRender();
 }
@@ -4840,7 +4855,9 @@ function applyLight(cv) {
   if (!LIGHT) return; try { const x = cv.getContext('2d', { willReadFrequently: true }), im = x.getImageData(0, 0, cv.width, cv.height), d = im.data, L = LIGHT;
     for (let i = 0; i < d.length; i += 4) { d[i] = L[d[i]]; d[i + 1] = L[d[i + 1]]; d[i + 2] = L[d[i + 2]]; } x.putImageData(im, 0, 0); } catch (e) {}
 }
+let PROC_OK = false; // did the last capture finish properly (studying checks this before learning from it)
 async function processVideo() {
+  PROC_OK = false;
   if (!frames) { BAKE = null; if ($('solverVer').value !== 'latest') { quiet = true; $('solverVer').value = 'latest'; quiet = false; } } // a new capture always uses the latest AI
   if (busy) { cancelFlag = true; return; }
   busy = true; cancelFlag = false; pause();
@@ -4972,7 +4989,7 @@ async function processVideo() {
     const bridged = out.filter(f => !f.pw).length;
     if (bridged > N * 0.15) toast(`The person was lost in ${bridged} of ${N} frames, so those were bridged. Try Refine again, or film with the full body in frame.`, true, 9000);
     status(`Done · ${found}/${N} frames tracked${wantHands ? ` · fingers in ${Math.round(100 * hf / N)}%` : ''}. Tweak step 3 or export.`);
-    toast('Motion generated and saved to your Library. Press ▶ to preview.');
+    PROC_OK = true; toast('Motion generated and saved to your Library. Press ▶ to preview.');
     saveTake(cv).catch(e => toast('Library save failed: ' + e.message, true));
   } catch (e) {
     if (e.message === 'cancelled') status('Cancelled.');
@@ -7239,24 +7256,28 @@ let STUDY = null; // { follow } while studying: captures aren't saved to the Lib
 async function studyVideos(files, words, follow) {
   if (busy || STUDY) { toast('Already working — wait for it to finish.', true); return; }
   const list = [...files].filter(f => f && f.size); if (!list.length) return;
-  STUDY = { follow, cancel: false }; const msg = $('stMsg'), done = [];
-  $('stGo').disabled = true; $('stStop').hidden = false;
+  STUDY = { follow, cancel: false }; window.__studyQuiet = true; window.__studyNotes = []; const msg = $('stMsg'), done = [];
+  $('stGo').disabled = true; $('stOk').hidden = true; $('stDone').hidden = true; $('stStop').hidden = false; $('stProgWrap').hidden = false;
+  const capBar = $('prog').querySelector('i'), setProg = (i, frac, txt) => { const p = Math.max(0, Math.min(100, (i + frac) / list.length * 100)); $('stBar').style.width = p.toFixed(1) + '%'; $('stPct').textContent = `${Math.round(p)}% · ${txt}`; };
   try {
     for (let i = 0; i < list.length && !STUDY.cancel; i++) {
-      const f = list[i]; msg.textContent = `🎬 Studying ${i + 1}/${list.length}: ${f.name} — opening…`;
+      const f = list[i]; msg.textContent = ''; setProg(i, 0, `video ${i + 1} of ${list.length}: opening ${f.name}…`);
+      const srcBefore = currentSource; window.__studyNotes = [];
       await loadVideo(f, f.name); if (STUDY.cancel) break;
-      if (!videoURL && !codecSrc) { msg.textContent = `Skipped ${f.name} (couldn't open it).`; continue; }
-      msg.textContent = `🎬 Studying ${i + 1}/${list.length}: ${f.name} — watching it…`;
-      const iv = setInterval(() => { const t = $('pstat').textContent; if (t) msg.textContent = `🎬 ${i + 1}/${list.length} · ${f.name}: ${t}`; }, 400); // the capture's own progress, shown here
+      if (currentSource === srcBefore || (!videoURL && !codecSrc)) { done.push(`${f.name}: skipped, couldn't open this video`); continue; }
+      setProg(i, 0.02, `video ${i + 1} of ${list.length}: watching ${f.name}…`);
+      const iv = setInterval(() => { const fr = (parseFloat(capBar.style.width) || 0) / 100; setProg(i, 0.02 + 0.9 * fr, `video ${i + 1} of ${list.length}: watching ${f.name}…`); }, 300); // the capture's own progress, shown here
       try { await processVideo(); } finally { clearInterval(iv); } if (STUDY.cancel) break;
-      const r = await studyCurrent(words, f.name);
-      done.push(r ? `${f.name}: ${r}` : `${f.name}: nothing clear enough to learn`);
-      msg.textContent = `✓ ${done.length}/${list.length} studied. ` + done[done.length - 1];
+      if (!PROC_OK || !frames) { const why = (window.__studyNotes || []).find(m => /fail|error|blocked/i.test(m)); done.push(`${f.name}: skipped, couldn't track it${why ? ' (' + why.replace(/^Generation failed: /, '') + ')' : ''}`); continue; }
+      setProg(i, 0.95, `video ${i + 1} of ${list.length}: learning from it…`);
+      let r = null; try { r = await studyCurrent(words, f.name); } catch (e) { console.error(e); r = null; done.push(`${f.name}: couldn't save what it learned (${e.message})`); continue; }
+      done.push(r ? `${f.name}: ${r}` : `${f.name}: nothing clear enough to learn`); setProg(i, 1, `${done.length} of ${list.length} done`);
     }
-  } catch (e) { console.error(e); toast('Studying stopped: ' + e.message, true, 8000); }
+  } catch (e) { console.error(e); done.push('stopped early: ' + e.message); }
   finally {
-    const stopped = STUDY && STUDY.cancel; STUDY = null; $('stGo').disabled = false; $('stStop').hidden = true; renderTeach();
-    if (done.length) { msg.innerHTML = (stopped ? 'Stopped. ' : '') + '✓ Studied ' + done.length + ' video' + (done.length > 1 ? 's' : '') + ':<br>' + done.map(x => '• ' + x).join('<br>'); if (!feelOn()) msg.innerHTML += '<br>Turn on <b>🧠 Move like my videos</b> so made-up motion uses it.'; }
+    window.__studyQuiet = false;
+    const stopped = STUDY && STUDY.cancel; STUDY = null; $('stGo').disabled = false; $('stStop').hidden = true; $('stProgWrap').hidden = true; $('stDone').hidden = false; ML_CACHE = null; renderTeach();
+    if (done.length) { msg.innerHTML = (stopped ? 'Stopped. ' : '') + '✅ Finished — ' + done.length + ' video' + (done.length > 1 ? 's' : '') + ':<br>' + done.map(x => '• ' + x).join('<br>'); if (!feelOn()) msg.innerHTML += '<br>Tick <b>🧠 Use what my AI learned</b> so made-up motion uses it.'; }
     else if (stopped) msg.textContent = 'Stopped.';
   }
 }
@@ -7290,11 +7311,11 @@ async function studyCurrent(words, src) {
 function studyLink() {
   const u = $('stUrl').value.trim(); if (!u) return;
   if (/youtu\.?be|youtube\.com|tiktok\.com|instagram\.com|facebook\.com|twitter\.com|x\.com/i.test(u)) {
-    $('stMsg').innerHTML = '⚠️ YouTube (and TikTok, Instagram, X) don\'t let other websites download their videos, so the app can\'t watch that link directly.<br><b>Do this instead:</b> play the fight on your iPhone, screen-record the part you want (Control Centre ⏺), then tap <b>Choose videos</b> and pick the recording. You can pick lots at once.'; return; }
+    $('stMsg').innerHTML = '⚠️ YouTube (and TikTok, Instagram, X) don\'t let other websites download their videos, so the app can\'t watch that link directly.<br><b>Do this instead:</b> play the fight on your iPhone, screen-record the part you want (Control Centre ⏺), then tap <b>Choose videos</b> and pick the recording. You can pick lots at once, then tap <b>OK</b>.'; return; }
   $('stMsg').textContent = 'Downloading the video…';
   fetch(u).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); }).then(b => {
     const f = new File([b], (u.split('/').pop() || 'video').split('?')[0] || 'video.mp4', { type: b.type || 'video/mp4' });
-    studyVideos([f], stWords(), $('stFollow').value);
+    PICKED.push(f); renderPicked(); $('stUrl').value = ''; $('stMsg').textContent = 'Added — tap OK to start learning.';
   }).catch(e => { $('stMsg').innerHTML = `Couldn't download that link (${e.message}). Most sites block this — save the video to your phone (or screen-record it) and use <b>Choose videos</b>.`; });
 }
 const stWords = () => $('stWords').value.split(/[,;\n]/).map(s => s.trim().toLowerCase()).filter(Boolean);
@@ -7314,7 +7335,10 @@ function renderTeach() {
   const studied = LEARNED.filter(m => m.study), moves = LEARNED.filter(m => !m.study);
   const sumOf = m => { const L = m.data && m.data.learn; if (!L) return ''; const c = {}; for (const sg of L.segs) c[sg.type] = (c[sg.type] || 0) + 1; return [Object.entries(c).map(([t, v]) => v + ' ' + { straight: 'straight', hook: 'hook', upper: 'uppercut' }[t] + (v > 1 ? 's' : '')).join(', '), L.life && L.life.__bob ? Math.round(L.life.__bob.length / 30) + 's movement' : ''].filter(Boolean).join(' · '); };
   const tp = studied.reduce((s0, m) => s0 + ((m.data && m.data.learn && m.data.learn.segs.length) || 0), 0);
-  $('tchList').innerHTML = (studied.length ? `<div class="sub">Studied videos <span class="mini">${studied.length} video${studied.length > 1 ? 's' : ''} · ${tp} real punch${tp === 1 ? '' : 'es'} learned</span></div>` : '') + studied.map(m => `<div class="row" style="gap:6px"><label style="flex:1">🎬 <b>${(m.src || m.name).slice(0, 30)}</b> <span class="mini">${sumOf(m)}${m.words && m.words.length ? ' · ' + m.words.join(', ') : ''}</span></label><button class="btn small" data-del="${m.id}">🗑</button></div>`).join('')
+  let head = ''; try { const M = mlModels(), NM = { straight: 'jab/cross', hook: 'hook', upper: 'uppercut' }, can = Object.entries(M).filter(([, m]) => m.comps).map(([k]) => { const [t, arm] = k.split('|'); return (arm === 'Left' ? 'left ' : 'right ') + NM[t]; });
+    const lib = libOn() && BUILTIN ? BUILTIN.segs.length : 0;
+    head = `<div class="mini" style="margin-bottom:8px;padding:8px;border:1px solid var(--line);border-radius:10px">${lib ? `📚 Pro library on: ${lib} real punches<br>` : '📚 Pro library off (tick it under Create)<br>'}${can.length ? `🧠 Can make <b>new</b>: ${can.join(', ')}` : '🧠 Needs at least 3 clear punches of a kind before it can make new ones'}${LIKES.count ? `<br>👍👎 ${LIKES.count} rating${LIKES.count > 1 ? 's' : ''} steering it` : ''}</div>`; } catch (e) {}
+  $('tchList').innerHTML = head + (studied.length ? `<div class="sub">Studied videos <span class="mini">${studied.length} video${studied.length > 1 ? 's' : ''} · ${tp} real punch${tp === 1 ? '' : 'es'} learned</span></div>` : '') + studied.map(m => `<div class="row" style="gap:6px"><label style="flex:1">🎬 <b>${(m.src || m.name).slice(0, 30)}</b> <span class="mini">${sumOf(m)}${m.words && m.words.length ? ' · ' + m.words.join(', ') : ''}</span></label><button class="btn small" data-del="${m.id}">🗑</button></div>`).join('')
     + (moves.length ? '<div class="sub">Taught moves</div>' : '') + moves.map(m => `<div class="row" style="gap:6px"><label style="flex:1">🧠 <b>${m.words.join(', ')}</b> <span class="mini">${(m.n / 30).toFixed(1)}s</span></label><button class="btn small" data-try="${m.id}">▶ Try</button><button class="btn small" data-del="${m.id}">🗑</button></div>`).join('')
     + (Object.keys(WORDMAP).length ? '<div class="sub">Word links</div>' : '') + Object.entries(WORDMAP).map(([k, v]) => `<div class="row" style="gap:6px"><label style="flex:1">🔗 "${k}" → "${v}"</label><button class="btn small" data-wdel="${k}">🗑</button></div>`).join('');
 }
@@ -7332,7 +7356,7 @@ async function teachSave() {
   const v = $('tchSrc').value || 'cur'; let a = null;
   try {
     if (v === 'cur') a = anim;
-    else { const take = (await LIB.all()).find(x => String(x.id) === v); if (!take) throw new Error('take not found');
+    else { const take = (await LIB.all()).find(x => String(x.id) === v); if (!take) throw new Error('take not found'); if (!take.prompt && (!take.frames || !take.meta)) throw new Error('that take has no finished motion yet — open it and let it finish first');
       const mine = readSettings(); quiet = true; writeSettings(take.settings);
       try { a = take.prompt ? applyEdits(smartTextMotion(take.prompt, take.seed || 0), take.settings && take.settings.edits) : takeAnim(take); } finally { writeSettings(mine); quiet = false; } }
     if (!a) throw new Error('nothing to learn from');
@@ -7355,6 +7379,7 @@ $('tchSave').onclick = teachSave;
 let LIKES = {}; try { LIKES = JSON.parse(localStorage.getItem('nocap-likes') || '{}'); } catch (e) {} S.setPrefs(LIKES);
 let RATED = {}; try { RATED = JSON.parse(localStorage.getItem('nocap-rated') || '{}'); } catch (e) {}
 function rateUI() {
+  { const c0 = anim && baseAnim && baseAnim.choices, nw = c0 && c0.latent ? c0.latent.length : 0; $('newBadge').hidden = !nw; $('newBadge').dataset.n = nw; }
   const c = baseAnim && baseAnim.choices, show = !!(c && currentTakeId && ttmCaption); $('rateBar').hidden = !show; if (!show) return;
   const r = RATED[currentTakeId]; $('rateUp').hidden = $('rateDown').hidden = !!r; $('rateAgain').hidden = !r;
   $('rateTxt').textContent = r === 1 ? '👍 Got it — more like this' : r === -1 ? '👎 Got it — less like this' : 'Like this one?';
@@ -7371,11 +7396,23 @@ function rate(v) {
   S.setPrefs(LIKES); rateUI();
   toast(v > 0 ? `👍 Learned from ${LIKES.count} rating${LIKES.count > 1 ? 's' : ''} so far — more like this from now on.` : `👎 Noted — less like this. Tap ↻ Another for a new version.`);
 }
+$('newBadge').onclick = () => toast(`N = new: ${$('newBadge').dataset.n} move${+$('newBadge').dataset.n === 1 ? '' : 's'} in this animation ${+$('newBadge').dataset.n === 1 ? 'was' : 'were'} made up by your AI from what it learned (not copied from a video).`, false, 6000);
 $('rateUp').onclick = () => rate(1); $('rateDown').onclick = () => rate(-1);
 $('rateAgain').onclick = () => { if (lastPrompt) runTextMotion(lastPrompt); };
 setInterval(rateUI, 700); // follows whichever take is open
 $('stGo').onclick = () => $('stFiles').click();
-$('stFiles').onchange = () => { const fs = [...$('stFiles').files]; $('stFiles').value = ''; if (fs.length) studyVideos(fs, stWords(), $('stFollow').value); };
+let PICKED = [];
+function renderPicked() {
+  $('stPicked').innerHTML = PICKED.length ? `<b>${PICKED.length} video${PICKED.length > 1 ? 's' : ''} ready:</b> ` + PICKED.map((f, i) => `<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border:1px solid var(--line);border-radius:9px">${f.name.slice(0, 24)} <a href="#" data-unpick="${i}" style="color:inherit;text-decoration:none">✕</a></span>`).join('') : '';
+  $('stOk').hidden = !PICKED.length || !!STUDY; $('stGo').textContent = PICKED.length ? '➕ Add more videos' : '🎬 Choose videos';
+  if (PICKED.length) { $('stDone').hidden = true; $('stMsg').textContent = ''; }
+}
+$('stPicked').onclick = e => { const a = e.target.closest('[data-unpick]'); if (!a) return; e.preventDefault(); PICKED.splice(+a.dataset.unpick, 1); renderPicked(); };
+$('stFiles').onchange = () => { const fs = [...$('stFiles').files].filter(f => f && f.size); $('stFiles').value = ''; for (const f of fs) if (!PICKED.some(x => x.name === f.name && x.size === f.size)) PICKED.push(f); renderPicked(); };
+$('stOk').onclick = () => { if (!PICKED.length) return; const list = PICKED; PICKED = []; renderPicked(); studyVideos(list, stWords(), $('stFollow').value); };
+$('stDone').onclick = () => { $('stDone').hidden = true; $('stMsg').textContent = ''; };
+$('tchTabs').onclick = e => { const b = e.target.closest('[data-tab]'); if (!b) return; showTeachTab(b.dataset.tab); };
+function showTeachTab(t) { for (const b of $('tchTabs').querySelectorAll('[data-tab]')) b.classList.toggle('on', b.dataset.tab === t); for (const p of $('teachBox').querySelectorAll('[data-pane]')) p.hidden = p.dataset.pane !== t; if (t === 'know') renderTeach(); if (t === 'move') fillTeachSources(); }
 $('stUrlGo').onclick = studyLink;
 $('stStop').onclick = () => { if (STUDY) { STUDY.cancel = true; cancelFlag = true; $('stMsg').textContent = 'Stopping after this part…'; } };
 try { $('ttmFeel').checked = localStorage.getItem('nocap-feel') === '1'; $('ttmLib').checked = localStorage.getItem('nocap-lib') === '1'; } catch (e) {}
