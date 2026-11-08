@@ -2126,6 +2126,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         [0.9, pose({ ...CROUCH, LeftArm: V(0.6, -0.3, 0.4), RightArm: V(-0.6, -0.3, 0.4) }, { chestPitch: 12, rootY: -0.15 })], [1, pose()]) },
     });
   }
+  let PREFS = {}; // 👍 / 👎 scores set by the app (setPrefs)
   const PUNCH_VARIANTS = { bodyupper: ['bodyupperL', 'bodyupper', 1, 'body uppercut'], overhand: ['overhandL', 'overhand', 1, 'overhand'], feint: ['feint', 'feint', 0, 'feint'], parry: ['parry', 'parry', 1, 'parry'], jab: ['jab', 'cross', 0, 'jab'], cross: ['jab', 'cross', 1, 'cross'], hook: ['hook', 'hookR', 0, 'hook'], uppercut: ['uppercutL', 'uppercut', 1, 'uppercut'], bodyhook: ['bodyhook', 'bodyhookR', 0, 'body hook'], bodyjab: ['bodyjab', 'bodycross', 0, 'body shot'], elbow: ['elbow', 'elbow', 0, 'elbow'] };
   // guard hand positions relative to the head (fight frame: x = left, y = up, z = toward the opponent)
   const GUARD_HANDS = {
@@ -2422,8 +2423,8 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     if (/\b(on (his|her|the) toes|bouncy|bouncing|bounce)\b/.test(t)) st.fw = { ...(st.fw || FOOTWORK.boxing), bounce: 0.05, rate: 2.5 };
     if (/\b(flat[ -]?foot\w*|planted|calm)\b/.test(t)) st.fw = { ...(st.fw || FOOTWORK.boxing), bounce: 0.006, rate: 1 };
     // Tyson style: bob & weave into the hooks
-    if (st.peekaboo && plan.length && !plan.some(p => p.move === 'weave')) { const i = plan.findIndex(p => p.move === 'hook' || p.move === 'uppercut' || p.move === 'bodyhook'); if (i >= 0) plan.splice(i, 0, { move: 'weave', speed: 1.2, secs: null }); }
-    if (st.boxing && plan.length && !['stance', 'shuffle'].includes(plan[0].move) && MOVES[plan[0].move] && (MOVES[plan[0].move].keys || [])[0] && MOVES[plan[0].move].keys[0][1].guard) plan.unshift({ move: 'stance', speed: 1, secs: 0.6 });
+    // (Tyson style keeps his stance and speed; it only bobs and weaves when you ask for it)
+    // (no automatic lead-in: "left hook" is just the left hook — it starts from the guard on its own)
     return { plan, unknown, styles: st };
   }
   function samplePlan(plan, t) { // returns pose at global time t
@@ -2490,48 +2491,23 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const { plan, unknown, styles: style } = parsePrompt(text || '', seed);
     if (!plan.length && style.boxing) plan.push({ move: 'stance', speed: 1, secs: 3 });
     if (!plan.length) throw new Error('I didn\'t recognise any moves. Try things like: "Mike Tyson left hook", "1-2-3 then slip", "golf swing", "zombie walk in a circle", "basketball jump shot", "workout", "celebrate".');
-    if (seed) for (const p of plan) p.speed *= 0.88 + rnd() * 0.24; // each new take varies the timing a little
+    // each new take varies the timing a little; 👍 / 👎 ratings lean it towards the pace you liked
+    let PACE = null; if (seed) { const pr = (PREFS.pace || {}), sc = ['slow', 'mid', 'fast'].map(b => Math.exp(Math.max(-3, Math.min(3, pr[b] || 0)))), tot = sc[0] + sc[1] + sc[2];
+      const any = Object.values(pr).some(v => v); let u = rnd(); if (any) { const r = u * tot; u = r < sc[0] ? rnd() / 3 : r < sc[0] + sc[1] ? 1 / 3 + rnd() / 3 : 2 / 3 + rnd() / 3; }
+      const f = 0.88 + u * 0.24; PACE = f < 0.96 ? 'slow' : f > 1.04 ? 'fast' : 'mid'; for (const p of plan) p.speed *= f; }
     if (seed) for (const p of plan) if (p.routine && ['jab', 'cross', 'hook', 'slip'].includes(p.move) && rnd() < 0.3) p.move = ['jab', 'cross', 'hook', 'slip'][Math.floor(rnd() * 4)]; // routines vary per take
     // which side does each move use? (orthodox: lead = left, rear = right; southpaw / lefty swaps the whole body)
-    // "Mike Tyson left hook": the original (stance, bob & weave, hook) is the usual one; other takes set it up differently
-    if (style.peekaboo && plan.length <= 4 && !plan.some(p => p.routine)) {
-      const hi = plan.findIndex(p => p.move === 'hook');
-      if (hi >= 0) {
-        const h = plan[hi], sp = h.speed || 1.2, m = (move, side = null) => ({ move, side, speed: sp, secs: null });
-        const VARS = [null,
-          [m('stance'), m('slip'), m('weave'), { ...h }, { ...h }],                       // double up on the hook
-          [m('stance'), m('weave'), m('bodyhook', 'lead'), { ...h }],                       // body then head
-          [m('stance'), m('slip'), m('slip', 'left'), { ...h }],                            // slip, slip, hook
-          [m('stance'), m('weave'), m('weave', 'left'), { ...h }, m('uppercut', 'rear')],   // weave both ways, hook, uppercut
-          [m('stance'), m('jab'), m('weave'), { ...h }],                                    // jab to set it up
-          [m('shuffle'), m('weave'), { ...h }, m('hook', 'rear')]];                         // step in, hook, hook
-        const pick = seed ? [0, 0, 0, 1, 2, 3, 4, 5, 6, 0][seed % 10] : 0;
-        if (VARS[pick]) plan.splice(0, plan.length, ...VARS[pick]);
-      }
-    }
-    // one punch asked for ("left hook", "jab"): each new take sets it up a different way, cycling through them in order
-    // (the app picks seeds so pressing Generate again on the same words goes to the next one)
-    if (seed && style.boxing && !style.peekaboo && !plan.some(p => p.routine)) {
-      const hits = plan.filter(p => (MOVES[p.move] && MOVES[p.move].strike) || PUNCH_VARIANTS[p.move]), rest = plan.filter(p => !hits.includes(p) && p.move !== 'stance');
-      if (hits.length === 1 && !rest.length) {
-        let VJAB = false; const h = hits[0], sp = h.speed || 1, m = (move, side = null, step = null) => ({ move, side, step, speed: sp, secs: null }), same = { ...h };
-        const lead = m('jab'); if (h.move === 'jab') VJAB = true; // a jab is set up by... more jabs
-        const VARS = [null,
-          [m('stance'), lead, { ...h }].concat(VJAB ? [{ ...h }] : []),     // set it up with a jab (a jab: triple jab)
-          [m('stance'), m('slip'), { ...h }],                              // slip, then fire
-          [m('stance'), m('feint'), { ...h }],                             // feint, then the real one
-          [m('stance'), { ...h, step: 'fwd' }],                            // step in with it
-          [m('stance'), m('weave'), { ...h }],                             // bob & weave under, come back with it
-          [m('stance'), { ...h }, same],                                   // double up
-          [m('stance'), m('pullback'), { ...h, speed: sp * 1.1 }]];        // lean back, counter
-        const v = seed % 8, SPD = [1, 1.08, 1, 1.05, 1.12, 0.95, 1.1, 1.06];
-        if (VARS[v]) plan.splice(0, plan.length, ...VARS[v]); for (const p of plan) p.speed *= SPD[v];
-      }
-    }
+    // (a punch prompt gives exactly the punches you typed — nothing set up before or added after)
     // the punches themselves change shape from take to take: aimed higher / lower, a tighter or wider hook, shorter or
     // longer reach, elbow flatter or more upright (the first take is the plain one)
+    // 👍 / 👎: once you've rated some takes, forms you liked come up more and ones you didn't come up less (still varied)
     if (seed) { const FORMS = [null, { aimY: 0.05, wide: 1.3, elbowUp: 0.3 }, { aimY: -0.06, wide: 0.8, reach: 0.95 }, { aimY: 0.02, wide: 1.15, reach: 1.02 }, { aimY: -0.03, wide: 0.9, elbowUp: -0.25, reach: 0.97 }];
-      let i = 0; for (const p of plan) if (MOVES[p.move] && MOVES[p.move].strike) { p.form = FORMS[(seed % 8 + i) % FORMS.length]; i++; } }
+      let i = 0; for (const p of plan) if (MOVES[p.move] && MOVES[p.move].strike) {
+        const ty = MOVES[p.move].strike.type, pf = (PREFS.form || {}), sc = FORMS.map((_, f) => pf[ty + '|' + f] || 0);
+        let fi = (seed % 8 + i) % FORMS.length;
+        if (sc.some(v => v)) { const w = sc.map(v => Math.exp(Math.max(-3, Math.min(3, v)))), tot = w.reduce((x, y) => x + y); let r = rnd() * tot; fi = 0; while (fi < w.length - 1 && r > w[fi]) { r -= w[fi]; fi++; } }
+        p.form = FORMS[fi]; p.formIdx = fi; i++; } }
+    plan.pace = PACE;
     for (const p of plan) { // punches: pick the lead or rear hand version (left / right depend on orthodox or southpaw)
       const V_ = PUNCH_VARIANTS[p.move]; if (!V_) continue;
       const arm = p.side === 'lead' ? 0 : p.side === 'rear' ? 1 : p.side === 'left' ? (style.south ? 1 : 0) : p.side === 'right' ? (style.south ? 0 : 1) : V_[2];
@@ -2758,7 +2734,8 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const label = p => p.label || PRETTY[p.move] || (p.move === 'stepmove' ? 'step ' + ({ fwd: 'in', back: 'back', left: 'left', right: 'right' })[p.step || 'fwd'] : null) || (p.side && MOVES[p.move] && MOVES[p.move].side ? p.side + ' ' : '') + (p.move === 'turn' ? `turn ${p.turn > 0 ? 'left' : 'right'} ${Math.abs(p.turn)}°` : p.move) + (p.back ? ' backwards' : '') + (p.turnRate ? ' in a circle' : '');
     // where each punch lands (frame, arm, kind), for anything that wants to work with the punches later
     const strikes = []; { let acc = 0; for (const p of plan) { const M_ = MOVES[p.move] || {}, st = M_.strike; if (st && M_.keys) { const cyc = M_.dur / (p.speed || 1), tp = M_.keys.length > 3 ? M_.keys[3][0] : 0.4; if (tp * cyc <= p.len + 1e-6) strikes.push({ k: Math.min(n - 1, Math.round((acc + tp * cyc) * fps)), arm: st.arm, type: st.type, body: !!st.body }); } acc += p.len; } }
-    return { rest, fps, n, rootPos, locals, contacts, hasHands: { Left: false, Right: false }, M: rest.M, unknown, plan: plan.map(label), strikes, styles: Object.keys(style).filter(k => style[k]), text, bikeTrack: bikeTrack.some(b => b.on) ? bikeTrack : null, bike: BIKE };
+    const choices = { forms: plan.filter(p => p.formIdx != null).map(p => MOVES[p.move].strike.type + '|' + p.formIdx), pace: plan.pace || null };
+    return { rest, fps, n, rootPos, locals, contacts, hasHands: { Left: false, Right: false }, M: rest.M, unknown, plan: plan.map(label), strikes, choices, styles: Object.keys(style).filter(k => style[k]), text, bikeTrack: bikeTrack.some(b => b.on) ? bikeTrack : null, bike: BIKE };
   }
 
   // cut an animation down to [a, b] seconds (relative to its own start)
@@ -2768,7 +2745,8 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     return { ...anim, n: i1 - i0 + 1, rootPos: anim.rootPos.slice(i0, i1 + 1), locals: anim.locals.slice(i0, i1 + 1), contacts: anim.contacts.slice(i0, i1 + 1) };
   }
 
-  g.Solver = { smoothAnim, physics, faceCovered, guessLowerBody, sliceAnim, textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, floorFinder, estimateFov, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
+  const setPrefs = p => { PREFS = p || {}; };
+  g.Solver = { setPrefs, smoothAnim, physics, faceCovered, guessLowerBody, sliceAnim, textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, floorFinder, estimateFov, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -4320,6 +4298,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       <div class="physpanel" id="propsPanel"><b>🎒 Props</b><div id="propList" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px"></div><small>✨ Auto picks the right prop from your motion (golf swing → club, punches → gloves, ride a bike → bike…).</small></div>
       <input type="file" id="modelFile" accept=".fbx,.glb,.gltf,.vrm" hidden>
       <div id="three"></div>
+      <div id="rateBar" hidden style="position:absolute;left:8px;bottom:8px;z-index:6;display:flex;gap:6px;align-items:center;background:var(--glass);border:1px solid var(--line);border-radius:12px;padding:5px 8px;font-size:13px;backdrop-filter:blur(8px)"><span id="rateTxt">Like this one?</span><button class="btn small" id="rateUp" title="More like this">👍</button><button class="btn small" id="rateDown" title="Less like this">👎</button><button class="btn small" id="rateAgain" hidden>↻ Another</button></div>
     </div>
   </div>
   <div class="timeline">
@@ -4357,11 +4336,21 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <div id="ttmKnown" class="mini" style="margin-top:6px"></div>
   <div id="teachBox" hidden style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
     <b>🧠 Teach your AI</b>
-    <div class="mini" style="margin:4px 0 8px">Show it a real move once (from a video you captured, or any motion you made) and give it words. Whenever a prompt uses those words, it performs <i>your</i> move, mixes it with others ("then"), and varies it each time you regenerate. Everything stays on this device.</div>
+    <div class="mini" style="margin:4px 0 8px">Give it videos to study — fights, pads, bag work, sparring, your own clips. It watches each one, keeps the punches it saw most clearly and the way the body moves, and throws the rest away. Then turn on <b>Move like my videos</b> and made-up motion uses what it learned. The more good videos, the better it gets. Everything stays on this phone.</div>
+    <input type="file" id="stFiles" accept="video/*,.mov,.mp4,.m4v,.webm" multiple hidden>
+    <button class="btn primary" id="stGo" style="width:100%">🎬 Choose videos to study (pick as many as you like)</button>
+    <div style="display:flex;gap:6px;margin-top:6px"><input id="stUrl" placeholder="…or paste a video link" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:9px;font-size:16px"><button class="btn" id="stUrlGo">Study</button></div>
+    <input id="stWords" placeholder="what's in them (optional), e.g. boxing, canelo, southpaw" style="width:100%;margin:6px 0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px">
+    <div class="row"><label>Two people in shot? Follow</label><select id="stFollow"><option value="big">the biggest (closest)</option><option value="left">the one on the left</option><option value="right">the one on the right</option></select></div>
+    <button class="btn" id="stStop" hidden style="width:100%">Stop studying</button>
+    <div id="stMsg" class="mini" style="margin-top:6px"></div>
+    <details style="margin-top:10px"><summary class="sub" style="cursor:pointer">Teach one exact move</summary>
+    <div class="mini" style="margin:4px 0 8px">Pick a clip and the part with one move, give it words, and whenever a prompt uses those words it performs <i>that</i> move.</div>
     <div class="row"><label>Move from</label><select id="tchSrc" style="max-width:60%"></select></div>
     <div class="row"><label>Part</label><span style="display:flex;gap:6px;align-items:center"><input type="number" id="tchA" step="0.1" min="0" value="0" style="width:72px"> to <input type="number" id="tchB" step="0.1" min="0" value="0" style="width:72px"> s</span></div>
     <input id="tchWords" placeholder="words for it, e.g. jab, quick punch, boxing" style="width:100%;margin:6px 0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px">
     <button class="btn primary" id="tchSave" style="width:100%">Teach this move</button>
+    </details>
     <div class="sub" style="margin-top:10px">Word links <span class="mini">teach it your own words for things it already knows</span></div>
     <div style="display:flex;gap:6px;align-items:center"><input id="wmFrom" placeholder="when I say… (scrap)" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:9px;font-size:16px"><input id="wmTo" placeholder="it means… (boxing)" style="flex:1;min-width:0;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:9px;font-size:16px"><button class="btn" id="wmAdd">Add</button></div>
     <div id="tchList" style="margin-top:10px"></div>
@@ -5197,6 +5186,7 @@ async function choosePerson(cv, status) {
   const lms = pr.landmarks || [];
   if (lms.length <= 1) return lms.length ? personBox(lms[0]) : null;
   const boxes = lms.map(personBox).map((b, i) => ({ ...b, i })).sort((a, b) => a.cx - b.cx);
+  if (STUDY) { const f = STUDY.follow; return f === 'left' ? boxes[0] : f === 'right' ? boxes[boxes.length - 1] : boxes.reduce((x, y) => (y.h > x.h ? y : x)); } // studying: no questions, follow the chosen boxer
   pause(); curTime = 0; if (!codecSrc) vid.currentTime = 0;
   pickBoxes = boxes; drawOverlay(); requestRender();
   status(`${boxes.length} people found. Tap who to capture.`);
@@ -5750,12 +5740,14 @@ async function undoLast() {
 }
 
 async function saveTakeStart() {
+  if (STUDY) return; // studying videos for the AI: not saved to the Library
   const id = currentTakeId, vb = await videoBytes();
   let thumb = null; try { const c = $('pcv').style.display === 'block' ? $('pcv') : null; const src = c || (vid.videoWidth ? vid : null); if (src) thumb = await makeThumb(src, src.videoWidth || src.width, src.videoHeight || src.height); } catch (e) {}
   await putTake({ id, name: videoName, date: new Date().toISOString(), dur: dur(), frames: null, meta: null, settings: readSettings(), thumb, videoBuf: vb && vb.buf, videoType: vb && vb.type, videoName: currentSource && currentSource.name, status: 'processing' });
 }
 function makeThumb(src, w, h) { return new Promise(r => { const c = document.createElement('canvas'), s = 128 / Math.max(w, h); c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s)); c.getContext('2d').drawImage(src, 0, 0, c.width, c.height); c.toBlob(r, 'image/jpeg', 0.7); }); }
 async function saveTake(cv) {
+  if (STUDY) return;
   const id = currentTakeId || Date.now(); currentTakeId = id;
   let old = null; try { old = await LIB.get(id); } catch (e) {}
   const thumb = cv ? await makeThumb(cv, cv.width, cv.height) : old && old.thumb;
@@ -7025,10 +7017,10 @@ function swingTo(gen, real, axis) {
 }
 function feelOn() { return !!($('ttmFeel') && $('ttmFeel').checked); }
 function applyLearnedFeel(a, prompt, rnd) {
-  const pool = LEARNED.filter(m => m.data && m.data.n > 5).map(m => ({ m, L: analyzeLearned(m.data) })); if (!pool.length) return a;
+  const pool = LEARNED.filter(m => m.data && (m.data.n > 5 || m.data.learn)).map(m => ({ m, L: analyzeLearned(m.data) })); if (!pool.length) return a;
   const out = { ...a, locals: a.locals.map(l => l.slice()), rootPos: a.rootPos.map(r => r.slice()) }, ix = a.rest.index, n = a.n, used = [];
   // 1) real punches
-  const segAll = pool.flatMap(({ m, L }) => L.segs.map(s0 => ({ ...s0, m }))); let swapped = 0;
+  const segAll = pool.flatMap(({ m, L }) => L.segs.map((s0, i) => ({ ...s0, m, i }))), usedSegs = []; let swapped = 0;
   if (segAll.length) {
     let { F, peaks } = punchPeaks(a);
     if (a.strikes && a.strikes.length) { // made-up motion knows its own punches: use them (the side is whichever fist is out further then)
@@ -7036,17 +7028,18 @@ function applyLearnedFeel(a, prompt, rnd) {
         return { k: st.k, side: ext('Left') > ext('Right') ? 'Left' : 'Right', type: st.type }; }); }
     for (const p of peaks) {
       const type = p.type || classifyPunch(a, F, p); let c = segAll.filter(s0 => s0.type === type && s0.arm === p.side); if (!c.length) continue;
-      const sg = c[Math.floor(rnd() * c.length)], d = sg.m.data, map = a.rest.joints.map(j => d.rest.index[j.name]);
+      const lw = c.map(x => Math.exp(Math.max(-3, Math.min(3, ((LIKES.learned || {})[x.m.id + ':' + x.i]) || 0)))); let rr = rnd() * lw.reduce((x, y) => x + y), ci = 0; while (ci < c.length - 1 && rr > lw[ci]) { rr -= lw[ci]; ci++; }
+      const sg = c[ci], d = sg.m.data, map = a.rest.joints.map(j => d.rest.index[j.name]); usedSegs.push(sg.m.id + ':' + sg.i);
       const chain = [p.side + 'Shoulder', p.side + 'Arm', p.side + 'ForeArm', p.side + 'Hand'].map(nm => ix[nm]).filter(j => j != null);
       const fingers = a.rest.joints.map((j, i) => j.name.startsWith(p.side + 'Hand') && j.name !== p.side + 'Hand' ? i : -1).filter(i => i >= 0);
       const spine = ['Spine', 'Spine1', 'Spine2'].map(nm => ix[nm]).filter(j => j != null);
       const wb = Math.round(0.3 * 30), wa = Math.round(0.32 * 30);
       for (let k = Math.max(0, p.k - wb); k <= Math.min(n - 1, p.k + wa); k++) {
-        const jk = sg.k + (k - p.k); if (jk < 0 || jk >= d.n) continue;
+        const SRC = sg.locals || d.locals, jk = sg.k + (k - p.k); if (jk < 0 || jk >= SRC.length) continue;
         const u = k <= p.k ? (k - (p.k - wb)) / (wb * 0.6) : ((p.k + wa) - k) / (wa * 0.6), w = Math.max(0, Math.min(1, u)), ww = w * w * (3 - 2 * w);
         for (const j of chain) { if (map[j] == null) continue; const ch = a.rest.joints.findIndex(x => x.parent === j), ax = ch >= 0 ? VA.sc(a.rest.joints[ch].offset, 1 / (VA.len(a.rest.joints[ch].offset) || 1)) : [p.side === 'Left' ? 1 : -1, 0, 0];
-          const tgt = swingTo(out.locals[k][j], d.locals[jk][map[j]], ax); if (tgt) out.locals[k][j] = S.qslerp(out.locals[k][j], tgt, ww); }
-        for (const j of spine) if (map[j] != null) out.locals[k][j] = S.qslerp(out.locals[k][j], d.locals[jk][map[j]], ww * 0.45);
+          const tgt = swingTo(out.locals[k][j], SRC[jk][map[j]], ax); if (tgt) out.locals[k][j] = S.qslerp(out.locals[k][j], tgt, ww); }
+        for (const j of spine) if (map[j] != null) out.locals[k][j] = S.qslerp(out.locals[k][j], SRC[jk][map[j]], ww * 0.45);
       }
       swapped++; if (!used.includes(sg.m.name)) used.push(sg.m.name);
     }
@@ -7061,6 +7054,7 @@ function applyLearnedFeel(a, prompt, rnd) {
     if (!used.includes(best.m.name)) used.push(best.m.name);
   }
   if (used.length) out.plan = [...(a.plan || []), `🧠 moves like: ${used.join(', ')}${swapped ? ` (${swapped} real punch${swapped > 1 ? 'es' : ''})` : ''}`];
+  out.choices = { ...(a.choices || {}), learned: usedSegs };
   return out;
 }
 function smartTextMotion(txt0, seed) {
@@ -7074,7 +7068,7 @@ function smartTextMotion0(txt0, seed) {
   const rnd = tRand(seed * 2654435761), pieces = [], plan = [], unknown = [], styles = []; let used = false;
   steps.forEach((st, i) => {
     let count = 1; for (const w of st.toLowerCase().split(/\s+/)) { if (/^\d+$/.test(w)) count = Math.min(8, +w); else if (T_NUM[w]) count = T_NUM[w]; }
-    const tk = tToks(st), scored = LEARNED.map(m => ({ m, s: tScore(tk, m) })).filter(x => x.s >= 3).sort((a, b) => b.s - a.s);
+    const tk = tToks(st), scored = LEARNED.filter(m => !m.study && m.data && m.data.n > 5).map(m => ({ m, s: tScore(tk, m) })).filter(x => x.s >= 3).sort((a, b) => b.s - a.s);
     if (scored.length) {
       const top = scored.filter(x => x.s >= scored[0].s - 1);
       for (let c = 0; c < count; c++) { const m = top[Math.floor(rnd() * top.length)].m; pieces.push(learnedPiece(m, rnd)); plan.push('🧠 ' + m.name); }
@@ -7084,6 +7078,70 @@ function smartTextMotion0(txt0, seed) {
   if (!used) return S.textToMotion(txt, 30, seed);
   return { ...stitchPieces(pieces), plan, unknown, styles: [...new Set(styles)] };
 }
+// ---- 🎬 study videos: capture many videos one after another and keep only what it tracked best ----
+let STUDY = null; // { follow } while studying: captures aren't saved to the Library and the person is picked automatically
+async function studyVideos(files, words, follow) {
+  if (busy || STUDY) { toast('Already working — wait for it to finish.', true); return; }
+  const list = [...files].filter(f => f && f.size); if (!list.length) return;
+  STUDY = { follow, cancel: false }; const msg = $('stMsg'), done = [];
+  $('stGo').disabled = true; $('stStop').hidden = false;
+  try {
+    for (let i = 0; i < list.length && !STUDY.cancel; i++) {
+      const f = list[i]; msg.textContent = `🎬 Studying ${i + 1}/${list.length}: ${f.name} — opening…`;
+      await loadVideo(f, f.name); if (STUDY.cancel) break;
+      if (!videoURL && !codecSrc) { msg.textContent = `Skipped ${f.name} (couldn't open it).`; continue; }
+      msg.textContent = `🎬 Studying ${i + 1}/${list.length}: ${f.name} — watching it…`;
+      const iv = setInterval(() => { const t = $('pstat').textContent; if (t) msg.textContent = `🎬 ${i + 1}/${list.length} · ${f.name}: ${t}`; }, 400); // the capture's own progress, shown here
+      try { await processVideo(); } finally { clearInterval(iv); } if (STUDY.cancel) break;
+      const r = await studyCurrent(words, f.name);
+      done.push(r ? `${f.name}: ${r}` : `${f.name}: nothing clear enough to learn`);
+      msg.textContent = `✓ ${done.length}/${list.length} studied. ` + done[done.length - 1];
+    }
+  } catch (e) { console.error(e); toast('Studying stopped: ' + e.message, true, 8000); }
+  finally {
+    const stopped = STUDY && STUDY.cancel; STUDY = null; $('stGo').disabled = false; $('stStop').hidden = true; renderTeach();
+    if (done.length) { msg.innerHTML = (stopped ? 'Stopped. ' : '') + '✓ Studied ' + done.length + ' video' + (done.length > 1 ? 's' : '') + ':<br>' + done.map(x => '• ' + x).join('<br>'); if (!feelOn()) msg.innerHTML += '<br>Turn on <b>🧠 Move like my videos</b> so made-up motion uses it.'; }
+    else if (stopped) msg.textContent = 'Stopped.';
+  }
+}
+// what it keeps from one captured video: the punches it saw most clearly (whole arm in view, no glitches) and the
+// 10 seconds where the whole body was clearest (for the natural bounce / sway / breathing)
+async function studyCurrent(words, src) {
+  const a = baseAnim || anim; if (!a || !frames || a.n < 10) return null;
+  const n = Math.max(2, Math.round((a.n - 1) / a.fps * 30) + 1), q4 = x => Math.round(x * 1e4) / 1e4, locals = [], rootPos = [];
+  for (let i = 0; i < n; i++) { const smp = S.sample(a, i / 30); locals.push(smp.locals.map(q => q.map(q4))); rootPos.push(smp.root.map(q4)); }
+  const r0 = rootPos[0]; for (const r of rootPos) { r[0] = q4(r[0] - r0[0]); r[2] = q4(r[2] - r0[2]); }
+  // how clearly each moment was seen (MediaPipe visibility), mapped onto the 30 fps frames
+  const T0 = frames[0] ? frames[0].t : 0, vis = (i, ids) => { const t = T0 + i / 30; let lo = 0, hi = frames.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (frames[m].t < t) lo = m; else hi = m; }
+    const fr = Math.abs(frames[lo].t - t) < Math.abs(frames[hi].t - t) ? frames[lo] : frames[hi]; if (!fr || !fr.pi || fr.dup) return 0; return ids.reduce((s0, id) => s0 + (fr.pi[id] ? fr.pi[id][2] : 0), 0) / ids.length; };
+  const data = { rest: a.rest, M: a.M || null, n, locals, rootPos }, L = analyzeLearned(data), ARM = { Left: [11, 13, 15], Right: [12, 14, 16] }, BODY = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
+  const segs = L.segs.map(sg => { let q = 0, c = 0; for (let i = Math.max(0, sg.k - 9); i <= Math.min(n - 1, sg.k + 9); i++) { q += vis(i, ARM[sg.arm]); c++; } return { ...sg, q: c ? q / c : 0 }; })
+    .filter(sg => sg.q > 0.6).sort((x, y) => y.q - x.q).slice(0, 16)
+    .map(sg => ({ type: sg.type, arm: sg.arm, q: Math.round(sg.q * 100) / 100, k: 10, locals: locals.slice(sg.k - 10, sg.k + 12) }));
+  // the clearest 10 s of the whole body for the life layer
+  let life = {}; if (L.life && L.life.__bob) { const W = Math.min(n, 300); let best = 0, bq = -1; const fv = []; for (let i = 0; i < n; i++) fv.push(vis(i, BODY));
+    let run = 0; for (let i = 0; i < n; i++) { run += fv[i]; if (i >= W) run -= fv[i - W]; if (i >= W - 1 && run > bq) { bq = run; best = i - W + 1; } }
+    if (bq / W > 0.55) for (const k in L.life) life[k] = L.life[k].slice(best, best + W); }
+  if (!segs.length && !life.__bob) return null;
+  const nm = (words[0] || src.replace(/\.[^.]+$/, '')).slice(0, 40), id = Date.now() + Math.floor(Math.random() * 1000);
+  const keep = { rest: a.rest, M: a.M || null, n: 0, locals: [], rootPos: [], learn: { segs, life, n: 0 }, src };
+  const c = await caches.open('nocap-learned'); await c.put('/m/' + id, new Response(JSON.stringify(keep), { headers: { 'Content-Type': 'application/json' } }));
+  LEARNED.push({ id, name: nm, words: words.length ? words : [nm.toLowerCase()], n: 0, study: true, src, data: keep }); saveLearnedIndex();
+  const cnt = {}; for (const sg of segs) cnt[sg.type] = (cnt[sg.type] || 0) + 1;
+  const NM = { straight: ['jab/cross', 'jabs/crosses'], hook: ['hook', 'hooks'], upper: ['uppercut', 'uppercuts'] };
+  return [Object.entries(cnt).map(([t, c2]) => `${c2} ${NM[t][c2 > 1 ? 1 : 0]}`).join(', '), life.__bob ? `${Math.round(life.__bob.length / 30)}s of movement` : ''].filter(Boolean).join(' + ') + ' kept';
+}
+function studyLink() {
+  const u = $('stUrl').value.trim(); if (!u) return;
+  if (/youtu\.?be|youtube\.com|tiktok\.com|instagram\.com|facebook\.com|twitter\.com|x\.com/i.test(u)) {
+    $('stMsg').innerHTML = '⚠️ YouTube (and TikTok, Instagram, X) don\'t let other websites download their videos, so the app can\'t watch that link directly.<br><b>Do this instead:</b> play the fight on your iPhone, screen-record the part you want (Control Centre ⏺), then tap <b>Choose videos</b> and pick the recording. You can pick lots at once.'; return; }
+  $('stMsg').textContent = 'Downloading the video…';
+  fetch(u).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); }).then(b => {
+    const f = new File([b], (u.split('/').pop() || 'video').split('?')[0] || 'video.mp4', { type: b.type || 'video/mp4' });
+    studyVideos([f], stWords(), $('stFollow').value);
+  }).catch(e => { $('stMsg').innerHTML = `Couldn't download that link (${e.message}). Most sites block this — save the video to your phone (or screen-record it) and use <b>Choose videos</b>.`; });
+}
+const stWords = () => $('stWords').value.split(/[,;\n]/).map(s => s.trim().toLowerCase()).filter(Boolean);
 async function loadLearned() {
   try {
     WORDMAP = JSON.parse(localStorage.getItem(L_WORDS) || '{}');
@@ -7095,9 +7153,13 @@ async function loadLearned() {
 }
 function saveLearnedIndex() { try { localStorage.setItem(L_IDX, JSON.stringify(LEARNED.map(({ data, ...m }) => m))); localStorage.setItem(L_WORDS, JSON.stringify(WORDMAP)); } catch (e) {} }
 function renderTeach() {
-  const known = [...LEARNED.map(m => '🧠 ' + m.words[0]), ...Object.keys(WORDMAP).map(k => '🔗 ' + k)];
+  const known = [...LEARNED.filter(m => !m.study).map(m => '🧠 ' + m.words[0]), ...Object.keys(WORDMAP).map(k => '🔗 ' + k)];
   $('ttmKnown').innerHTML = known.length ? 'Your AI also knows: ' + known.map(k => `<button class="btn small" data-w="${k.slice(2).trim()}" style="margin:2px">${k}</button>`).join('') : '';
-  $('tchList').innerHTML = (LEARNED.length ? '<div class="sub">Taught moves</div>' : '') + LEARNED.map(m => `<div class="row" style="gap:6px"><label style="flex:1">🧠 <b>${m.words.join(', ')}</b> <span class="mini">${(m.n / 30).toFixed(1)}s</span></label><button class="btn small" data-try="${m.id}">▶ Try</button><button class="btn small" data-del="${m.id}">🗑</button></div>`).join('')
+  const studied = LEARNED.filter(m => m.study), moves = LEARNED.filter(m => !m.study);
+  const sumOf = m => { const L = m.data && m.data.learn; if (!L) return ''; const c = {}; for (const sg of L.segs) c[sg.type] = (c[sg.type] || 0) + 1; return [Object.entries(c).map(([t, v]) => v + ' ' + { straight: 'straight', hook: 'hook', upper: 'uppercut' }[t] + (v > 1 ? 's' : '')).join(', '), L.life && L.life.__bob ? Math.round(L.life.__bob.length / 30) + 's movement' : ''].filter(Boolean).join(' · '); };
+  const tp = studied.reduce((s0, m) => s0 + ((m.data && m.data.learn && m.data.learn.segs.length) || 0), 0);
+  $('tchList').innerHTML = (studied.length ? `<div class="sub">Studied videos <span class="mini">${studied.length} video${studied.length > 1 ? 's' : ''} · ${tp} real punch${tp === 1 ? '' : 'es'} learned</span></div>` : '') + studied.map(m => `<div class="row" style="gap:6px"><label style="flex:1">🎬 <b>${(m.src || m.name).slice(0, 30)}</b> <span class="mini">${sumOf(m)}${m.words && m.words.length ? ' · ' + m.words.join(', ') : ''}</span></label><button class="btn small" data-del="${m.id}">🗑</button></div>`).join('')
+    + (moves.length ? '<div class="sub">Taught moves</div>' : '') + moves.map(m => `<div class="row" style="gap:6px"><label style="flex:1">🧠 <b>${m.words.join(', ')}</b> <span class="mini">${(m.n / 30).toFixed(1)}s</span></label><button class="btn small" data-try="${m.id}">▶ Try</button><button class="btn small" data-del="${m.id}">🗑</button></div>`).join('')
     + (Object.keys(WORDMAP).length ? '<div class="sub">Word links</div>' : '') + Object.entries(WORDMAP).map(([k, v]) => `<div class="row" style="gap:6px"><label style="flex:1">🔗 "${k}" → "${v}"</label><button class="btn small" data-wdel="${k}">🗑</button></div>`).join('');
 }
 async function fillTeachSources() {
@@ -7133,6 +7195,32 @@ async function teachSave() {
 }
 $('ttmTeachBtn').onclick = () => { const b = $('teachBox'); b.hidden = !b.hidden; if (!b.hidden) { fillTeachSources(); renderTeach(); } };
 $('tchSave').onclick = teachSave;
+// ---- 👍 / 👎: rate made-up motion; it remembers which choices you liked (punch shapes, pace, which of your real punches) ----
+let LIKES = {}; try { LIKES = JSON.parse(localStorage.getItem('nocap-likes') || '{}'); } catch (e) {} S.setPrefs(LIKES);
+let RATED = {}; try { RATED = JSON.parse(localStorage.getItem('nocap-rated') || '{}'); } catch (e) {}
+function rateUI() {
+  const c = baseAnim && baseAnim.choices, show = !!(c && currentTakeId && ttmCaption); $('rateBar').hidden = !show; if (!show) return;
+  const r = RATED[currentTakeId]; $('rateUp').hidden = $('rateDown').hidden = !!r; $('rateAgain').hidden = !r;
+  $('rateTxt').textContent = r === 1 ? '👍 Got it — more like this' : r === -1 ? '👎 Got it — less like this' : 'Like this one?';
+}
+function rate(v) {
+  const c = baseAnim && baseAnim.choices; if (!c || !currentTakeId || RATED[currentTakeId]) return;
+  const add = (grp, k, d) => { if (!k) return; LIKES[grp] = LIKES[grp] || {}; LIKES[grp][k] = Math.max(-4, Math.min(4, (LIKES[grp][k] || 0) + d)); };
+  for (const k of c.forms || []) add('form', k, v * 0.7);
+  add('pace', c.pace, v * 0.5);
+  for (const k of c.learned || []) add('learned', k, v * 0.8);
+  LIKES.count = (LIKES.count || 0) + 1; RATED[currentTakeId] = v;
+  try { localStorage.setItem('nocap-likes', JSON.stringify(LIKES)); localStorage.setItem('nocap-rated', JSON.stringify(RATED)); } catch (e) {}
+  S.setPrefs(LIKES); rateUI();
+  toast(v > 0 ? `👍 Learned from ${LIKES.count} rating${LIKES.count > 1 ? 's' : ''} so far — more like this from now on.` : `👎 Noted — less like this. Tap ↻ Another for a new version.`);
+}
+$('rateUp').onclick = () => rate(1); $('rateDown').onclick = () => rate(-1);
+$('rateAgain').onclick = () => { if (lastPrompt) runTextMotion(lastPrompt); };
+setInterval(rateUI, 700); // follows whichever take is open
+$('stGo').onclick = () => $('stFiles').click();
+$('stFiles').onchange = () => { const fs = [...$('stFiles').files]; $('stFiles').value = ''; if (fs.length) studyVideos(fs, stWords(), $('stFollow').value); };
+$('stUrlGo').onclick = studyLink;
+$('stStop').onclick = () => { if (STUDY) { STUDY.cancel = true; cancelFlag = true; $('stMsg').textContent = 'Stopping after this part…'; } };
 try { $('ttmFeel').checked = localStorage.getItem('nocap-feel') === '1'; } catch (e) {}
 $('ttmFeel').onchange = () => { try { localStorage.setItem('nocap-feel', $('ttmFeel').checked ? '1' : '0'); } catch (e) {} if ($('ttmFeel').checked && !LEARNED.length) toast('Teach it a clip first (🧠 Teach my AI) — then made-up motion moves like your videos.', false, 6000); };
 $('wmAdd').onclick = () => { const f = $('wmFrom').value.trim().toLowerCase(), to = $('wmTo').value.trim().toLowerCase(); if (!f || !to) { toast('Fill in both words.', true); return; } WORDMAP[f] = to; saveLearnedIndex(); renderTeach(); $('wmFrom').value = $('wmTo').value = ''; toast(`Now "${f}" means "${to}".`); };
