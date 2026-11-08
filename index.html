@@ -120,7 +120,8 @@ main{display:grid;grid-template-rows:1fr auto;min-width:0;min-height:0}
 .vtools .btn{background:var(--glass)}
 .vtools .btn.on{border-color:var(--accent);color:var(--accent)}
 .physpanel{display:none;position:absolute;right:10px;top:44px;z-index:5;background:var(--glass);border:1px solid var(--line);border-radius:12px;padding:10px 12px;width:min(270px,88%);font-size:13px;backdrop-filter:blur(8px)}
-.physpanel.open{display:block}.physpanel .pp-row{display:flex;align-items:center;gap:8px;margin:6px 0}.physpanel .pp-row span{width:62px}.physpanel input[type=range]{flex:1}
+.physpanel.open{display:block}
+.physpanel,.modelmenu{overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:thin}.physpanel .pp-row{display:flex;align-items:center;gap:8px;margin:6px 0}.physpanel .pp-row span{width:62px}.physpanel input[type=range]{flex:1}
 .physpanel .pp-row b{min-width:26px;text-align:right}.physpanel .pp-parts{flex-wrap:wrap;gap:10px}.physpanel small{opacity:.7;display:block;margin-top:4px;line-height:1.3}
 .timeline{border-top:1px solid var(--line);background:var(--panel);padding:10px 16px;display:flex;align-items:center;gap:12px}
 .timeline input[type=range]{flex:1;width:auto}
@@ -2135,7 +2136,10 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   function ik2(A, T, L1, L2, pole) {
     const v = sub(T, A), d0 = len(v), dir = d0 > 1e-6 ? sc(v, 1 / d0) : [0, 0, 1], d = clamp(d0, Math.abs(L1 - L2) + 1e-3, (L1 + L2) * 0.999);
     const a = (L1 * L1 + d * d - L2 * L2) / (2 * d), h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
-    let pd = perp(pole, dir); if (len(pd) < 1e-5) pd = perp([0, -1, 0], dir); pd = norm(pd);
+    // which side the elbow / knee goes. When the hint lies almost along the limb (fist pulled up to the face while the hint
+    // says "elbow down") it says nothing and the elbow used to flip across the body; ease over to a forward elbow instead
+    const pn = norm(pole), pA = perp(pn, dir), pl = len(pA), fbv = perp([0, 0, 1], dir), wF = clamp((0.55 - pl) / 0.55, 0, 1);
+    let pd = len(fbv) > 1e-5 ? add(pA, sc(norm(fbv), wF * 0.8)) : pA; if (len(pd) < 1e-5) pd = perp([0, -1, 0], dir); pd = norm(pd);
     const E = add(add(A, sc(dir, a)), sc(pd, h)), Tt = add(A, sc(dir, d));
     return [norm(sub(E, A)), norm(sub(Tt, E))];
   }
@@ -2478,6 +2482,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const dirs = {}; for (const j in a.dirs) dirs[j] = slerpN(a.dirs[j], b.dirs[j] || a.dirs[j], w);
     const o = { dirs }; for (const k of ['hipsYaw', 'hipsPitch', 'hipsRoll', 'chestYaw', 'chestPitch', 'chestRoll', 'headPitch', 'headYaw', 'rootY', 'guard', 'ext', 'dip', 'shift', 'cover', 'pivotL', 'pivotR', 'plantL', 'plantR', 'shrL', 'shrR', 'proL', 'proR', 'extL', 'extR']) o[k] = (a[k] || 0) * (1 - w) + (b[k] || 0) * w;
     for (const S of ['L', 'R']) o['st' + S] = b['st' + S] && (b['ext' + S] || 0) > 0.001 ? b['st' + S] : a['st' + S] || b['st' + S]; // each arm keeps its own punch
+    o.form = (b.extL || b.extR) ? b.form : a.form || b.form;
     o.air = (a.air || 0) * (1 - w) + (b.air || 0) * w; return o; // (was switched off right at the top of a jump: a one-frame drop)
   }
   function textToMotion(text, fps = 30, seed = 0) {
@@ -2504,6 +2509,29 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         if (VARS[pick]) plan.splice(0, plan.length, ...VARS[pick]);
       }
     }
+    // one punch asked for ("left hook", "jab"): each new take sets it up a different way, cycling through them in order
+    // (the app picks seeds so pressing Generate again on the same words goes to the next one)
+    if (seed && style.boxing && !style.peekaboo && !plan.some(p => p.routine)) {
+      const hits = plan.filter(p => (MOVES[p.move] && MOVES[p.move].strike) || PUNCH_VARIANTS[p.move]), rest = plan.filter(p => !hits.includes(p) && p.move !== 'stance');
+      if (hits.length === 1 && !rest.length) {
+        let VJAB = false; const h = hits[0], sp = h.speed || 1, m = (move, side = null, step = null) => ({ move, side, step, speed: sp, secs: null }), same = { ...h };
+        const lead = m('jab'); if (h.move === 'jab') VJAB = true; // a jab is set up by... more jabs
+        const VARS = [null,
+          [m('stance'), lead, { ...h }].concat(VJAB ? [{ ...h }] : []),     // set it up with a jab (a jab: triple jab)
+          [m('stance'), m('slip'), { ...h }],                              // slip, then fire
+          [m('stance'), m('feint'), { ...h }],                             // feint, then the real one
+          [m('stance'), { ...h, step: 'fwd' }],                            // step in with it
+          [m('stance'), m('weave'), { ...h }],                             // bob & weave under, come back with it
+          [m('stance'), { ...h }, same],                                   // double up
+          [m('stance'), m('pullback'), { ...h, speed: sp * 1.1 }]];        // lean back, counter
+        const v = seed % 8, SPD = [1, 1.08, 1, 1.05, 1.12, 0.95, 1.1, 1.06];
+        if (VARS[v]) plan.splice(0, plan.length, ...VARS[v]); for (const p of plan) p.speed *= SPD[v];
+      }
+    }
+    // the punches themselves change shape from take to take: aimed higher / lower, a tighter or wider hook, shorter or
+    // longer reach, elbow flatter or more upright (the first take is the plain one)
+    if (seed) { const FORMS = [null, { aimY: 0.05, wide: 1.3, elbowUp: 0.3 }, { aimY: -0.06, wide: 0.8, reach: 0.95 }, { aimY: 0.02, wide: 1.15, reach: 1.02 }, { aimY: -0.03, wide: 0.9, elbowUp: -0.25, reach: 0.97 }];
+      let i = 0; for (const p of plan) if (MOVES[p.move] && MOVES[p.move].strike) { p.form = FORMS[(seed % 8 + i) % FORMS.length]; i++; } }
     for (const p of plan) { // punches: pick the lead or rear hand version (left / right depend on orthodox or southpaw)
       const V_ = PUNCH_VARIANTS[p.move]; if (!V_) continue;
       const arm = p.side === 'lead' ? 0 : p.side === 'rear' ? 1 : p.side === 'left' ? (style.south ? 1 : 0) : p.side === 'right' ? (style.south ? 0 : 1) : V_[2];
@@ -2550,6 +2578,33 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       if (pr) { const tq = qnorm(qmul(qFromTo(pr.d, d), pr.q)); if (A_.ok > 0.05) { const ang = 2 * Math.acos(Math.min(1, Math.abs(dot4(tq, abs)))), w = Math.min(1, ang > 1e-4 ? (A_.ok * 60 * Math.PI / 180) / ang : 1); q = qslerp(tq, abs, w); } else q = tq; } // follows the natural twist, at most 60° a frame (less near the one unclear direction): no wrist spins
       tr[key] = { q, d: d.slice() }; return q;
     };
+    // a real arm: the elbow is a hinge (it only bends one way), so the upper arm turns to put that hinge in the plane of
+    // the bend; the forearm can then only twist about +-95 deg against the upper arm (no human forearm turns further),
+    // aiming for the natural palm direction inside that range. Rest pose: bone along +-x, palm -y, the elbow bends towards +z.
+    const ELBOW_TWIST = 95 * Math.PI / 180;
+    const ARM_ROLL = 110 * Math.PI / 180; // how far the upper arm can roll in the shoulder socket
+    const armChain = (tr, S, sx, u, f, pf, Gsh) => {
+      u = norm(u); f = norm(f);
+      const Gfield = twistKeep(tr, S + 'Arm', sx, u, pf * 0.5), bend = Math.acos(clamp(dot(u, f), -1, 1));
+      let Gu = Gfield;
+      const fp = sub(f, sc(u, dot(u, f))), fl = len(fp);
+      if (fl > 1e-3) { // turn the upper arm so its bending direction (+z) points where the forearm goes
+        const z = qrot(Gfield, [0, 0, 1]), zp = norm(sub(z, sc(u, dot(u, z)))), want = sc(fp, 1 / fl);
+        const ang = Math.atan2(dot(cross(zp, want), u), dot(zp, want)), Gh = qnorm(qmul(axq(u, ang * 180 / Math.PI), Gfield));
+        const w = clamp((bend - 0.26) / 0.52, 0, 1); Gu = w <= 0 ? Gfield : qslerp(Gfield, Gh, w * w * (3 - 2 * w)); // nearly straight arm: no hinge to go by
+      }
+      if (Gsh) { // upper arm roll stays inside what a shoulder can do
+        const lq = qmul(qconj(Gsh), Gu), t = 2 * Math.atan2(sx * lq[0], lq[3]), tw = Math.atan2(Math.sin(t), Math.cos(t)), tc = clamp(tw, -ARM_ROLL, ARM_ROLL);
+        if (tc !== tw) Gu = qnorm(qmul(Gu, axq([sx, 0, 0], (tc - tw) * 180 / Math.PI)));
+      }
+      if (tr) { const pr = tr[S + 'ArmH']; if (pr) { const ang = 2 * Math.acos(Math.min(1, Math.abs(dot4(pr, Gu)))); if (ang > 1.05) Gu = qslerp(pr, Gu, 1.05 / ang); } tr[S + 'ArmH'] = Gu; } // at most 60 deg a frame
+      const Gb = qnorm(qmul(qFromTo(u, f), Gu)); // forearm straight off the hinge (no twist of its own)
+      const Gd = armQ(sx, f, pf).q, pb = qrot(Gb, [0, -1, 0]), pd = qrot(Gd, [0, -1, 0]);
+      let a = Math.atan2(dot(cross(pb, pd), f), dot(pb, pd)); // the twist that would give the natural palm
+      if (tr) { const pa = tr[S + 'Pro']; if (pa != null) { while (a - pa > Math.PI) a -= 2 * Math.PI; while (a - pa < -Math.PI) a += 2 * Math.PI; a = pa + clamp(a - pa, -1.05, 1.05); } }
+      a = clamp(a, -ELBOW_TWIST, ELBOW_TWIST); if (tr) tr[S + 'Pro'] = a;
+      return [Gu, qnorm(qmul(axq(f, a * 180 / Math.PI), Gb))];
+    };
     const torsoG = (P_, hy, tr) => {
       const Hq = qmul(qmul(axq([0, 1, 0], hy), axq([1, 0, 0], P_.hipsPitch || 0)), axq([0, 0, 1], P_.hipsRoll || 0));
       const Cq = qmul(Hq, qmul(axq([0, 1, 0], P_.chestYaw || 0), qmul(axq([1, 0, 0], P_.chestPitch || 0), axq([0, 0, 1], P_.chestRoll || 0))));
@@ -2557,7 +2612,8 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       for (const [S, sx] of [['Left', 1], ['Right', -1]]) {
         G[S + 'Shoulder'] = qmul(Cq, qmul(axq([0, 1, 0], -sx * (P_['pro' + S[0]] || 0)), axq([0, 0, 1], sx * (P_['shr' + S[0]] || 0)))); // collarbone: forward (reach) / up (shrug)
         const pf = (P_.palmFwd || {})[S] || 0;
-        G[S + 'Arm'] = qmul(Cq, twistKeep(tr, S + 'Arm', sx, P_.dirs[S + 'Arm'], pf * 0.5)); G[S + 'ForeArm'] = qmul(Cq, twistKeep(tr, S + 'ForeArm', sx, P_.dirs[S + 'ForeArm'], pf)); G[S + 'Hand'] = G[S + 'ForeArm'];
+        const [Gu, Gf] = armChain(tr, S, sx, P_.dirs[S + 'Arm'], P_.dirs[S + 'ForeArm'], pf, qmul(axq([0, 1, 0], -sx * (P_['pro' + S[0]] || 0)), axq([0, 0, 1], sx * (P_['shr' + S[0]] || 0))));
+        G[S + 'Arm'] = qmul(Cq, Gu); G[S + 'ForeArm'] = qmul(Cq, Gf); G[S + 'Hand'] = G[S + 'ForeArm'];
         G[S + 'UpLeg'] = qmul(Hq, qFromTo([0, -1, 0], P_.dirs[S + 'UpLeg'])); G[S + 'Leg'] = qmul(Hq, qFromTo([0, -1, 0], P_.dirs[S + 'Leg'])); G[S + 'Foot'] = axq([0, 1, 0], hy);
       }
       return { G, Hq, Cq };
@@ -2605,9 +2661,9 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         let tgt = gpos, pole = [sx * 0.35, -1, -0.25];
         const { st: strike_, e, over } = armSt(S);
         if (strike_ && e > 0.001) { const strike = strike_;
-          const aim = strike.body ? ST.body : ST.chin;
-          if (strike.type === 'straight') { tgt = lerp(gpos, add(shp, clampLen(sub(aim, shp), 0.97 * L, 0.99 * L)), e); pole = [sx * 0.5, -1, 0]; } // snaps straight through the target
-          else if (strike.type === 'hook') { const c = add(aim, [sx * 0.09, 0, -0.02]), end = add(shp, clampLen(sub(c, shp), 0.62 * L, 0.8 * L)); tgt = add(bez(gpos, add(end, [sx * 0.38, 0.06, -0.12]), end, e), sc([-sx, 0, -0.15], over * 1.3)); pole = [sx, strike.body ? -0.2 : 0.55, -0.3]; } // follows through across the target
+          const FM = P_.form || {}, aim = add(strike.body ? ST.body : ST.chin, [0, FM.aimY || 0, 0]), RC = FM.reach || 1, WD = FM.wide || 1; // this take's form of the punch
+          if (strike.type === 'straight') { tgt = lerp(gpos, add(shp, clampLen(sub(aim, shp), 0.97 * L * RC, 0.99 * L * RC)), e); pole = [sx * 0.5, -1 + (FM.elbowUp || 0), 0]; } // snaps straight through the target
+          else if (strike.type === 'hook') { const c = add(aim, [sx * 0.09, 0, -0.02]), end = add(shp, clampLen(sub(c, shp), 0.62 * L * RC, 0.8 * L * RC)); tgt = add(bez(gpos, add(end, [sx * 0.38 * WD, 0.06, -0.12 * WD]), end, e), sc([-sx, 0, -0.15], over * 1.3)); pole = [sx, (strike.body ? -0.2 : 0.55) + (FM.elbowUp || 0), -0.3]; } // follows through across the target
           else if (strike.type === 'upper') { const c = add(aim, [0, -0.06, -0.04]), end = add(shp, clampLen(sub(c, shp), 0.55 * L, 0.78 * L)); tgt = add(bez(gpos, add(lerp(gpos, end, 0.5), [0, -0.3, -0.05]), end, e), [0, over * 1.1, 0]); pole = [sx * 0.25, -1, -0.1]; }
           else if (strike.type === 'overhand') { const end = add(shp, clampLen(sub(add(aim, [sx * 0.04, 0.02, 0]), shp), 0.85 * L, 0.97 * L)); tgt = add(bez(gpos, add(lerp(gpos, end, 0.5), [sx * 0.25, 0.35, -0.05]), end, e), [0, -over * 1.4, over * 0.3]); pole = [sx * 0.8, 0.8, -0.2]; } // loops over the top
           else if (strike.type === 'parry') { tgt = add(gpos, sc([-sx * 0.16, 0.02, 0.14], e)); pole = [sx * 0.35, -1, -0.25]; }
@@ -2626,7 +2682,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       return P_;
     }
     for (let k = 0; k < n; k++) {
-      const tagP = (pl, P0) => { const st = (MOVES[pl.move] || {}).strike; if (!st) return P0; return { ...P0, ['ext' + st.arm[0]]: P0.ext || 0, ['st' + st.arm[0]]: st }; };
+      const tagP = (pl, P0) => { const st = (MOVES[pl.move] || {}).strike; if (!st) return P0; return { ...P0, ['ext' + st.arm[0]]: P0.ext || 0, ['st' + st.arm[0]]: st, form: pl.form || null }; };
       const t = k / fps, cur = samplePlan(plan, t); let P_ = tagP(cur.p, cur.pose);
       // smooth hand-over between moves
       if (cur.i > 0 && cur.lt < BLEND) { const prev = plan[cur.i - 1]; P_ = blendPose(tagP(prev, movePose(prev, prev.len)), P_, ss(cur.lt / BLEND)); }
@@ -2700,7 +2756,9 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     for (let k = 1; k < n; k++) for (let j = 0; j < locals[k].length; j++) { const a = locals[k - 1][j], b = locals[k][j]; if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0) locals[k][j] = b.map(v => -v); }
     const PRETTY = { shoulderroll: 'shoulder roll', pullback: 'lean back', soccerkick: 'football kick', lookaround: 'look around', headshake: 'shake head', sitdown: 'sit down', hitreact: 'take a hit', jacks: 'jumping jacks', fistpump: 'fist pump', siuu: 'Siuuu!', footdribble: 'football dribble', pointsky: 'point to the sky', chalktoss: 'chalk toss', nightnight: 'night night', armscross: 'arms crossed', boltpose: 'lightning bolt pose', alishuffle: 'Ali shuffle', handsdown: 'hands-down taunt', chestpound: 'chest pound', powerstance: 'power stance', beckon: 'come on', fadeaway: 'fadeaway' };
     const label = p => p.label || PRETTY[p.move] || (p.move === 'stepmove' ? 'step ' + ({ fwd: 'in', back: 'back', left: 'left', right: 'right' })[p.step || 'fwd'] : null) || (p.side && MOVES[p.move] && MOVES[p.move].side ? p.side + ' ' : '') + (p.move === 'turn' ? `turn ${p.turn > 0 ? 'left' : 'right'} ${Math.abs(p.turn)}°` : p.move) + (p.back ? ' backwards' : '') + (p.turnRate ? ' in a circle' : '');
-    return { rest, fps, n, rootPos, locals, contacts, hasHands: { Left: false, Right: false }, M: rest.M, unknown, plan: plan.map(label), styles: Object.keys(style).filter(k => style[k]), text, bikeTrack: bikeTrack.some(b => b.on) ? bikeTrack : null, bike: BIKE };
+    // where each punch lands (frame, arm, kind), for anything that wants to work with the punches later
+    const strikes = []; { let acc = 0; for (const p of plan) { const M_ = MOVES[p.move] || {}, st = M_.strike; if (st && M_.keys) { const cyc = M_.dur / (p.speed || 1), tp = M_.keys.length > 3 ? M_.keys[3][0] : 0.4; if (tp * cyc <= p.len + 1e-6) strikes.push({ k: Math.min(n - 1, Math.round((acc + tp * cyc) * fps)), arm: st.arm, type: st.type, body: !!st.body }); } acc += p.len; } }
+    return { rest, fps, n, rootPos, locals, contacts, hasHands: { Left: false, Right: false }, M: rest.M, unknown, plan: plan.map(label), strikes, styles: Object.keys(style).filter(k => style[k]), text, bikeTrack: bikeTrack.some(b => b.on) ? bikeTrack : null, bike: BIKE };
   }
 
   // cut an animation down to [a, b] seconds (relative to its own start)
@@ -4295,6 +4353,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <button class="btn primary" id="ttmGo">Create motion</button>
   <div class="mini" style="margin-top:4px">Tap again for a fresh variation of the same prompt · Enter = create</div>
   <div style="display:flex;gap:6px;margin-top:8px"><button class="btn" id="ttmTeachBtn" style="flex:1">🧠 Teach my AI</button></div>
+  <label class="row" style="margin-top:6px;gap:8px"><input type="checkbox" id="ttmFeel"> <span>🧠 Move like my videos <span class="mini">real punches and natural movement from the clips you taught</span></span></label>
   <div id="ttmKnown" class="mini" style="margin-top:6px"></div>
   <div id="teachBox" hidden style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
     <b>🧠 Teach your AI</b>
@@ -4367,8 +4426,10 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       </div>
     </div>
     <div class="erow2"><button class="ebtn" id="edClearKey" disabled>↺ Reset limb here</button><button class="ebtn" id="edClearAll">Clear all</button></div>
-    <div class="efix" style="display:flex;gap:6px;margin-top:8px"><input id="edFixTxt" type="text" enterkeyhint="done" placeholder="✨ Type a fix: “raise left arm a bit”, “bend right knee more throughout”" style="flex:1;min-width:0;padding:9px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.18);background:rgba(0,0,0,.25);color:inherit;font-size:16px"><button class="ebtn" id="edFixGo">Fix</button></div>
-    <div class="ehelp" id="edFixMsg" style="margin-top:4px">Only the limb you name changes. Say “throughout” for the whole clip, otherwise it fixes around this frame. Undo ↶ takes it back.</div>
+    <div class="erow2" style="margin-top:6px;flex-wrap:wrap;gap:6px"><select id="edCopyWhat" title="What to copy" style="flex:1;min-width:120px"><option value="joint">Picked joint</option><option value="limb" selected>Picked limb</option><option value="upper">Upper body</option><option value="lower">Hips + legs</option><option value="all">Whole body</option></select><button class="ebtn" id="edCopy" title="Copy the pose of these joints at this frame">📋 Copy</button><button class="ebtn" id="edCopyAdd" title="Add more joints to what you copied" disabled>➕ Add</button><button class="ebtn" id="edPaste" title="Paste onto this frame, blending in and out (no snapping)" disabled>📌 Paste here</button></div>
+    <div class="ehelp" id="edCopyMsg" style="margin-top:2px"></div>
+    <div class="efix" style="display:flex;gap:6px;margin-top:8px"><input id="edFixTxt" type="text" enterkeyhint="done" placeholder="✨ Type a fix — or leave empty and tap Fix to auto-repair the clip" style="flex:1;min-width:0;padding:9px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.18);background:rgba(0,0,0,.25);color:inherit;font-size:16px"><button class="ebtn" id="edFixGo">Fix</button></div>
+    <div class="ehelp" id="edFixMsg" style="margin-top:4px">Empty + Fix = 🩺 checks the whole clip and repairs impossible twists and glitches. Or type it: “raise left arm a bit”, “bend right knee more throughout”, “guard up”, “fix the arm twist”, “stop the shaking”. Undo ↶ takes it back.</div>
     <div class="emeta"><label>Blend changes over <input type="range" id="edSpread" min="0.1" max="2" step="0.1" value="0.5"></label><span id="edSpreadV">0.5s</span></div>
   </div>
 </div>
@@ -4948,7 +5009,15 @@ $('ttmClose').onclick = () => { $('ttmModal').style.display = 'none'; unlockPage
 $('ttmText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('ttmGo').click(); } });
 $('ttmGo').onclick = () => { const txt = $('ttmText').value.trim(); if (!txt) { toast('Type what the character should do.', true); return; } runTextMotion(txt); };
 function runTextMotion(txt, existingId, seed) {
-  if (seed == null) seed = existingId ? (ttmSeeds[existingId] || 0) : Math.floor(Math.random() * 1e6) + 1;
+  if (seed == null) {
+    if (existingId) seed = ttmSeeds[existingId] || 0;
+    else { // same words again -> the next version in the cycle (seed % 8 picks the version; the rest keeps each take unique)
+      let cyc = {}; try { cyc = JSON.parse(localStorage.getItem('nocap-ttmcycle') || '{}'); } catch (e) {}
+      const k = String(txt).trim().toLowerCase(), c = ((cyc[k] || 0) + 1) % 8; cyc[k] = c;
+      try { localStorage.setItem('nocap-ttmcycle', JSON.stringify(cyc)); } catch (e) {}
+      seed = (Math.floor(Math.random() * 1e5) + 1) * 8 + c;
+    }
+  }
   const tkey = 'ttm|' + txt + '|' + seed; let a;
   if (existingId && BAKE && BAKE.key === tkey && BAKE.anim) a = { ...BAKE.anim, rootPos: BAKE.anim.rootPos.map(r => r.slice()) }; // exactly as it was made
   else { try { a = smartTextMotion(txt, seed); } catch (e) { toast(e.message, true, 9000); return; } BAKE = { key: tkey, anim: { ...a, rootPos: a.rootPos.map(r => r.slice()) }, fresh: true }; }
@@ -5560,7 +5629,18 @@ $('pinBtn').onclick = () => { const on = document.body.classList.toggle('pinned'
 $('vview').addEventListener('click', e => { if (playing && e.target.closest('.vtools') == null) pause(); });
 $('speed').onchange = () => (vid.playbackRate = +$('speed').value);
 // ⚛️ physics panel
-$('tPhys').onclick = e => { e.stopPropagation(); $('physPanel').classList.toggle('open'); };
+// 3D view pop-outs (Physics, Props, Character): sit just under the buttons and scroll inside the view, one open at a time
+function fitPop(el) {
+  const view = el.closest('.view') || el.parentElement, tools = view && view.querySelector('.vtools'); if (!view) return;
+  const top = tools ? tools.offsetTop + tools.offsetHeight + 6 : 44;
+  el.style.top = top + 'px'; el.style.maxHeight = Math.max(140, view.clientHeight - top - 10) + 'px';
+}
+function togglePop(id) {
+  for (const o of ['physPanel', 'propsPanel', 'modelMenu']) if (o !== id && $(o)) $(o).classList.remove('open');
+  const el = $(id); el.classList.toggle('open'); if (el.classList.contains('open')) { fitPop(el); el.scrollTop = 0; }
+}
+addEventListener('resize', () => { for (const o of ['physPanel', 'propsPanel', 'modelMenu']) if ($(o) && $(o).classList.contains('open')) fitPop($(o)); });
+$('tPhys').onclick = e => { e.stopPropagation(); togglePop('physPanel'); };
 document.addEventListener('pointerdown', e => { if (!e.target.closest('#physPanel') && !e.target.closest('#tPhys')) $('physPanel').classList.remove('open'); });
 { let tm = null; const PSL = ['physStr', 'physBounce', 'physWobble', 'physSway', 'physWeight', 'physRagdoll']; const showP = () => { for (const id of PSL) $(id + 'V').textContent = $(id).value; $('tPhys').classList.toggle('on', $('physOn').checked); };
   const reapply = () => { showP(); clearTimeout(tm); tm = setTimeout(() => { if (baseAnim) { anim = applyEdits(baseAnim, EDITS); applyAt(curTime); drawContacts && drawContacts(); requestRender(); } }, 120); };
@@ -6280,6 +6360,32 @@ function edGroup(nm) { // the joints one edit can move together
   if (/^(Leg|Foot|ToeBase)$/.test(base)) return [side + 'UpLeg', side + 'Leg', side + 'Foot', side + 'ToeBase'];
   return ['Spine', 'Spine1', 'Spine2', 'Neck', 'Head', 'LeftShoulder', 'RightShoulder'];
 }
+// 📋 smart copy / paste pose: copy chosen joints as they look at one frame, paste them onto another. The pasted pose is set as
+// keys there, so it eases in and out over "Blend changes over" (no snapping); everything else keeps moving as it was.
+let ED_CLIP = null;
+function edScopeJoints(scope) {
+  const J = anim.rest.joints, names = J.map(j => j.name), nm = ED.sel >= 0 ? edName() : null, withFingers = list => { const out = new Set(list); for (const n2 of list) if (/Hand$/.test(n2)) names.filter(x => x.startsWith(n2) && x !== n2).forEach(x => out.add(x)); return [...out]; };
+  if (scope === 'all') return names;
+  if (scope === 'upper') return names.filter(x => /^(Spine|Spine1|Spine2|Neck|Head)$/.test(x) || /^(Left|Right)(Shoulder|Arm|ForeArm|Hand)/.test(x));
+  if (scope === 'lower') return names.filter(x => x === 'Hips' || /^(Left|Right)(UpLeg|Leg|Foot|ToeBase)/.test(x));
+  if (!nm) return [];
+  return scope === 'joint' ? withFingers([nm]) : withFingers(edGroup(nm));
+}
+function edCopyTake(add) {
+  const list = edScopeJoints($('edCopyWhat').value); if (!list.length) { toast('Tap a joint or limb first (or copy the whole body / upper body / legs).'); return; }
+  const raw = applyEditsRaw(baseAnim, EDITS), k = ED.k; if (!add || !ED_CLIP) ED_CLIP = { k, q: {} };
+  for (const n2 of list) { const j = edJ(n2); if (j != null) ED_CLIP.q[j] = raw.locals[k][j].slice(); }
+  const cnt = Object.keys(ED_CLIP.q).length; $('edPaste').disabled = false; $('edCopyAdd').disabled = false;
+  $('edCopyMsg').textContent = `📋 ${cnt} joint${cnt > 1 ? 's' : ''} copied from frame ${k + 1}. Go to another frame and tap Paste.`;
+}
+$('edCopy').onclick = () => edCopyTake(false);
+$('edCopyAdd').onclick = () => edCopyTake(true);
+$('edPaste').onclick = () => {
+  if (!ED_CLIP) return; edPush(); let n2 = 0;
+  for (const js in ED_CLIP.q) { const q = ED_CLIP.q[js]; edSetKey(+js, ED.k, new THREE.Quaternion(q[0], q[1], q[2], q[3])); n2++; }
+  edRefresh(); // (also refreshes the undo button)
+  $('edCopyMsg').textContent = `📌 Pasted ${n2} joint${n2 > 1 ? 's' : ''} onto frame ${ED.k + 1} — it blends in and out over ${(+EDITS.spread || 0.5).toFixed(1)}s. Undo ↶ takes it back.`;
+};
 $('edClearKey').onclick = () => {
   if (ED.sel < 0) return; const nm = edName(); edPush();
   if (ED.apply === 'layer') { for (const n2 of edGroup(nm)) { const j = edJ(n2); if (j != null && EDITS.layer) delete EDITS.layer[j]; } if (nm === 'Hips' || /UpLeg$/.test(nm)) delete EDITS.layerRoot; }
@@ -6295,6 +6401,61 @@ $('edClearAll').onclick = () => {
   if (Date.now() - edClearArm > 3000) { edClearArm = Date.now(); $('edClearAll').textContent = 'Tap again to clear'; setTimeout(() => ($('edClearAll').textContent = 'Clear all'), 3000); return; }
   edPush(); EDITS = { keys: {}, root: {}, spread: EDITS.spread || 0.5, pinFeet: EDITS.pinFeet, pinSide: EDITS.pinSide, pinFrame: EDITS.pinFrame, lockRot: EDITS.lockRot }; $('edClearAll').textContent = 'Clear all'; ED.dial = null; edRefresh();
 };
+// ----- 🩺 the doctor: finds what's physically wrong in the clip and repairs it (as undoable edit keys) -----
+// * twists no human joint can do (forearm / upper arm / thigh / shin / neck... rolled round past their range)
+// * glitches: a joint snapping much further in one frame than it moves on the frames either side (tracking flicks)
+const DOC_TWIST = { ForeArm: 120, Arm: 120, Hand: 60, UpLeg: 55, Leg: 35, Foot: 40, Spine: 40, Spine1: 40, Spine2: 40, Neck: 60, Head: 70 };
+function docAxis(rest, j) { const J = rest.joints, c = J.findIndex(x => x.parent === j); if (c < 0) return null; const o = J[c].offset, l = Math.hypot(...o); return l > 1e-6 ? o.map(v => v / l) : null; }
+function docTwist(q, a) { const p = q[0] * a[0] + q[1] * a[1] + q[2] * a[2]; return Math.atan2(Math.sin(2 * Math.atan2(p, q[3])), Math.cos(2 * Math.atan2(p, q[3]))); }
+function docSetTwist(q, a, t) { const p = q[0] * a[0] + q[1] * a[1] + q[2] * a[2]; let tw = [a[0] * p, a[1] * p, a[2] * p, q[3]]; const l = Math.hypot(...tw); tw = l < 1e-9 ? [0, 0, 0, 1] : tw.map(v => v / l);
+  const sw = S.qmul(q, S.qconj(tw)), h = t / 2; return S.qnorm(S.qmul(sw, [a[0] * Math.sin(h), a[1] * Math.sin(h), a[2] * Math.sin(h), Math.cos(h)])); }
+const qAng = (x, y) => 2 * Math.acos(Math.min(1, Math.abs(x[0] * y[0] + x[1] * y[1] + x[2] * y[2] + x[3] * y[3])));
+function doctor(what = { twist: true, snap: true }) {
+  if (!baseAnim || !ED.rig) return 'Open a clip first.';
+  const raw = applyEditsRaw(baseAnim, EDITS), rest = raw.rest, J = rest.joints, n = raw.n, L = raw.locals.map(l => l.map(q => q.slice())), changed = new Map(), found = { twist: 0, snap: 0 }, where = new Set();
+  const mark = (j, k) => { if (!changed.has(j)) changed.set(j, new Set()); changed.get(j).add(k); where.add(J[j].name.replace(/^(Left|Right)/, m => m.toLowerCase() + ' ')); };
+  if (what.twist) for (let j = 0; j < J.length; j++) {
+    const base = J[j].name.replace(/^(Left|Right)/, ''), lim = DOC_TWIST[base]; if (!lim) continue; const a = docAxis(rest, j); if (!a) continue; const LIM = lim * Math.PI / 180;
+    for (let k = 0; k < n; k++) { const t = docTwist(L[k][j], a); if (Math.abs(t) > LIM) { L[k][j] = docSetTwist(L[k][j], a, Math.sign(t) * LIM); mark(j, k); found.twist++; } }
+  }
+  if (what.snap) for (let j = 0; j < J.length; j++) {
+    if (/Hand.+/.test(J[j].name)) continue; // fingers: leave
+    const d = k => qAng(L[k - 1][j], L[k][j]);
+    for (let k = 2; k < n - 2; k++) {
+      const dk = d(k), around = (d(k - 1) + d(k + 1)) / 2;
+      if (dk > 0.8 && dk > 3 * around + 0.25) { // one frame jumps far more than its neighbours: bridge it smoothly
+        const a0 = Math.max(0, k - 3), b0 = Math.min(n - 1, k + 2);
+        for (let q = a0 + 1; q < b0; q++) { const u = (q - a0) / (b0 - a0), w = u * u * (3 - 2 * u); L[q][j] = S.qslerp(L[a0][j], L[b0][j], w); mark(j, q); }
+        found.snap++; k = b0;
+      }
+    }
+  }
+  if (!changed.size) return '✓ Checked the whole clip — nothing impossible or glitchy found.';
+  edPush();
+  for (const [j, ks] of changed) for (const k of ks) { const q = L[k][j]; edSetKey(j, k, new THREE.Quaternion(q[0], q[1], q[2], q[3])); }
+  ED.dial = null; edRefresh();
+  const parts = []; if (found.twist) parts.push(`${found.twist} over-twisted joint pose${found.twist > 1 ? 's' : ''}`); if (found.snap) parts.push(`${found.snap} glitch${found.snap > 1 ? 'es' : ''}`);
+  const list = [...where].slice(0, 6).join(', ') + (where.size > 6 ? '…' : '');
+  return `✓ Fixed ${parts.join(' and ')} (${list}). Undo ↶ takes it back.`;
+}
+// words that mean "something's wrong, sort it out" rather than "move this limb"
+function fixIntent(t) {
+  t = ' ' + t.toLowerCase() + ' ';
+  if (/\b(twist|twisted|backwards?|wrong way|inside out|flipped|flip|upside down|can'?t (even )?(twist|bend|turn)|impossible|unnatural|not human|broken (arm|wrist|elbow|leg|knee))\b/.test(t) && !/\b(more|less|left|right)\b.*\b(twist)\b/.test(t)) return { twist: true, snap: false };
+  if (/\b(shak\w*|jitter\w*|glitch\w*|snap\w*|flick\w*|jump(s|y|ing)? about|twitch\w*|spaz\w*|stutter\w*|jerk\w*|wobbl\w*)\b/.test(t)) return { twist: false, snap: true };
+  if (/^\s*(fix( it| this| everything| all| the clip| the animation)?|repair|clean( it)? up|sort it( out)?|make it (right|better|look right|realistic|natural)|it looks? (wrong|weird|broken|off)|looks? (wrong|weird|broken|off)|auto ?fix|doctor)\s*$/.test(t)) return { twist: true, snap: true };
+  return null;
+}
+// friendlier phrases turned into the limb commands the fixer already knows
+function fixRewrite(t) {
+  return t.replace(/\b(guard up|hands up|keep (his |her |the )?hands up|protect (his |her )?face)\b/gi, 'raise both hands a lot and bend both elbows more')
+    .replace(/\b(stand(s|ing)? (up )?(straight|tall)|stop (leaning|slouching|hunching))\b/gi, 'lean back a bit')
+    .replace(/\b(relax (his |her |the )?shoulders|drop (his |her |the )?shoulders)\b/gi, 'lower both shoulders a bit')
+    .replace(/\b(chin down|tuck (his |her |the )?chin)\b/gi, 'nod head down a bit')
+    .replace(/\b(bend (his |her |the )?knees|sit (lower|down more)|lower stance|get lower)\b/gi, 'bend both knees more')
+    .replace(/\b(wider stance|feet (wider|apart))\b/gi, 'move both legs out a bit')
+    .replace(/\b(narrower stance|feet (closer|together))\b/gi, 'move both legs in a bit');
+}
 // ----- ✨ text fixes: type what to change, only that limb moves (undoable) -----
 const FIX_PART = [
   [/\b(upper ?arms?|arms?|shoulders?)\b/, 'Arm'], [/\b(fore ?arms?|elbows?|lower ?arms?)\b/, 'ForeArm'], [/\b(hands?|wrists?|fists?|gloves?)\b/, 'Hand'],
@@ -6398,7 +6559,12 @@ function fixApply(txt) {
   const nice = [...new Set(done.map(n => { const S = n.match(/^(Left|Right)/); return (S ? S[1].toLowerCase() + ' ' : '') + (NICE[n.replace(/^(Left|Right)/, '')] || n); }))].join(', ');
   return '✓ Changed ' + nice + (P.scope === 'layer' ? ' across the whole clip.' : ' around this frame.') + ' Undo ↶ takes it back.';
 }
-$('edFixGo').onclick = () => { const v = $('edFixTxt').value.trim(); if (!v) return; const msg = fixApply(v); $('edFixMsg').textContent = msg; if (msg[0] === '✓') $('edFixTxt').value = ''; };
+$('edFixGo').onclick = () => {
+  const v = $('edFixTxt').value.trim(), intent = v ? fixIntent(v) : { twist: true, snap: true }; // empty box = check the whole clip
+  let msg = intent ? doctor(intent) : fixApply(fixRewrite(v));
+  if (!intent && msg[0] !== '✓' && v) { const i2 = fixIntent('fix it'); if (/\b(arm|wrist|elbow|shoulder|leg|knee|hand|foot|neck|head)\b/i.test(v) && /\b(wrong|weird|off|bad|messed|broken)\b/i.test(v)) msg = doctor(i2); }
+  $('edFixMsg').textContent = msg; if (msg[0] === '✓') $('edFixTxt').value = '';
+};
 $('edFixTxt').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('edFixGo').click(); } });
 
 document.addEventListener('keydown', e => {
@@ -6587,7 +6753,7 @@ async function fillCharMenu() {
   $('mmList').innerHTML = items.map(([id, nm]) => `<button data-id="${id}" class="${id === cur ? 'cur' : ''}">${nm}${id === cur ? ' ✓' : ''}</button>`).join('') + (list.length ? '' : '<small style="display:block;opacity:.7;padding:4px 8px">The ready-made characters arrive with the next app update.</small>');
 }
 $('mmList').onclick = e => { const b = e.target.closest('button'); if (!b) return; $('modelMenu').classList.remove('open'); pickChar(b.dataset.id); };
-$('tModel').onclick = e => { e.stopPropagation(); fillCharMenu(); $('modelMenu').classList.toggle('open'); };
+$('tModel').onclick = e => { e.stopPropagation(); fillCharMenu(); togglePop('modelMenu'); };
 $('modelMenu').onclick = e => e.stopPropagation();
 document.addEventListener('click', () => $('modelMenu').classList.remove('open'));
 $('mmLoad').onclick = () => { $('modelMenu').classList.remove('open'); $('modelFile').click(); };
@@ -6756,7 +6922,7 @@ function fillProps() {
   $('propList').innerHTML = Object.entries(PROP_INFO).map(([k, nm]) => `<button class="propbtn${k === cur ? ' on' : ''}" data-k="${k}">${nm}${k === 'auto' && auto !== 'none' ? ' <small>(' + PROP_INFO[auto].split(' ')[0] + ')</small>' : ''}</button>`).join('');
   $('tProps').classList.toggle('on', (cur === 'auto' ? auto : cur) !== 'none');
 }
-$('tProps').onclick = e => { e.stopPropagation(); fillProps(); $('propsPanel').classList.toggle('open'); $('physPanel').classList.remove('open'); };
+$('tProps').onclick = e => { e.stopPropagation(); fillProps(); togglePop('propsPanel'); };
 $('propList').onclick = e => { const b = e.target.closest('button'); if (!b) return; $('propMode').value = b.dataset.k; $('propMode').dispatchEvent(new Event('change')); fillProps(); applyAt(curTime); requestRender(); };
 document.addEventListener('pointerdown', e => { if (!e.target.closest('#propsPanel') && !e.target.closest('#tProps')) $('propsPanel').classList.remove('open'); });
 
@@ -6815,7 +6981,93 @@ function stitchPieces(pieces) {
   const r0 = rootPos[0], rp = rootPos.map(r => [r[0] - r0[0], r[1], r[2] - r0[2]]);
   return { rest, fps: 30, n, locals, rootPos: S.floorFinder(rest, locals, rp, contacts, M, 30, true), contacts, M, hasHands: { Left: false, Right: false } };
 }
+// ---- 🧠 learning from your videos: real punches + the natural "life" of your movement ----
+// When you teach a clip, it's read: every punch in it is found and sorted (jab / cross = straight, hook, uppercut, by which arm),
+// and the small natural movement on top of the big moves (bounce, sway, breathing, head and shoulder motion) is kept.
+// With "Move like my videos" on, made-up motion borrows them: each generated punch blends into one of your real ones of the
+// same kind, lined up on the moment it lands, and the life layer runs underneath everything.
+function learnAnimOf(d) { return { rest: d.rest, n: d.n, fps: 30, locals: d.locals, rootPos: d.rootPos, M: d.M }; }
+function classifyPunch(a, F, p) {
+  const ix = a.rest.index, S_ = p.side, sh = ix[S_ + 'Arm'], el = ix[S_ + 'ForeArm'], ha = ix[S_ + 'Hand'], k = p.k, fps = a.fps;
+  const u = VA.sub(F[k].pos[el], F[k].pos[sh]), f = VA.sub(F[k].pos[ha], F[k].pos[el]);
+  const elbow = 180 - Math.acos(Math.max(-1, Math.min(1, (u[0] * f[0] + u[1] * f[1] + u[2] * f[2]) / (VA.len(u) * VA.len(f) || 1)))) * 180 / Math.PI;
+  const k0 = Math.max(0, k - Math.round(0.15 * fps)), mv = VA.sub(F[k].pos[ha], F[k0].pos[ha]), up = mv[1], flat = Math.hypot(mv[0], mv[2]);
+  if (elbow > 140) return 'straight';
+  if (up > 0.6 * flat && up > 0.06) return 'upper';
+  return 'hook';
+}
+function analyzeLearned(d) {
+  if (d.learn) return d.learn;
+  const a = learnAnimOf(d), n = a.n, segs = [];
+  try { const { F, peaks } = punchPeaks(a), ix = a.rest.index;
+    for (const p of peaks) { // keep only clean punches: the arm never jumps more than 60 deg between two frames around it
+      const js = [p.side + 'Arm', p.side + 'ForeArm', p.side + 'Hand'].map(nm => ix[nm]); let bad = false;
+      for (let k = Math.max(1, p.k - 10); k <= Math.min(n - 1, p.k + 10) && !bad; k++) for (const j of js) { const x = d.locals[k][j], y = d.locals[k - 1][j]; if (2 * Math.acos(Math.min(1, Math.abs(x[0] * y[0] + x[1] * y[1] + x[2] * y[2] + x[3] * y[3]))) > 1.05) bad = true; }
+      if (!bad && p.k - 9 >= 0 && p.k + 10 < n) segs.push({ type: classifyPunch(a, F, p), arm: p.side, k: p.k }); } } catch (e) {}
+  // life layer: what's left of each body joint after smoothing out the big moves (gaussian ~0.3 s)
+  const J = a.rest.joints, LIFE = ['Spine', 'Spine1', 'Spine2', 'Neck', 'Head', 'LeftShoulder', 'RightShoulder'], life = {}, sig = 9, rad = 27;
+  const smoothQ = j => { const out = []; for (let k = 0; k < n; k++) { let acc = [0, 0, 0, 0], ref = d.locals[k][j]; for (let q = Math.max(0, k - rad); q <= Math.min(n - 1, k + rad); q++) { const w = Math.exp(-((q - k) ** 2) / (2 * sig * sig)), x = d.locals[q][j], s0 = x[0] * ref[0] + x[1] * ref[1] + x[2] * ref[2] + x[3] * ref[3] < 0 ? -1 : 1; for (let c = 0; c < 4; c++) acc[c] += w * s0 * x[c]; } const l = Math.hypot(...acc) || 1; out.push(acc.map(v => v / l)); } return out; };
+  if (n > 20) {
+    for (const nm of LIFE) { const j = a.rest.index[nm]; if (j == null) continue; const sm = smoothQ(j); life[nm] = d.locals.map((l, k) => S.qmul(S.qconj(sm[k]), l[j]).map(v => Math.round(v * 1e4) / 1e4)); }
+    const ys = d.rootPos.map(r => r[1]), bob = ys.map((y, k) => { let s0 = 0, w0 = 0; for (let q = Math.max(0, k - rad); q <= Math.min(n - 1, k + rad); q++) { const w = Math.exp(-((q - k) ** 2) / (2 * sig * sig)); s0 += w * ys[q]; w0 += w; } return Math.round((y - s0 / w0) * 1e4) / 1e4; });
+    life.__bob = bob;
+  }
+  d.learn = { segs, life, n }; return d.learn;
+}
+// learned bone pointing, generated twist: the swing that takes the generated bone onto your real one (twist left out, so two
+// different twist conventions can't flip the arm), capped at 150 deg (anything more is a tracking glitch)
+function swingTo(gen, real, axis) {
+  const d = S.qmul(S.qconj(gen), real), p = d[0] * axis[0] + d[1] * axis[1] + d[2] * axis[2];
+  let tw = [axis[0] * p, axis[1] * p, axis[2] * p, d[3]]; const tl = Math.hypot(...tw); tw = tl < 1e-6 ? [0, 0, 0, 1] : tw.map(v => v / tl);
+  let sw = S.qmul(d, S.qconj(tw)); if (sw[3] < 0) sw = sw.map(v => -v);
+  const ang = 2 * Math.acos(Math.min(1, sw[3])); if (ang > 2.6) return null;
+  return S.qnorm(S.qmul(gen, sw));
+}
+function feelOn() { return !!($('ttmFeel') && $('ttmFeel').checked); }
+function applyLearnedFeel(a, prompt, rnd) {
+  const pool = LEARNED.filter(m => m.data && m.data.n > 5).map(m => ({ m, L: analyzeLearned(m.data) })); if (!pool.length) return a;
+  const out = { ...a, locals: a.locals.map(l => l.slice()), rootPos: a.rootPos.map(r => r.slice()) }, ix = a.rest.index, n = a.n, used = [];
+  // 1) real punches
+  const segAll = pool.flatMap(({ m, L }) => L.segs.map(s0 => ({ ...s0, m }))); let swapped = 0;
+  if (segAll.length) {
+    let { F, peaks } = punchPeaks(a);
+    if (a.strikes && a.strikes.length) { // made-up motion knows its own punches: use them (the side is whichever fist is out further then)
+      peaks = a.strikes.filter(st => st.type === 'straight' || st.type === 'hook' || st.type === 'upper').map(st => { const f = F[st.k], ext = s0 => VA.len(VA.sub(f.pos[ix[s0 + 'Hand']], f.pos[ix[s0 + 'Arm']]));
+        return { k: st.k, side: ext('Left') > ext('Right') ? 'Left' : 'Right', type: st.type }; }); }
+    for (const p of peaks) {
+      const type = p.type || classifyPunch(a, F, p); let c = segAll.filter(s0 => s0.type === type && s0.arm === p.side); if (!c.length) continue;
+      const sg = c[Math.floor(rnd() * c.length)], d = sg.m.data, map = a.rest.joints.map(j => d.rest.index[j.name]);
+      const chain = [p.side + 'Shoulder', p.side + 'Arm', p.side + 'ForeArm', p.side + 'Hand'].map(nm => ix[nm]).filter(j => j != null);
+      const fingers = a.rest.joints.map((j, i) => j.name.startsWith(p.side + 'Hand') && j.name !== p.side + 'Hand' ? i : -1).filter(i => i >= 0);
+      const spine = ['Spine', 'Spine1', 'Spine2'].map(nm => ix[nm]).filter(j => j != null);
+      const wb = Math.round(0.3 * 30), wa = Math.round(0.32 * 30);
+      for (let k = Math.max(0, p.k - wb); k <= Math.min(n - 1, p.k + wa); k++) {
+        const jk = sg.k + (k - p.k); if (jk < 0 || jk >= d.n) continue;
+        const u = k <= p.k ? (k - (p.k - wb)) / (wb * 0.6) : ((p.k + wa) - k) / (wa * 0.6), w = Math.max(0, Math.min(1, u)), ww = w * w * (3 - 2 * w);
+        for (const j of chain) { if (map[j] == null) continue; const ch = a.rest.joints.findIndex(x => x.parent === j), ax = ch >= 0 ? VA.sc(a.rest.joints[ch].offset, 1 / (VA.len(a.rest.joints[ch].offset) || 1)) : [p.side === 'Left' ? 1 : -1, 0, 0];
+          const tgt = swingTo(out.locals[k][j], d.locals[jk][map[j]], ax); if (tgt) out.locals[k][j] = S.qslerp(out.locals[k][j], tgt, ww); }
+        for (const j of spine) if (map[j] != null) out.locals[k][j] = S.qslerp(out.locals[k][j], d.locals[jk][map[j]], ww * 0.45);
+      }
+      swapped++; if (!used.includes(sg.m.name)) used.push(sg.m.name);
+    }
+  }
+  // 2) the life layer: borrowed from the taught clip whose words best match the prompt (any clip if none match)
+  const toks = tToks(prompt).map(tStem), best = pool.map(x => ({ ...x, s: x.m.words.flatMap(w => tToks(w)).map(tStem).filter(w => toks.includes(w)).length + (x.L.life.__bob ? 0.1 : -9) })).sort((x, y) => y.s - x.s)[0];
+  if (best && best.L.life.__bob) {
+    const lf = best.L.life, ln = lf.__bob.length, off = Math.floor(rnd() * ln);
+    for (let k = 0; k < n; k++) { const q = (k + off) % ln;
+      for (const nm in lf) { if (nm === '__bob') continue; const j = ix[nm]; if (j == null) continue; out.locals[k][j] = S.qmul(out.locals[k][j], lf[nm][q]); }
+      out.rootPos[k][1] += lf.__bob[q]; }
+    if (!used.includes(best.m.name)) used.push(best.m.name);
+  }
+  if (used.length) out.plan = [...(a.plan || []), `🧠 moves like: ${used.join(', ')}${swapped ? ` (${swapped} real punch${swapped > 1 ? 'es' : ''})` : ''}`];
+  return out;
+}
 function smartTextMotion(txt0, seed) {
+  const r0 = smartTextMotion0(txt0, seed);
+  return feelOn() && LEARNED.length ? applyLearnedFeel(r0, txt0, tRand(seed * 40503 + 7)) : r0;
+}
+function smartTextMotion0(txt0, seed) {
   const txt = applyWordMap(txt0);
   if (!LEARNED.length) return S.textToMotion(txt, 30, seed);
   const steps = txt.split(/\s*(?:,|;|\band then\b|\bthen\b|\bfollowed by\b|\bafter that\b)\s*/i).map(s => s.trim()).filter(Boolean);
@@ -6871,13 +7123,18 @@ async function teachSave() {
     for (let i = 0; i < n; i++) { const smp = S.sample(cut, i / 30); locals.push(smp.locals.map(q => q.map(q4))); rootPos.push(smp.root.map(q4)); }
     const r0 = rootPos[0]; for (const r of rootPos) { r[0] = q4(r[0] - r0[0]); r[2] = q4(r[2] - r0[2]); }
     const id = Date.now(), data = { rest: cut.rest, M: cut.M || null, n, locals, rootPos };
-    const c = await caches.open('nocap-learned'); await c.put('/m/' + id, new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } }));
+    const c = await caches.open('nocap-learned');
+    const L = analyzeLearned(data), cnt = {}; for (const sg of L.segs) cnt[sg.type] = (cnt[sg.type] || 0) + 1;
+    const found = Object.entries(cnt).map(([t, c]) => `${c} ${{ straight: 'straight punch', hook: 'hook', upper: 'uppercut' }[t]}${c > 1 ? 'es'.slice(t === 'straight' ? 0 : 1) : ''}`).join(', ');
+    await c.put('/m/' + id, new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } }));
     LEARNED.push({ id, name: words[0], words, n, data }); saveLearnedIndex(); renderTeach();
-    $('tchWords').value = ''; toast(`Learned "${words[0]}". Try a prompt like "${words[0]}, then ${words[0]}".`);
+    $('tchWords').value = ''; toast(`Learned "${words[0]}"${found ? ' — found ' + found : ''} and how you move. Turn on "Move like my videos" so made-up motion uses it.`, false, 7000);
   } catch (e) { console.error(e); toast('Could not learn that: ' + e.message, true); }
 }
 $('ttmTeachBtn').onclick = () => { const b = $('teachBox'); b.hidden = !b.hidden; if (!b.hidden) { fillTeachSources(); renderTeach(); } };
 $('tchSave').onclick = teachSave;
+try { $('ttmFeel').checked = localStorage.getItem('nocap-feel') === '1'; } catch (e) {}
+$('ttmFeel').onchange = () => { try { localStorage.setItem('nocap-feel', $('ttmFeel').checked ? '1' : '0'); } catch (e) {} if ($('ttmFeel').checked && !LEARNED.length) toast('Teach it a clip first (🧠 Teach my AI) — then made-up motion moves like your videos.', false, 6000); };
 $('wmAdd').onclick = () => { const f = $('wmFrom').value.trim().toLowerCase(), to = $('wmTo').value.trim().toLowerCase(); if (!f || !to) { toast('Fill in both words.', true); return; } WORDMAP[f] = to; saveLearnedIndex(); renderTeach(); $('wmFrom').value = $('wmTo').value = ''; toast(`Now "${f}" means "${to}".`); };
 $('tchList').onclick = async e => {
   const b = e.target.closest('button'); if (!b) return;
