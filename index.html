@@ -1110,6 +1110,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       rest.headFwd = [0, Math.sin(pm), Math.cos(pm)];
     }
     let locals = applyLimits(rest, forearmTwistFix(rest, P.map((p, k) => solveFrame(p, HL && !(off && off.relax.Left[k] > 0.5) ? HL[k] : null, HR && !(off && off.relax.Right[k] > 0.5) ? HR[k] : null, rest)), fps, HL, HR), { ...opt, hasHand: { Left: !!HL, Right: !!HR } });
+    if (opt.smartHands && (HL || HR)) locals = smartHands(rest, locals, P, HL, HR, piF, opt, fps, off);
     if (off && opt.armPose === 'guard') for (const S of ['Left', 'Right']) locals.forEach((l, k) => { if (off.relax[S][k] > 0.5) fingerCurl(rest, l, S, 'fist'); }); // 🥊 guard = fists
     // keep quaternion hemispheres continuous
     for (let k = 1; k < n; k++) for (let j = 0; j < locals[k].length; j++) {
@@ -1305,6 +1306,55 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       rootPos = deslideRoot(FLf, rootPos, 0, fps);
     }
     return { rest, fps, n, rootPos, locals, contacts: C, hasHands: { Left: !!HL, Right: !!HR }, M, fov: opt.fov };
+  }
+
+  // ---- Smart hands: only trust the hand AI where it can really see the hand ----
+  // A hand only a few pixels big in the picture (a small person, a phone recording of a video) gives the finger AI almost nothing to
+  // go on: fingers splay and the wrist flicks about. Each frame's hand reading is scored; where it can't be trusted the wrist follows
+  // the forearm and the fingers make a natural shape (fists in a fight stance, relaxed otherwise), blended in smoothly.
+  function smartHands(rest, locals, P, HL, HR, piF, opt, fps, off) {
+    const n = locals.length, ix = rest.index;
+    const IDS = { Left: { wr: 15, ix: 19, pk: 17, sh: 11, el: 13 }, Right: { wr: 16, ix: 20, pk: 18, sh: 12, el: 14 } };
+    // fight stance? (hands up by the chin / chest most of the time) -> fists
+    const torso = median(P.map(p => len(sub(mid(p[11], p[12]), mid(p[23], p[24]))))) || 0.5;
+    const up = P.map(p => { const sy = (p[11][1] + p[12][1]) / 2; return (p[15][1] > sy - 0.45 * torso ? 1 : 0) + (p[16][1] > sy - 0.45 * torso ? 1 : 0); });
+    const guard = up.filter(v => v >= 1).length / Math.max(1, n) > 0.4;
+    const fm = opt.fingerMode === 'fist' || opt.fingerMode === 'relaxed' ? opt.fingerMode : guard ? 'fist' : 'relaxed';
+    const trust = {};
+    for (const S of ['Left', 'Right']) {
+      const H = S === 'Left' ? HL : HR, I = IDS[S];
+      trust[S] = P.map((p, k) => {
+        if (!H || !H[k]) return 0;
+        if (off && off.relax[S][k] > 0.5) return 0;
+        let t = 1;
+        if (piF && piF[k]) { // how big is the hand in the picture?
+          const q = piF[k], w = q[I.wr], m = mid(q[I.ix], q[I.pk]), px = Math.hypot(m[0] - w[0], m[1] - w[1]);
+          if ((w[2] ?? 1) < 0.5) t = 0;
+          t = Math.min(t, clamp((px - 14) / 14, 0, 1)); // under ~14 px: not usable; ~28 px and up: fully usable
+        }
+        // does the hand AI agree with where the body AI says the hand points?
+        const hd = sub(H[k][9], H[k][0]), pd = sub(mid(p[I.ix], p[I.pk]), p[I.wr]);
+        if (len(hd) > 1e-6 && len(pd) > 1e-6) { const c = dot(norm(hd), norm(pd)); t = Math.min(t, clamp((c - 0.2) / 0.5, 0, 1)); } // > ~78° apart = wrong
+        // the hand can't bend further than a real wrist allows relative to the forearm
+        const fa = sub(p[I.wr], p[I.el]); if (len(fa) > 1e-6 && len(hd) > 1e-6) { const c = dot(norm(fa), norm(hd)); t = Math.min(t, clamp((c + 0.2) / 0.5, 0, 1)); }
+        return t;
+      });
+      // short good moments inside long bad stretches are luck, not tracking: smooth the trust over ~0.25 s
+      trust[S] = loess(trust[S], Math.max(2, Math.round(0.25 * fps))).map(v => clamp(v, 0, 1));
+    }
+    if (trust.Left.every(v => v > 0.98) && trust.Right.every(v => v > 0.98)) return locals;
+    // the same frames solved without the hand AI
+    const B = applyLimits(rest, forearmTwistFix(rest, P.map(p => solveFrame(p, null, null, rest)), fps, null, null), { ...opt, fingerMode: fm, hasHand: { Left: false, Right: false } });
+    const out = locals.map(l => l.slice());
+    for (const S of ['Left', 'Right']) {
+      const joints = [ix[S + 'ForeArm'], ix[S + 'Hand'], ...FINGERS.flatMap(F => [1, 2, 3].map(k => ix[`${S}Hand${F}${k}`]))].filter(j => j != null);
+      for (let k = 0; k < n; k++) {
+        const u = 1 - trust[S][k]; if (u < 0.01) continue;
+        const b = B[k].slice(); b[ix[S + 'Hand']] = qslerp([0, 0, 0, 1], b[ix[S + 'Hand']], fm === 'fist' ? 0.25 : 0.5); // fists keep a straight wrist
+        for (const j of joints) out[k][j] = qslerp(out[k][j], b[j], u);
+      }
+    }
+    return out;
   }
 
   // ---- Deslide: the body only travels the way its supporting foot allows ----
@@ -4293,6 +4343,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="seg" id="fingerSeg"><button data-v="ai" class="on">🤖 AI tracked</button><button data-v="fist">✊ Closed</button><button data-v="relaxed">🖐 Open</button></div>
     <div class="mini" style="margin:-2px 0 6px">AI tracked follows the real fingers from the video; Closed / Open sets a fixed hand shape.</div>
     <input type="checkbox" id="elbowGuard" checked hidden><input type="checkbox" id="proLimits" checked hidden>
+    <div class="row"><label>Smart hands <span class="mini">ignores hand tracking it can't see clearly (tiny / blurry hands): no splayed fingers or flicking wrists · on for every new video</span></label><input type="checkbox" id="smartHands" checked></div>
     <div class="row"><label>Wrist rotation</label><select id="handMode"><option value="limited" selected>Natural limits</option><option value="locked">Locked to forearm</option><option value="free">Free (raw)</option></select></div>
     <div class="sub">Body</div>
     <div class="row"><label>AI version <span class="mini">older saved takes use Classic, so they look exactly as they did</span></label><select id="solverVer"><option value="latest" selected>Latest</option><option value="classic">Classic (6 Nov)</option></select></div>
@@ -4858,7 +4909,7 @@ async function loadVideo(file, name, opts = {}) {
   info.innerHTML = `<span style="color:var(--accent);font-weight:600">✓ Video loaded</span> — ${name} · ${W}×${H} · ${D.toFixed(1)}s` + (converted ? ' · converted' : '') + '<br>Then tap <b>Generate motion</b> (✂️ on the play bar re-opens the trim window).';
   $('drop').innerHTML = '<b>✓ ' + name.replace(/[<>&]/g, '') + '</b><br>Tap to choose a different video';
   
-  if (!opts.fromLibrary) $('deslide').checked = true; // every new video is converted with the deslider built in
+  if (!opts.fromLibrary) for (const id of ['deslide', 'smartHands']) $(id).checked = true; // every new video gets the deslider and smart hands built in
   if (D > 0.5 && !opts.fromLibrary && !window.__studyQuiet) setTimeout(openTrimWindow, 300); // studying for the AI: no trim window, it watches the whole video
   $('go').disabled = false; drawOverlay(); $('bigPlay').style.display = 'block';
   $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel(); requestRender();
@@ -5398,7 +5449,7 @@ $('armOutSeg').onclick = e => { const b = e.target.closest('button'); if (!b) re
 
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, lowerBody: $('lowerBody').value, armPose: $('armPose').value, armOut: $('armOut').value, faceGuard: $('faceGuard').checked, antiFloat: $('antiFloat').checked, contactHeight: +$('contact').value, contactSpeed: 0.6, ...($('stanceHold').checked ? { stanceHold: true } : {}), ...($('steadyLegs').checked ? { steadyLegs: true } : {}), ...($('deslide').checked ? { deslide: true } : {}) }; // only added when on, so saved takes keep their exact baked result
+  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, lowerBody: $('lowerBody').value, armPose: $('armPose').value, armOut: $('armOut').value, faceGuard: $('faceGuard').checked, antiFloat: $('antiFloat').checked, contactHeight: +$('contact').value, contactSpeed: 0.6, ...($('stanceHold').checked ? { stanceHold: true } : {}), ...($('steadyLegs').checked ? { steadyLegs: true } : {}), ...($('deslide').checked ? { deslide: true } : {}), ...($('smartHands').checked ? { smartHands: true } : {}) }; // only added when on, so saved takes keep their exact baked result
 }
 let solveT;
 let BAKE = null; // { key, anim } – the motion exactly as it was made for the open take
@@ -5418,7 +5469,7 @@ function solve(rebuild = false) {
 }
 $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#fingerSeg button').forEach(x => x.classList.toggle('on', x === b)); solve(); };
 for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('change', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 30); }); // update once you let go (no stutter while dragging)
-for (const id of ['deslide', 'armOut', 'faceGuard', 'antiFloat', 'stanceHold', 'steadyLegs', 'solverVer', 'armPose', 'lowerBody', 'footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
+for (const id of ['deslide', 'smartHands', 'armOut', 'faceGuard', 'antiFloat', 'stanceHold', 'steadyLegs', 'solverVer', 'armPose', 'lowerBody', 'footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
 
 function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON', 'editBtn']) $(id).disabled = !on; if (on && !MODEL.obj) setTimeout(() => restoreModel(), 0); else if (on && MODEL.obj) { if (MODEL.on && CHARS[MODEL.id]) useChar(CHARS[MODEL.id], MODEL.id); else scene.add(MODEL.prep.wrap); } } // re-fit the character to the new motion's skeleton
 function showStats() {
@@ -5858,9 +5909,10 @@ const LIB = {
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 const LATE_SETTINGS = ['elbowGuard', 'proLimits'];
-const settingIds = ['deslide', 'elbowGuard', 'proLimits', 'armOut', 'faceGuard', 'antiFloat', 'stanceHold', 'steadyLegs', 'solverVer', 'propMode', 'physOn', 'physStr', 'physBounce', 'physWobble', 'physSway', 'physWeight', 'physRagdoll', 'physArms', 'physBody', 'physLegs', 'clipSpeed', 'evenPace', 'armPose', 'lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
+const NEW_TAKE_ON = ['deslide', 'smartHands']; // on for every new video; takes saved before they existed keep them off (their result never changes)
+const settingIds = ['deslide', 'smartHands', 'elbowGuard', 'proLimits', 'armOut', 'faceGuard', 'antiFloat', 'stanceHold', 'steadyLegs', 'solverVer', 'propMode', 'physOn', 'physStr', 'physBounce', 'physWobble', 'physSway', 'physWeight', 'physRagdoll', 'physArms', 'physBody', 'physLegs', 'clipSpeed', 'evenPace', 'armPose', 'lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
 const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; s.edits = JSON.parse(JSON.stringify(EDITS)); return s; };
-const writeSettings = s => { if (!s) return; const raw = s; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; for (const id of LATE_SETTINGS) if (!(id in raw)) delete s[id]; if (!('deslide' in raw)) s.deslide = false; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); EDITS = s.edits ? JSON.parse(JSON.stringify(s.edits)) : { keys: {}, root: {}, spread: 0.5 }; try { edSyncLocks(); } catch (e) {} };
+const writeSettings = s => { if (!s) return; const raw = s; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; for (const id of LATE_SETTINGS) if (!(id in raw)) delete s[id]; for (const id of NEW_TAKE_ON) if (!(id in raw)) s[id] = false; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); EDITS = s.edits ? JSON.parse(JSON.stringify(s.edits)) : { keys: {}, root: {}, spread: 0.5 }; try { edSyncLocks(); } catch (e) {} };
 const DEFAULT_SETTINGS = readSettings(); // the app's starting settings, used for anything a take never saved
 for (const id of settingIds) $(id).addEventListener('change', () => setTimeout(() => recordChange(), 0));
 $('fingerSeg').addEventListener('click', () => setTimeout(() => recordChange(), 0));
