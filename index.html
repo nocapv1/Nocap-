@@ -14,6 +14,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem('nocap-theme')||'gold'}catch(e){document.documentElement.dataset.theme='gold'}</script>
 <style>
+#bigWrap{position:fixed;inset:0;z-index:58;background:var(--bg);overflow:auto;padding:max(8px,env(safe-area-inset-top)) 8px max(8px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px}
+#bigWrap .stage{display:block!important;padding:0!important;margin:0!important;position:static!important} #bigWrap #vview{display:none!important} #bigWrap .view.v3d{height:74vh!important;height:74svh!important} #bigWrap .timeline{position:static!important;margin:0!important} body.bigview #bigBtn{border-color:var(--accent);color:var(--accent)}
 #rateBar[hidden]{display:none!important} #rateBar .rb{min-height:0!important;width:38px;height:38px;padding:0;border-radius:50%;font-size:17px;background:var(--glass);backdrop-filter:blur(8px)} #rateBar .rb.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)} #rateBar .rb:disabled{opacity:.35}
 #teachBox [hidden]{display:none!important} #tchTabs .btn.on{border-color:var(--accent);color:var(--accent);font-weight:700}
 :root,[data-theme="gold"]{
@@ -131,7 +133,7 @@ main{display:grid;grid-template-rows:1fr auto;min-width:0;min-height:0}
 #contacts{height:14px;flex:1;position:relative}
 .tlwrap{flex:1;display:flex;flex-direction:column;gap:4px}
 canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
-.toast{position:fixed;right:18px;bottom:76px;background:#1a202c;border:1px solid var(--line);border-left:3px solid var(--accent);padding:10px 14px;border-radius:9px;max-width:380px;box-shadow:0 10px 30px #0008;z-index:50;display:none}
+.toast{position:fixed;right:18px;bottom:76px;background:#1a202c;border:1px solid var(--line);border-left:3px solid var(--accent);padding:10px 14px;border-radius:9px;max-width:380px;box-shadow:0 10px 30px #0008;z-index:59;display:none}
 .toast.err{border-left-color:var(--bad)}
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;font-size:12px}
 .stats div{background:#0e1118;border-radius:8px;padding:6px 8px;color:var(--dim)}
@@ -444,6 +446,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const addRow = (r, b, w) => { for (let i = 0; i < 3; i++) { bv[i] += w * r[i] * b; for (let j = 0; j < 3; j++) A[i][j] += w * r[i] * r[j]; } };
     let usable = 0; for (let i = 0; i < 33; i++) if ((i < 13 || i > 22) && (img[i][2] ?? 1) >= 0.3) usable++;
     const skipArms = usable >= 5;
+    { let all = 0; for (let i = 0; i < 33; i++) if ((img[i][2] ?? 1) >= 0.3) all++; if (all < 7) return null; } // too little of the body in the picture to place it: bridged from the frames either side
     for (let i = 0; i < 33; i++) {
       if (skipArms && i >= 13 && i <= 22) continue; // a waving arm must never drag the whole body
       const w = clamp(img[i][2] ?? 1, 0, 1); if (w < 0.3) continue;
@@ -1046,6 +1049,12 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     if (!valid) throw new Error('No person was detected in this video.');
     if (!(+opt.fov > 0)) opt = { ...opt, fov: estimateFov(pw, pi, opt.W, opt.H) }; // 'auto'
     let roots = pw.map((w, k) => (w && pi[k] && !faceBlocked[k] ? solveRoot(w, pi[k], opt.W, opt.H, opt.fov) : null)); // covered-face frames: body position bridged from either side
+    // a body half out of the picture (too close, or at the edge) or one bad reading can throw the body's position: a reading that jumps away
+    // from its neighbours on both sides is dropped and bridged (real moves, even fast ones, change smoothly over a few frames so they stay)
+    if (opt.fixSwaps !== false) { const R = roots, out = R.slice();
+      for (let k = 0; k < R.length; k++) { if (!R[k]) continue; const nb = []; for (let q = Math.max(0, k - 4); q <= Math.min(R.length - 1, k + 4); q++) if (q !== k && R[q]) nb.push(R[q]); if (nb.length < 4) continue;
+        const md = [0, 1, 2].map(i => median(nb.map(r => r[i]))), d = Math.hypot(R[k][0] - md[0], R[k][1] - md[1], (R[k][2] - md[2]) * 0.5); if (d > 0.3 + 0.04 * Math.abs(md[2])) out[k] = null; }
+      roots = out; }
     pw = fillGaps(pw); roots = fillGaps(roots) || pw.map(() => [0, 0, 3]);
     const piF = fillGaps(pi.map(a => a && a.map(p => [p[0] * opt.W, p[1] * opt.H, p[2] ?? 1])));
     const footStill = { Left: new Array(pw.length).fill(false), Right: new Array(pw.length).fill(false) };
@@ -4253,6 +4262,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>In-place <span class="mini">feet stay on one spot, body keeps moving</span></label><input type="checkbox" id="inPlace"></div>
     <div class="sub">Locks</div>
     <div class="row"><label>🔒 Lock feet <span class="mini">feet frozen exactly where they are at the current frame, for the whole animation</span></label><select id="mainPinFeet"><option value="">Off</option><option value="both">Both feet</option><option value="Left">Left foot</option><option value="Right">Right foot</option></select></div>
+    <div class="row" id="mainPinStrRow" hidden><label>🔒 Lock strength <span class="mini">100% = feet frozen to the spot · lower = closer to his original steps</span></label><input type="range" id="mainPinStr" min="0" max="100" step="5" value="100"><output id="mainPinStrV">100%</output></div>
     <div class="row"><label>🔒 Lock hand &amp; head rotation <span class="mini">your edits never turn the hands or head</span></label><input type="checkbox" id="mainLockRot"></div>
     <div class="stats" id="stats" style="display:none"></div>
   </section>
@@ -4304,7 +4314,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       <div class="vtools">
         <button class="btn small on" id="tBody">Body</button>
         <button class="btn small" id="tBones">Bones</button>
-        <button class="btn small on" id="tFollow" title="Frame the whole move (the camera stays still while it plays)">Frame</button>
+        <button class="btn small on" id="tFollow" title="On: glides along with him (no shake). Off: camera stays completely still, framed on the whole move">Follow</button>
         <button class="btn small" id="tReset">Video angle</button>
         <button class="btn small" id="tModel" title="Change character: the AI body, realistic people, or your own (FBX / GLB / VRM)">🧍 Character</button>
         <button class="btn small" id="tProps" title="Props: boxing gloves, golf club, bat, racket, balls, bike">🎒 Props</button>
@@ -4342,6 +4352,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <button class="btn" id="editBtn" title="Edit motion: move any joint" disabled>✏️ Edit</button>
     <span id="savedTag" style="font-size:11px;color:var(--accent);opacity:0;transition:opacity .4s;white-space:nowrap"></span>
     <button class="btn" id="pinBtn" title="Keep the video and 3D view on screen while scrolling">📌 Pin</button>
+    <button class="btn" id="bigBtn" title="Big view: the 3D view fills the screen, all the same tools">⛶ Big</button>
   </div>
   <div class="trimbar" id="trimBar" style="display:none">
     <div class="trimtrack" id="trimTrack"><div class="trimsel" id="trimSel"></div><div class="trimh" id="trimA" data-h="a"></div><div class="trimh" id="trimB" data-h="b"></div></div>
@@ -4453,7 +4464,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="emeta"><span id="edTime">frame 1</span><span class="sp"></span><span id="edSel" class="esel">no joint picked</span></div>
   </div>
   <div class="esheet">
-    <div class="elocks"><label>🔒 Lock feet <select id="edLockFeet" style="margin-left:auto"><option value="">Off</option><option value="both">Both</option><option value="Left">L</option><option value="Right">R</option></select></label><label><input type="checkbox" id="edLockRot"> 🔒 Lock hand &amp; head rotation</label></div>
+    <div class="elocks"><label>🔒 Lock feet <select id="edLockFeet" style="margin-left:auto"><option value="">Off</option><option value="both">Both</option><option value="Left">L</option><option value="Right">R</option></select></label><label id="edPinStrWrap" hidden>Strength <input type="range" id="edPinStr" min="0" max="100" step="5" value="100" style="margin-left:auto;width:110px"></label><label><input type="checkbox" id="edLockRot"> 🔒 Lock hand &amp; head rotation</label></div>
     <div class="eapply" id="edApply"><span>Change applies to</span><button data-v="moment" class="on">⏱ This moment</button><button data-v="layer">🎞 Whole animation</button></div>
     <div class="emodes" id="edMode"><button data-m="move" class="on"><b>✥</b>Move (IK)</button><button data-m="rotate"><b>🎛</b>Rotate</button></div>
     <div id="edMovePanel">
@@ -5058,6 +5069,13 @@ const TTM_EXAMPLES = ['Mike Tyson left hook', '1-2-3 then slip', 'southpaw jab c
 $('ttmChips').innerHTML = TTM_EXAMPLES.map(e => `<button class="btn small" data-e="${e}">${e}</button>`).join('');
 $('ttmChips').onclick = e => { const b = e.target.closest('button'); if (b) $('ttmText').value = b.dataset.e; };
 $('ttmBtn').onclick = () => { $('ttmModal').style.display = 'grid'; lockPage(); setTimeout(() => $('ttmText').focus(), 50); };
+let BIGY = 0, BIGHOME = null;
+$('bigBtn').onclick = () => { // big view: the 3D view and its play bar move into a full-screen layer (same elements, so every tool works the same)
+  const on = !document.body.classList.contains('bigview'), st = document.querySelector('.stage'), tl = document.querySelector('.timeline');
+  if (on) { BIGY = window.scrollY; BIGHOME = [st.parentNode, st.nextSibling, tl.parentNode, tl.nextSibling]; const w = document.createElement('div'); w.id = 'bigWrap'; document.body.appendChild(w); w.appendChild(st); w.appendChild(tl); lockPage(); }
+  else { const [p1, n1, p2, n2] = BIGHOME; p1.insertBefore(st, n1); p2.insertBefore(tl, n2 && n2.parentNode === p2 ? n2 : null); const w = $('bigWrap'); if (w) w.remove(); unlockPage(); window.scrollTo(0, BIGY || 0); }
+  document.body.classList.toggle('bigview', on); $('bigBtn').textContent = on ? '✕ Close big view' : '⛶ Big'; requestAnimationFrame(() => { resize(); requestRender(); });
+};
 $('ttmClear').onclick = () => { $('ttmText').value = ''; $('ttmText').focus(); };
 $('ttmClose').onclick = () => { $('ttmModal').style.display = 'none'; unlockPage(); };
 $('ttmText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('ttmGo').click(); } });
@@ -5460,12 +5478,25 @@ function applyAt(t) {
   if (MODEL.on) poseModel();
   updateProps(k, t);
   ['Left', 'Right'].forEach((s, i) => { b[anim.rest.index[s + 'Foot']].getWorldPosition(_v); footMarks[i].position.x = _v.x; footMarks[i].position.z = _v.z; footMarks[i].material.opacity = anim.contacts[k][s] ? 0.9 : 0; });
-  if ($('tFollow').classList.contains('on')) frameAnim();
+  if ($('tFollow').classList.contains('on')) smoothFollow(t - animT0()); else frameAnim();
 }
 // Follow camera: glides after a smoothed body position, and the camera and the point it looks at move together, so hip sway,
 // bobbing and punches never shake the view (before, the camera jumped with every hip movement while its aim lagged behind).
 // Framing: the camera never moves while a motion plays (no shake at all). When a new motion opens, it is framed once so the
 // whole move (every step and jump in it) fits in view, keeping the angle you were looking from. Drag to look around any time.
+// Follow: the camera tracks where he travels, but along a heavily smoothed path of his hips over the whole motion (worked out
+// once per motion, so it's a fixed path in time): no shake from steps, bobs, punches or sways, it just glides with him.
+let FPATH = null;
+function smoothFollow(tt) {
+  if (!anim) return;
+  if (!FPATH || FPATH.a !== anim) { const n = anim.n, sig = Math.max(3, anim.fps * 0.6), R = Math.ceil(sig * 2.5), xs = [], zs = [];
+    for (let k = 0; k < n; k++) { let sx = 0, sz = 0, sw = 0; for (let q = Math.max(0, k - R); q <= Math.min(n - 1, k + R); q++) { const w = Math.exp(-((q - k) ** 2) / (2 * sig * sig)); sx += anim.rootPos[q][0] * w; sz += anim.rootPos[q][2] * w; sw += w; } xs.push(sx / sw); zs.push(sz / sw); }
+    let y1 = -Infinity; for (const r of anim.rootPos) y1 = Math.max(y1, r[1]);
+    FPATH = { a: anim, xs, zs, y: Math.max(0.95, Math.min(y1 - 0.2, 0.95 + (y1 - 1.2) * 0.5)) }; FRAMED = anim; }
+  const f = Math.max(0, Math.min(anim.n - 1, tt * anim.fps)), k0 = Math.floor(f), k1 = Math.min(anim.n - 1, k0 + 1), u = f - k0;
+  const tgt = new THREE.Vector3(FPATH.xs[k0] * (1 - u) + FPATH.xs[k1] * u, FPATH.y, FPATH.zs[k0] * (1 - u) + FPATH.zs[k1] * u), d = tgt.sub(controls.target);
+  if (!userOrbiting && d.lengthSq() > 1e-10) { controls.target.add(d); camera.position.add(d); key.position.set(controls.target.x + 3, 6, controls.target.z + 4); key.target.position.copy(controls.target); }
+}
 let FRAMED = null;
 function frameAnim(force) {
   if (!anim || (!force && FRAMED === anim)) return; FRAMED = anim;
@@ -5507,7 +5538,7 @@ document.addEventListener('click', () => $('themeMenu').classList.remove('open')
 document.querySelectorAll('#themeMenu button').forEach(b => b.classList.toggle('on', b.dataset.t === document.documentElement.dataset.theme));
 toggle('tBody', on => character && (character.mesh.visible = on && !MODEL.on));
 toggle('tBones', on => character && character.helper && (character.helper.visible = on));
-toggle('tFollow', on => { if (on) frameAnim(true); });
+toggle('tFollow', on => { if (!on) frameAnim(true); else applyAt(curTime); requestRender(); });
 toggle('tOverlay', () => drawOverlay());
 // ---- 🎯 punch target in the 3D view: switch on, then drag the red ball; every punch turns to it and lands on it ----
 const aimMesh = new THREE.Group(); aimMesh.visible = false; scene.add(aimMesh);
@@ -6058,6 +6089,7 @@ function lockPass(a, locals, rootPos, E, affected, own) {
   const lockFeet = true, pin = !!E.pinFeet, lockRot = !!E.lockRot; // edits never drag unedited feet; 🔒 pin freezes them for the whole clip
   const pinned = Sd => pin && (!E.pinSide || E.pinSide === 'both' || E.pinSide === Sd); // 🔒 both feet, or just the left / right one
   const pk = Math.max(0, Math.min(a.n - 1, E.pinFrame | 0)), pinRef = pin ? S.fk(a.rest, a.locals[pk], a.rootPos[pk]) : null;
+  const pinStr = E.pinStr == null ? 1 : Math.max(0, Math.min(1, +E.pinStr)); // 🔒 strength: 1 = frozen to the spot, lower = stays nearer his own steps
   const rest = a.rest, ix = rest.index, J = rest.joints, Q = v => new THREE.Quaternion(v[0], v[1], v[2], v[3]), V = v => new THREE.Vector3(v[0], v[1], v[2]);
   const toArr = q => [q.x, q.y, q.z, q.w];
   for (let k = 0; k < a.n; k++) {
@@ -6067,7 +6099,7 @@ function lockPass(a, locals, rootPos, E, affected, own) {
       let sh = [0, 0, 0];
       for (const Sd of ['Left', 'Right']) {
         const iU = ix[Sd + 'UpLeg'], iL = ix[Sd + 'Leg'], iF = ix[Sd + 'Foot']; if (!pinned(Sd) || [iU, iL, iF].some(j => own[k].has(j))) continue;
-        const H = V(cur.pos[iU]).add(V(sh)), T = V(pinRef.pos[iF]), Lg = V(cur.pos[iU]).distanceTo(V(cur.pos[iL])) + V(cur.pos[iL]).distanceTo(V(cur.pos[iF])), d = H.distanceTo(T), ex = d - Lg * 0.985;
+        const H = V(cur.pos[iU]).add(V(sh)), T = V(base.pos[iF]).lerp(V(pinRef.pos[iF]), pinStr), Lg = V(cur.pos[iU]).distanceTo(V(cur.pos[iL])) + V(cur.pos[iL]).distanceTo(V(cur.pos[iF])), d = H.distanceTo(T), ex = d - Lg * 0.985;
         if (ex > 0) { const dir = T.clone().sub(H).normalize().multiplyScalar(ex); sh = [sh[0] + dir.x, sh[1] + dir.y, sh[2] + dir.z]; }
       }
       if (sh.some(v => Math.abs(v) > 1e-6)) { rootPos[k] = rootPos[k].map((v, c) => v + sh[c]); cur = S.fk(rest, locals[k], rootPos[k]); }
@@ -6075,7 +6107,7 @@ function lockPass(a, locals, rootPos, E, affected, own) {
     if (lockFeet) for (const Sd of ['Left', 'Right']) {
       const iU = ix[Sd + 'UpLeg'], iL = ix[Sd + 'Leg'], iF = ix[Sd + 'Foot'], iT = ix[Sd + 'ToeBase'];
       if ([iU, iL, iF, iT].some(j => own[k].has(j))) continue; // you moved this leg yourself
-      const pS = pinned(Sd), ref = pS ? pinRef : base, H = V(cur.pos[iU]), K = V(cur.pos[iL]), A = V(cur.pos[iF]), T = V(ref.pos[iF]);
+      const pS = pinned(Sd), ref = pS ? pinRef : base, H = V(cur.pos[iU]), K = V(cur.pos[iL]), A = V(cur.pos[iF]), T = pS ? V(base.pos[iF]).lerp(V(pinRef.pos[iF]), pinStr) : V(ref.pos[iF]);
       if (!pS && V(base.pos[iF]).distanceTo(A) < 1e-5) continue;
       const la = H.distanceTo(K), lb = K.distanceTo(A), dir = T.clone().sub(H), d = THREE.MathUtils.clamp(dir.length(), Math.abs(la - lb) + 1e-4, (la + lb) * 0.999); dir.normalize();
       let pole = K.clone().sub(H); pole.sub(dir.clone().multiplyScalar(pole.dot(dir))); if (pole.lengthSq() < 1e-10) pole = new THREE.Vector3(0, 0, 1); pole.normalize();
@@ -6087,8 +6119,8 @@ function lockPass(a, locals, rootPos, E, affected, own) {
       const pU = J[iU].parent;
       locals[k][iU] = toArr(Q(cur.rot[pU]).invert().multiply(gU).normalize());
       locals[k][iL] = toArr(gU.clone().invert().multiply(gL).normalize());
-      locals[k][iF] = toArr(gL.clone().invert().multiply(Q(ref.rot[iF])).normalize()); // and the foot keeps its angle
-      if (pS) locals[k][iT] = a.locals[pk][iT].slice();
+      locals[k][iF] = toArr(gL.clone().invert().multiply(pS ? Q(base.rot[iF]).slerp(Q(pinRef.rot[iF]), pinStr) : Q(ref.rot[iF])).normalize()); // and the foot keeps its angle
+      if (pS) locals[k][iT] = pinStr >= 1 ? a.locals[pk][iT].slice() : toArr(Q(a.locals[k][iT]).slerp(Q(a.locals[pk][iT]), pinStr));
     }
     if (lockRot) {
       cur = S.fk(rest, locals[k], rootPos[k]);
@@ -6417,7 +6449,8 @@ function edJump(h, label) { // undo / redo only change your edits back: the fram
 const edStep = (from, to, label) => { const cur = JSON.stringify(EDITS); let h; while (from.length && (h = from.pop()).e === cur) h = null; if (!h) { toast('Nothing to ' + label.toLowerCase().replace('ne', '')); edTimeline(); return; } to.push({ e: cur }); edJump(h, label); };
 $('edUndo').onclick = () => edStep(ED.undo, ED.redo, 'Undone');
 $('edRedo').onclick = () => edStep(ED.redo, ED.undo, 'Redone');
-function edSyncLocks() { $('edLockFeet').value = $('mainPinFeet').value = EDITS.pinFeet ? (EDITS.pinSide || 'both') : ''; $('edLockRot').checked = $('mainLockRot').checked = !!EDITS.lockRot; }
+function pinStrUI() { const v = Math.round((EDITS.pinStr == null ? 1 : EDITS.pinStr) * 100); $('mainPinStr').value = v; $('mainPinStrV').textContent = v + '%'; $('mainPinStrRow').hidden = !EDITS.pinFeet; if ($('edPinStr')) { $('edPinStr').value = v; $('edPinStrWrap').hidden = !EDITS.pinFeet; } }
+function edSyncLocks() { pinStrUI(); $('edLockFeet').value = $('mainPinFeet').value = EDITS.pinFeet ? (EDITS.pinSide || 'both') : ''; $('edLockRot').checked = $('mainLockRot').checked = !!EDITS.lockRot; }
 $('edApply').onclick = e => { const b = e.target.closest('button'); if (!b) return; ED.apply = b.dataset.v; ED.dial = null; edTimeline(); toast(ED.apply === 'layer' ? 'Whole animation: your change is added to every frame, on top of the original motion.' : 'This moment: your change blends in around this frame only.'); };
 function mainLockChanged() { // the Refine-section boxes: same locks as in the editor
   EDITS.pinFeet = !!$('mainPinFeet').value; EDITS.pinSide = $('mainPinFeet').value || 'both'; if (EDITS.pinFeet) EDITS.pinFrame = anim ? Math.max(0, Math.min(anim.n - 1, Math.round((curTime - animT0()) * anim.fps))) : 0;
@@ -6425,8 +6458,12 @@ function mainLockChanged() { // the Refine-section boxes: same locks as in the e
   if (baseAnim) { anim = applyEdits(baseAnim, EDITS); applyAt(curTime); drawContacts(); requestRender(); }
   recordChange(); toast(EDITS.pinFeet ? `${{ both: 'Both feet', Left: 'Left foot', Right: 'Right foot' }[EDITS.pinSide]} locked where it is at ${(curTime - animT0()).toFixed(2)}s, for the whole animation.` : 'Locks updated.');
 }
-$('mainPinFeet').onchange = mainLockChanged; $('mainLockRot').onchange = mainLockChanged;
+$('mainPinFeet').onchange = () => { mainLockChanged(); pinStrUI(); }; $('mainLockRot').onchange = mainLockChanged;
+const pinStrSet = v => { EDITS.pinStr = v / 100; pinStrUI(); if ($('editModal').style.display === 'flex') edRefresh(); else if (baseAnim) { anim = applyEdits(baseAnim, EDITS); applyAt(curTime); drawContacts(); requestRender(); } };
+$('mainPinStr').oninput = () => pinStrSet(+$('mainPinStr').value); $('mainPinStr').onchange = () => recordChange();
 $('edLockFeet').onchange = () => { edPush(); EDITS.pinFeet = !!$('edLockFeet').value; EDITS.pinSide = $('edLockFeet').value || 'both'; EDITS.pinFrame = ED.k; $('mainPinFeet').value = $('edLockFeet').value; edRefresh(); toast(EDITS.pinFeet ? `Feet frozen where they are on frame ${ED.k + 1}, for the whole animation.` : 'Feet unlocked.'); };
+$('edPinStr').oninput = () => pinStrSet(+$('edPinStr').value); $('edPinStr').onpointerdown = () => edPush();
+$('edLockFeet').addEventListener('change', pinStrUI);
 $('edLockRot').onchange = () => { edPush(); EDITS.lockRot = $('edLockRot').checked; $('mainLockRot').checked = EDITS.lockRot; edRefresh(); toast(EDITS.lockRot ? 'Hands & head keep their original rotation.' : 'Rotation lock off.'); };
 $('edMode').onclick = e => { const b = e.target.closest('button'); if (!b) return; ED.mode = b.dataset.m; ED.dial = null; edTimeline(); };
 $('edScrub').addEventListener('input', () => { if (ED.playing) edStop(); edGo(+$('edScrub').value); });
@@ -7333,12 +7370,12 @@ function smartTextMotion(txt0, seed) {
 }
 // ---- 🎬 real-mocap moves (gymnastics, stealth, floor work) from the CMU database: loaded once, used when a prompt names them ----
 let MOVELIB = null, MOVELIB_LOADING = null;
-const MOVE_HINT = /\b(combat|footwork|boxer|boxing movement|ring movement|stick and move|strafe|lateral|side to side|gallop|stride|shadow ?box|spar|moving punches|on the move|punch and move|move and punch|pad work|pads|mitt|cartwheel|round ?off|flip|somersault|tuck|aerial|handspring|crawl|all fours|sneak|stealth|creep|tiptoe|prowl|roll|get(s|ting)? up|stand(s|ing)? up from|lie down|lies down|lay down|lays down|lying down|prone|balance|arabesque|one leg|take cover|duck down|hit the deck|gymnast\w*|acrobat\w*|tumbling|floor routine)/i;
+const MOVE_HINT = /\b(pivot|angle|step around|slid|circl|glide|gliding|retreat|advanc|stalk|lateral|sideways|in and out|toes|move (left|right|in|out|back|forward|around|away)|moving|combat|footwork|boxer|boxing movement|ring movement|stick and move|strafe|lateral|side to side|gallop|stride|shadow ?box|spar|moving punches|on the move|punch and move|move and punch|pad work|pads|mitt|cartwheel|round ?off|flip|somersault|tuck|aerial|handspring|crawl|all fours|sneak|stealth|creep|tiptoe|prowl|roll|get(s|ting)? up|stand(s|ing)? up from|lie down|lies down|lay down|lays down|lying down|prone|balance|arabesque|one leg|take cover|duck down|hit the deck|gymnast\w*|acrobat\w*|tumbling|floor routine)/i;
 const GYM_RE = /\b(gymnastics?|gymnast|acrobatics?|acrobatic|tumbling|floor routine)\b/i, COMBAT_RE = /\b(jab|cross|hook|uppercut|punch\w*|kick\w*|knee|elbow|strike)\b/i;
 function loadMoveLib() {
   if (MOVELIB) return Promise.resolve(MOVELIB); if (MOVELIB_LOADING) return MOVELIB_LOADING;
   MOVELIB_LOADING = fetch('learned/cmu-moves.json').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(j => {
-    for (const m of j.moves) { m.rx = new RegExp(m.re, 'i'); m.clips.forEach((c, i) => { c.cid = m.id + ':' + c.src + ':' + i; }); for (const c of m.clips) { const d = c.data; d.locals = d.frames.map(fr => { const l = new Array(d.rest.joints.length); for (const j in d.still) l[+j] = d.still[j]; d.move.forEach((j, i) => { l[j] = fr[i]; }); return l; }); delete d.frames; } }
+    for (const m of j.moves) { m.rx = new RegExp(m.re, 'i'); if (m.notRe) m.nrx = new RegExp(m.notRe, 'i'); m.clips.forEach((c, i) => { c.cid = m.id + ':' + c.src + ':' + i; }); for (const c of m.clips) { const d = c.data; d.locals = d.frames.map(fr => { const l = new Array(d.rest.joints.length); for (const j in d.still) l[+j] = d.still[j]; d.move.forEach((j, i) => { l[j] = fr[i]; }); return l; }); delete d.frames; } }
     MOVELIB = j; return j; }).catch(e => { MOVELIB_LOADING = null; throw e; });
   return MOVELIB_LOADING;
 }
@@ -7437,31 +7474,100 @@ function poseMove(pm, base) {
   }
   return { rest, M: base.M, n, locals, rootPos };
 }
+// smooth out sudden arm rolls (an arm bone spinning round its own length in a frame or two looks broken): the direction every
+// bone points stays exactly the same, only how fast it's allowed to roll is limited, and the roll is eased
+function calmTwist(a, maxRate = 14) {
+  const ix = a.rest.index, J = a.rest.joints, n = a.n; if (!n || n < 3) return a;
+  const locals = a.locals.map(l => l.slice());
+  for (const nm of ['LeftForeArm', 'LeftHand', 'RightForeArm', 'RightHand']) { // pure rolls: these never move where the hand is
+    const j = ix[nm]; if (j == null) continue; const ch = J.findIndex(x => x.parent === j); if (ch < 0) continue;
+    const o = J[ch].offset, ol = Math.hypot(...o); if (ol < 1e-6) continue; const ax = [o[0] / ol, o[1] / ol, o[2] / ol];
+    // split each local rotation into swing (where the bone points) and twist (roll about the bone)
+    const tw = [], sw = [];
+    for (let k = 0; k < n; k++) { const q = locals[k][j], d = q[0] * ax[0] + q[1] * ax[1] + q[2] * ax[2]; let t = [ax[0] * d, ax[1] * d, ax[2] * d, q[3]]; const tl = Math.hypot(...t); t = tl < 1e-9 ? [0, 0, 0, 1] : t.map(v => v / tl);
+      sw.push(S.qmul(q, S.qconj(t))); tw.push(2 * Math.atan2(t[0] * ax[0] + t[1] * ax[1] + t[2] * ax[2], t[3])); }
+    for (let k = 1; k < n; k++) { while (tw[k] - tw[k - 1] > Math.PI) tw[k] -= 2 * Math.PI; while (tw[k] - tw[k - 1] < -Math.PI) tw[k] += 2 * Math.PI; } // unwrap
+    const lim = maxRate * Math.PI / 180; let bad = false; for (let k = 1; k < n; k++) if (Math.abs(tw[k] - tw[k - 1]) > lim) { bad = true; break; } if (!bad) continue;
+    // rate-limited both ways, then averaged, then lightly smoothed: arrives at the same roll, just not in a snap
+    const f = tw.slice(), b = tw.slice(); for (let k = 1; k < n; k++) f[k] = f[k - 1] + Math.max(-lim, Math.min(lim, tw[k] - f[k - 1])); for (let k = n - 2; k >= 0; k--) b[k] = b[k + 1] + Math.max(-lim, Math.min(lim, tw[k] - b[k + 1]));
+    let t2 = tw.map((_, k) => (f[k] + b[k]) / 2); t2 = t2.map((_, k) => { let s = 0, w = 0; for (let q = Math.max(0, k - 2); q <= Math.min(n - 1, k + 2); q++) { const ww = 3 - Math.abs(q - k); s += t2[q] * ww; w += ww; } return s / w; });
+    for (let k = 0; k < n; k++) { const h = t2[k] / 2, s_ = Math.sin(h); locals[k][j] = S.qnorm(S.qmul(sw[k], [ax[0] * s_, ax[1] * s_, ax[2] * s_, Math.cos(h)])); }
+  }
+  return { ...a, locals };
+}
+// and soften arm "pops": a frame where an arm or the head whips round far faster than the frames around it gets eased
+// across its neighbours (proper fast moves like punches keep their speed: only sudden one-off jumps are touched)
+function calmPops(a) {
+  const ix = a.rest.index, n = a.n; if (n < 7) return a; let locals = a.locals.map(l => l.slice());
+  const qd = (x, y) => 2 * Math.acos(Math.min(1, Math.abs(x[0] * y[0] + x[1] * y[1] + x[2] * y[2] + x[3] * y[3]))) * 180 / Math.PI;
+  const chains = [['LeftArm', 'LeftForeArm', 'LeftHand'], ['RightArm', 'RightForeArm', 'RightHand'], ['Neck', 'Head']].map(c => c.map(nm => ix[nm]).filter(j => j != null));
+  const punchArm = [ix.LeftArm, ix.RightArm], keep = chains.map(ch => { const sd = ch[0] === punchArm[0] ? 'Left' : ch[0] === punchArm[1] ? 'Right' : null, z = new Uint8Array(n); if (sd) for (const p of a.strikes || []) if (p.arm === sd) for (let q = Math.max(0, p.k - 7); q <= Math.min(n - 1, p.k + 5); q++) z[q] = 1; return z; }); // punches keep their snap
+  for (let pass = 0; pass < 4; pass++) { let any = false; const G = locals.map((l, k) => S.fk(a.rest, l, a.rootPos[k]).rot);
+    chains.forEach((ch, ci) => { const sp = []; for (let k = 1; k < n; k++) sp[k] = Math.max(...ch.map(j => qd(G[k][j], G[k - 1][j]))); sp[0] = sp[1];
+      for (let k = 2; k < n - 2; k++) { const around = []; for (let q = Math.max(1, k - 5); q <= Math.min(n - 1, k + 5); q++) if (Math.abs(q - k) > 1) around.push(sp[q]); around.sort((x, y) => x - y); const med = around[Math.floor(around.length / 2)] || 0;
+        if (!keep[ci][k] && sp[k] > 35 && sp[k] > 2.4 * med + 12) { any = true; for (let q = k - 2; q <= k + 1; q++) for (const j of ch) locals[q][j] = S.qnorm(S.qslerp(locals[q][j], S.qslerp(locals[q - 1][j], locals[q + 1][j], 0.5), 0.55)); } } });
+    if (!any) break; }
+  return { ...a, locals };
+}
+const cleanMotion = a => calmPops(calmTwist(a));
+// more ways of saying things: everyday words, gym / fight / sports slang, mapped onto moves it knows (only real synonyms)
+const SYNONYMS = [
+  [/\b(throw|throws|throwing|toss|tosses|tossing|chuck|chucks|lob|lobs|shoot)(s|ing)?( a| the| his| my)? (basket ?ball|hoop|ball at the (hoop|basket|rim))\b/g, 'shoot'],
+  [/(?<!hula )\b(shoot(s|ing)? (some )?hoops|ball(s|ing)? out|hoop(s|ing)?)\b/g, 'dribble then shoot'], [/\b(chest pass|bounce pass|pass(es)? (a |the )?basket ?ball|two[- ]hand(ed)? pass)\b/g, 'push'],
+  [/\b(lay ?up|layup|finger roll)\b/g, 'jump shot'], [/\b(free throws?)\b/g, 'shoot'],
+  [/\b(chucks?|lobs?|flings?|hurls?|launch(es)?) (it|a|the|ball|rock|stone)\b/g, 'throw'], [/\b(pitch(es)? (a|the) ball|fastball|curveball)\b/g, 'pitch'],
+  [/\b(amble|ambles|ambling|saunter\w*|strut\w*|swagger\w*|trudg\w*|hik(e|es|ing)|trek\w*|promenade|mosey\w*)\b/g, 'walk'],
+  [/\b(race|races|racing|bolt(s|ing)? off|sprint off|run away|runs away|flee\w*|chase|chasing)\b/g, 'run'],
+  [/\b(bound|bounds|bounding|vault|vaults|vaulting|spring up|springs up)\b/g, 'jump'], [/\b(jump(ing)? rope|skipping rope|skip(ping)? rope)\b/g, 'hop hop hop hop'],
+  [/\b(burpees?)\b/g, 'squat then jump'], [/\b(mountain climbers?)\b/g, 'push-ups'], [/\b(press ?ups?)\b/g, 'push-ups'],
+  [/\b(take a knee|takes a knee|on one knee|kneels? down)\b/g, 'kneel'],
+  [/\b(slap|slaps|slapping|backhand slap|bitch slap)\b/g, 'hook'], [/\b(karate chop|chop|chops|hammer ?fist)\b/g, 'overhand'],
+  [/\b(spinning back kick|spin(ning)? kick|tornado kick|360 kick|butterfly kick)\b/g, 'spin then roundhouse'], [/\b(side kick|axe kick|back kick|thai kick|muay thai kick|switch kick)\b/g, 'roundhouse'],
+  [/\b(stomp|stomps|stomping|kick the door)\b/g, 'teep'], [/\b(knee strike|flying knee|jumping knee)\b/g, 'knee'],
+  [/\b(guard up|hands up high|turtle( up)?|earmuffs?|tight guard|protect (his|her|my|your) face|defend\w*|protect\w*)\b/g, 'block'],
+  [/\b(level change|duck under|duck(s)? down low|roll under)\b/g, 'weave'], [/\b(matrix|lean(s)? away)\b/g, 'pull back'],
+  [/(?<!pull (and )?)\b(counter ?punch(es)?|counter(s|ing)?)\b/g, 'slip then cross'], [/\b(punch(es|ing)? (the )?(heavy )?bag|hit(s|ting)? the bag|heavy bag|bag work|speed bag)\b/g, 'jab cross hook jab cross'],
+  [/\b(stumble\w*|trip(s|ped|ping)?|wobbl\w*|dizzy|rocked|buckl\w*|wobbled)\b/g, 'get hit'],
+  [/\b(peek\w*|scout\w*|glanc\w* around|survey\w*|keep(s)? watch)\b/g, 'look around'], [/\b(curts(y|ies|ying))\b/g, 'bow'],
+  [/\b(twerk\w*|vibe|vibing|jam(s|ming)? out|bust(s|ing)? a move|cut(s|ting)? a rug)\b/g, 'dance'],
+  [/\b(hype|hyped|pumped( up)?|rejoic\w*|triumph\w*|go crazy|goes crazy|lose (his|her|my) mind)\b/g, 'celebrate'],
+  [/\b(limber up|loosen up|loosening up|warm(s|ing)? up)\b/g, 'stretch'], [/\b(swing(s|ing)? (a|the|his|her|my) (sword|axe|stick|club|bat|hammer)|sword slash|slash(es|ing)?)\b/g, 'bat'],
+  [/\b(grab(s|bing)?|yank(s|ing)?|tug of war)\b/g, 'pull'], [/\b(carry|carries|carrying|hoist\w*|pick(s|ing)? (it|him|her|them) up)\b/g, 'lift'],
+  [/\b(applaud\w*|slow clap|round of applause)\b/g, 'clap'], [/\b(thumbs? up|yes!+|get in|lets go+)\b/g, 'fist pump'],
+  [/\b(ponder\w*|contemplat\w*|scratch(es|ing)? (his|her|my) head)\b/g, 'think'], [/\b(muscle pose|double bicep|bodybuild\w*)\b/g, 'flex'],
+];
+const expandSynonyms = t => { let x = ' ' + String(t).toLowerCase() + ' '; for (const [re, to] of SYNONYMS) x = x.replace(re, to);
+  if (/\b(basket ?ball|dribbl\w*|hoops?|jump shot)\b/.test(x)) x = x.replace(/\b(throw|throws|throwing|toss|tosses|tossing)\b/g, 'shoot'); // with a basketball, a throw is a shot
+  return x.trim(); };
+
 const PM_CACHE = {}; for (const m of POSE_MOVES) m.rx = new RegExp(m.re, 'i');
 const poseMoveData = pm => PM_CACHE[pm.id] || (PM_CACHE[pm.id] = poseMove(pm, PM_CACHE.__base || (PM_CACHE.__base = S.textToMotion('idle', 30, 0))));
 function smartTextMotion0(txt0, seed) {
-  let txt = applyWordMap(txt0); const BM = MOVELIB ? MOVELIB.moves : [];
+  let txt = expandSynonyms(applyWordMap(txt0)); const BM = MOVELIB ? MOVELIB.moves : [];
   if (BM.length && GYM_RE.test(txt) && !BM.some(m => m.rx.test(txt))) { // "gymnastics" on its own: a little floor routine, different each time
     const r = tRand(seed * 7 + 3), pool = ['cartwheel', 'backflip', 'front handspring', 'side flip', 'forward roll', 'cartwheel', 'handstand', 'splits']; const pick = [];
     while (pick.length < 3) { const x = pool[Math.floor(r() * pool.length)]; if (!pick.includes(x)) pick.push(x); } txt = pick.join(', then '); }
-  if (!LEARNED.length && !BM.some(m => m.rx.test(txt)) && !POSE_MOVES.some(m => m.rx.test(txt))) return S.textToMotion(txt, 30, seed);
+  if (!LEARNED.length && !BM.some(m => m.rx.test(txt)) && !POSE_MOVES.some(m => m.rx.test(txt))) return cleanMotion(S.textToMotion(txt, 30, seed));
   const steps = txt.split(/\s*(?:,|;|\band then\b|\bthen\b|\bfollowed by\b|\bafter that\b)\s*/i).map(s => s.trim()).filter(Boolean);
   const rnd = tRand(seed * 2654435761), pieces = [], plan = [], unknown = [], styles = [], usedClips = []; let used = false, procN = 0;
   steps.forEach((st, i) => {
     let count = 1; for (const w of st.toLowerCase().split(/\s+/)) { if (/^\d+$/.test(w)) count = Math.min(30, +w); else if (T_NUM[w]) count = T_NUM[w]; }
-    const tk = tToks(st), scored = LEARNED.filter(m => !m.study && m.data && m.data.n > 5).map(m => ({ m, s: tScore(tk, m) })).filter(x => x.s >= 3).sort((a, b) => b.s - a.s);
+    const bmFits = m => m.rx.test(st) && !(m.nrx && m.nrx.test(st)) && !((m.noStrike || m.id === 'sneak') && COMBAT_RE.test(st));
+    // your taught / imported moves win, but when a built-in move fits the words (e.g. "strafe"), only a taught move whose own name is in the prompt
+    const bmHit = BM.some(bmFits), lst = st.toLowerCase();
+    const tk = tToks(st), scored = LEARNED.filter(m => !m.study && m.data && m.data.n > 5 && (!bmHit || (m.words || []).some(w => w && lst.includes(w)))).map(m => ({ m, s: tScore(tk, m) })).filter(x => x.s >= 3).sort((a, b) => b.s - a.s);
     if (scored.length) {
       const top = scored.filter(x => x.s >= scored[0].s - 1);
       for (let c = 0; c < count; c++) { const m = top[Math.floor(rnd() * top.length)].m; pieces.push(learnedPiece(m, rnd)); plan.push('🧠 ' + m.name); }
       used = true;
-    } else if (BM.some(m => m.rx.test(st) && !((m.noStrike || m.id === 'sneak') && COMBAT_RE.test(st)))) { // real mocap clip of that move (a random take of it, a little faster / slower, sometimes mirrored)
-      const bm = BM.find(m => m.rx.test(st) && !((m.noStrike || m.id === 'sneak') && COMBAT_RE.test(st)));
+    } else if (BM.some(bmFits)) { // real mocap clip of that move (a random take of it, a little faster / slower, sometimes mirrored)
+      const bm = BM.find(bmFits);
       // footwork: which way (strafe / side to side = sideways, forward / pressure = in, back = out); a few different real pieces in a row
       // boxing clips keep ONE stance for the whole animation: orthodox unless you ask for southpaw (southpaw clips are mirrored to match, and the other way round)
-      const boxing = bm.id === 'footwork' || bm.id === 'shadowbox', wantSt = /\b(southpaw|lefty|left[- ]handed)\b/i.test(txt) ? 'south' : 'orth';
+      const boxing = bm.id === 'footwork' || bm.id === 'shadowbox' || bm.id === 'pivot', wantSt = /\b(southpaw|lefty|left[- ]handed)\b/i.test(txt) ? 'south' : 'orth';
       const effDir = c => c.stance && c.stance !== wantSt ? ({ left: 'right', right: 'left' })[c.dir] || c.dir : c.dir;
-      let clips = bm.clips; if (bm.id === 'footwork') { const dl = /\bleft\b/.test(st), dr = /\bright\b/.test(st), want = /\b(strafe|strafing|strafes|lateral|side to side|sideways)\b/.test(st) && !dl && !dr ? ['left', 'right'] : dl ? ['left'] : dr ? ['right'] : /\b(forward|forwards|pressure|in|advance)\b/.test(st) ? ['fwd'] : /\b(back|backwards|retreat|away)\b/.test(st) ? ['back'] : null; if (want) { const f = clips.filter(c => want.includes(effDir(c))); if (f.length) clips = f; } }
-      const many = /\d|\b(once|one|single|double|triple|two|three|twice)\b/.test(st) ? count : bm.id === 'footwork' ? 4 : bm.id === 'shadowbox' ? 2 : count; let last = -1;
+      let clips = bm.clips; if (bm.id === 'footwork' || bm.id === 'pivot') { const dl = /\bleft\b/.test(st), dr = /\bright\b/.test(st), want = /\b(strafe|strafing|strafes|lateral|side to side|sideways)\b/.test(st) && !dl && !dr ? ['left', 'right'] : dl ? ['left'] : dr ? ['right'] : /\b(forward|forwards|pressure|in|advance)\b/.test(st) ? ['fwd'] : /\b(back|backwards|retreat|away)\b/.test(st) ? ['back'] : null; if (want) { const f = clips.filter(c => want.includes(effDir(c))); if (f.length) clips = f; } }
+      const many = /\d|\b(once|one|single|double|triple|two|three|twice)\b/.test(st) ? count : bm.id === 'footwork' ? 3 : bm.id === 'shadowbox' ? 2 : count; let last = -1;
       // 👍 / 👎 on takes that used a clip make it come up more / less
       const cw = clips.map(c => Math.exp(Math.max(-3, Math.min(3, ((LIKES.clip || {})[c.cid]) || 0))));
       for (let c = 0; c < many; c++) { let r0 = rnd() * cw.reduce((x, y) => x + y), ci = 0; while (ci < clips.length - 1 && r0 > cw[ci]) { r0 -= cw[ci]; ci++; } if (clips.length > 1 && ci === last) ci = (ci + 1) % clips.length; last = ci;
@@ -7471,7 +7577,7 @@ function smartTextMotion0(txt0, seed) {
       const pm = POSE_MOVES.find(m => m.rx.test(st)), reps = pm.reps && !/\d|\b(once|one|single|double|triple|two|three|twice)\b/.test(st) ? 3 : count;
       for (let c = 0; c < reps; c++) { pieces.push(learnedPiece({ data: poseMoveData(pm) }, rnd)); plan.push('✨ ' + pm.name); }
       used = true;
-    } else { procN++; const a = S.textToMotion(st, 30, seed + i * 7919); pieces.push({ rest: a.rest, locals: a.locals, rootPos: a.rootPos, M: a.M }); plan.push(...a.plan); unknown.push(...(a.unknown || [])); styles.push(...(a.styles || [])); }
+    } else { procN++; const a = cleanMotion(S.textToMotion(st, 30, seed + i * 7919)); pieces.push({ rest: a.rest, locals: a.locals, rootPos: a.rootPos, M: a.M }); plan.push(...a.plan); unknown.push(...(a.unknown || [])); styles.push(...(a.styles || [])); }
   });
   if (!used) return S.textToMotion(txt, 30, seed);
   return { ...stitchPieces(pieces), plan, unknown, styles: [...new Set(styles)], choices: { clips: usedClips }, strikes: procN ? undefined : [] }; // real / key-pose moves only: nothing to swap punches into
