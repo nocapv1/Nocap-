@@ -17,7 +17,7 @@
 .libbar .btn.on{border-color:var(--accent);color:var(--accent);font-weight:700}
 #bigWrap{position:fixed;inset:0;z-index:58;background:var(--bg);overflow:auto;padding:max(8px,env(safe-area-inset-top)) 8px max(8px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px}
 #bigWrap .stage{display:block!important;padding:0!important;margin:0!important;position:static!important} #bigWrap #vview{display:none!important} #bigWrap .view.v3d{height:74vh!important;height:74svh!important} #bigWrap .timeline{position:static!important;margin:0!important} body.bigview #bigBtn{border-color:var(--accent);color:var(--accent)}
-#rateBar[hidden]{display:none!important} #rateBar .rb{min-height:0!important;width:38px;height:38px;padding:0;border-radius:50%;font-size:17px;background:var(--glass);backdrop-filter:blur(8px)} #rateBar .rb.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)} #rateBar .rb:disabled{opacity:.35}
+#rateBar[hidden],#rateLeft[hidden],#rateLeft .rb[hidden]{display:none!important} #rateLeft .rb,#rateBar .rb{min-height:0!important;width:38px;height:38px;padding:0;border-radius:50%;font-size:17px;background:var(--glass);backdrop-filter:blur(8px)} #rateBar .rb.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)} #rateBar .rb:disabled{opacity:.35}
 #teachBox [hidden]{display:none!important} #tchTabs .btn.on{border-color:var(--accent);color:var(--accent);font-weight:700}
 :root,[data-theme="gold"]{
   --bg:#050505; --panel:#0c0c0b; --panel2:#141310; --line:#2b2616; --text:#f4ecd6; --dim:#a99c78; --faint:#6e644b;
@@ -4342,6 +4342,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       <div id="three"></div>
       <button id="newBadge" hidden title="New: made by your AI from what it learned" style="position:absolute;right:8px;bottom:8px;z-index:6;width:24px;height:24px;padding:0;border:0;border-radius:50%;background:var(--accent);color:#04201d;font:800 13px/24px system-ui,sans-serif;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.4)">N</button>
       <div id="rateBar" hidden style="position:absolute;right:8px;top:50%;transform:translateY(-50%);z-index:6;display:flex;flex-direction:column;gap:10px;align-items:center"><span id="rateTxt" hidden></span><button class="btn small rb" id="rateUp" title="Like it: more like this">👍</button><button class="btn small rb" id="rateDown" title="Not for me: less like this">👎</button><button class="btn small rb" id="rateAgain" title="Another version">↻</button></div>
+      <div id="rateLeft" hidden style="position:absolute;left:8px;top:50%;transform:translateY(-50%);z-index:6;display:flex;flex-direction:column;gap:10px;align-items:center"><button class="btn small rb" id="rateNext" title="Next animation">⏭</button><button class="btn small rb" id="rateUndo" title="Bring back the one you just binned" hidden>↩</button></div>
     </div>
   </div>
   <div class="timeline">
@@ -5497,8 +5498,10 @@ function smoothFollow(tt) {
     let y1 = -Infinity; for (const r of anim.rootPos) y1 = Math.max(y1, r[1]);
     FPATH = { a: anim, xs, zs, y: Math.max(0.95, Math.min(y1 - 0.2, 0.95 + (y1 - 1.2) * 0.5)) }; FRAMED = anim; }
   const f = Math.max(0, Math.min(anim.n - 1, tt * anim.fps)), k0 = Math.floor(f), k1 = Math.min(anim.n - 1, k0 + 1), u = f - k0;
-  const tgt = new THREE.Vector3(FPATH.xs[k0] * (1 - u) + FPATH.xs[k1] * u, FPATH.y, FPATH.zs[k0] * (1 - u) + FPATH.zs[k1] * u), d = tgt.sub(controls.target);
-  if (!userOrbiting && d.lengthSq() > 1e-10) { controls.target.add(d); camera.position.add(d); key.position.set(controls.target.x + 3, 6, controls.target.z + 4); key.target.position.copy(controls.target); }
+  // moves the camera by how far his path moved since last frame: wherever you've turned, pinched or dragged the view to stays put
+  const tgt = new THREE.Vector3(FPATH.xs[k0] * (1 - u) + FPATH.xs[k1] * u, FPATH.y, FPATH.zs[k0] * (1 - u) + FPATH.zs[k1] * u), prevT = FPATH.last || tgt.clone(); FPATH.last = tgt.clone();
+  const d = tgt.clone().sub(prevT); d.y = 0;
+  if (d.lengthSq() > 1e-10) { controls.target.add(d); camera.position.add(d); key.position.set(controls.target.x + 3, 6, controls.target.z + 4); key.target.position.copy(controls.target); }
 }
 let FRAMED = null;
 function frameAnim(force) {
@@ -5796,9 +5799,10 @@ const LIB = {
   all() { return this.run('readonly', s => s.getAll()); }, del(id) { return this.run('readwrite', s => s.delete(id)); },
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
-const settingIds = ['armOut', 'faceGuard', 'antiFloat', 'stanceHold', 'steadyLegs', 'solverVer', 'propMode', 'physOn', 'physStr', 'physBounce', 'physWobble', 'physSway', 'physWeight', 'physRagdoll', 'physArms', 'physBody', 'physLegs', 'clipSpeed', 'evenPace', 'armPose', 'lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
+const LATE_SETTINGS = ['elbowGuard', 'proLimits'];
+const settingIds = ['elbowGuard', 'proLimits', 'armOut', 'faceGuard', 'antiFloat', 'stanceHold', 'steadyLegs', 'solverVer', 'propMode', 'physOn', 'physStr', 'physBounce', 'physWobble', 'physSway', 'physWeight', 'physRagdoll', 'physArms', 'physBody', 'physLegs', 'clipSpeed', 'evenPace', 'armPose', 'lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
 const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; s.edits = JSON.parse(JSON.stringify(EDITS)); return s; };
-const writeSettings = s => { if (!s) return; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); EDITS = s.edits ? JSON.parse(JSON.stringify(s.edits)) : { keys: {}, root: {}, spread: 0.5 }; try { edSyncLocks(); } catch (e) {} };
+const writeSettings = s => { if (!s) return; const raw = s; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; for (const id of LATE_SETTINGS) if (!(id in raw)) delete s[id]; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); EDITS = s.edits ? JSON.parse(JSON.stringify(s.edits)) : { keys: {}, root: {}, spread: 0.5 }; try { edSyncLocks(); } catch (e) {} };
 const DEFAULT_SETTINGS = readSettings(); // the app's starting settings, used for anything a take never saved
 for (const id of settingIds) $(id).addEventListener('change', () => setTimeout(() => recordChange(), 0));
 $('fingerSeg').addEventListener('click', () => setTimeout(() => recordChange(), 0));
@@ -5826,9 +5830,12 @@ function recordChange(extra) { // call after something changed
   history.push(extra ? { ...lastSnap, ...extra } : lastSnap); if (history.length > 50) history.shift();
   lastSnap = now; updateUndo(); autosave();
 }
+// saved almost at once (and straight away if you leave the app), so every slider you move stays with that animation
+document.addEventListener('visibilitychange', () => { if (document.hidden && AUTOSAVE_FN) { clearTimeout(autosaveT); AUTOSAVE_FN(); } });
+let AUTOSAVE_FN = null;
 function autosave() {
   clearTimeout(autosaveT);
-  autosaveT = setTimeout(async () => {
+  autosaveT = setTimeout(AUTOSAVE_FN = async () => { AUTOSAVE_FN = null;
     if (!currentTakeId) return;
     try {
       const take = await LIB.get(currentTakeId); if (!take) return;
@@ -5840,7 +5847,7 @@ function autosave() {
       const changed = before !== after; if (changed) take.mod = Date.now(); // edited takes move to the top of the Library
       await LIB.put(take); flashSaved(); if (changed) renderLibrary();
     } catch (e) { console.warn('autosave failed', e); }
-  }, 500);
+  }, 150);
 }
 function flashSaved() { const el = $('savedTag'); if (!el) return; el.textContent = '✓ saved'; el.style.opacity = 1; clearTimeout(el._t); el._t = setTimeout(() => (el.style.opacity = 0), 1400); }
 async function undoLast() {
@@ -7650,6 +7657,18 @@ function applyGuard(a, style, lead = 'Left', onlySide = null) {
   }
   return { ...a, locals, guard: style };
 }
+// 🔄 pivots: real boxing footwork underneath, and the whole body swung round the lead foot by 40-95° (eased, like a real pivot on the ball of the foot)
+function synthPivot(rnd, want, wantSt) {
+  const fw = MOVELIB && MOVELIB.moves.find(m => m.id === 'footwork'); if (!fw) return null;
+  const calm = fw.clips.filter(c => c.dir === 'around' || c.dir === 'back' || c.dir === 'fwd'), pool = calm.length ? calm : fw.clips, c = pool[Math.floor(rnd() * pool.length)];
+  const a0 = stitchPieces([learnedPiece({ data: c.data }, rnd, c.stance ? c.stance !== wantSt : undefined)]), n = a0.n, ix = a0.rest.index; if (n < 20) return null;
+  const side = want === 'left' ? 1 : want === 'right' ? -1 : (rnd() < 0.5 ? 1 : -1), deg = side * (40 + rnd() * 55), k0 = Math.min(n - 14, 4 + Math.floor(rnd() * 6)), len = Math.min(n - k0 - 2, 14 + Math.floor(rnd() * 8));
+  const lead = wantSt === 'south' ? 'RightFoot' : 'LeftFoot', P = S.fk(a0.rest, a0.locals[k0], a0.rootPos[k0]).pos[ix[lead]], locals = a0.locals.map(l => l.slice()), rootPos = a0.rootPos.map(r => r.slice());
+  for (let k = 0; k < n; k++) { const u = Math.max(0, Math.min(1, (k - k0) / len)), e = u * u * (3 - 2 * u), th = deg * e * Math.PI / 180, cs = Math.cos(th), sn = Math.sin(th);
+    const dx = rootPos[k][0] - P[0], dz = rootPos[k][2] - P[2]; rootPos[k][0] = P[0] + dx * cs + dz * sn; rootPos[k][2] = P[2] - dx * sn + dz * cs;
+    locals[k][0] = S.qnorm(S.qmul([0, Math.sin(th / 2), 0, Math.cos(th / 2)], locals[k][0])); }
+  return { anim: { ...a0, locals, rootPos }, deg: Math.round(deg), cid: c.cid };
+}
 function smartTextMotion0(txt0, seed) {
   let txt = expandSynonyms(applyWordMap(txt0)); const BM = MOVELIB ? MOVELIB.moves : [];
   if (BM.length && GYM_RE.test(txt) && !BM.some(m => m.rx.test(txt))) { // "gymnastics" on its own: a little floor routine, different each time
@@ -7688,6 +7707,9 @@ function smartTextMotion0(txt0, seed) {
       const many = /\d|\b(once|one|single|double|triple|two|three|twice)\b/.test(st) ? count : bm.id === 'footwork' ? 5 : bm.id === 'shadowbox' ? 2 : count; let last = -1;
       // 👍 / 👎 on takes that used a clip make it come up more / less
       const cw = clips.map(c => Math.exp(Math.max(-3, Math.min(3, ((LIKES.clip || {})[c.cid]) || 0))));
+      if (bm.id === 'pivot') { const dl = /\bleft\b/.test(st), dr = /\bright\b/.test(st), times = /\d|\b(twice|two|three|double)\b/.test(st) ? count : 1; let got = 0;
+        for (let c = 0; c < times; c++) { const pv = synthPivot(rnd, dl ? 'left' : dr ? 'right' : null, wantSt); if (pv) { pieces.push(pv.anim); plan.push(`🔄 pivot ${Math.abs(pv.deg)}° ${pv.deg > 0 ? 'left' : 'right'} (real footwork)`); usedClips.push(pv.cid); got++; } }
+        if (got) { used = true; return; } }
       for (let c = 0; c < many; c++) { let r0 = rnd() * cw.reduce((x, y) => x + y), ci = 0; while (ci < clips.length - 1 && r0 > cw[ci]) { r0 -= cw[ci]; ci++; } if (clips.length > 1 && ci === last) ci = (ci + 1) % clips.length; last = ci;
         const cl = clips[ci]; pieces.push(learnedPiece({ data: cl.data }, rnd, boxing && cl.stance ? cl.stance !== wantSt : undefined)); plan.push('🎬 ' + bm.name); usedClips.push(cl.cid); }
       used = true;
@@ -8078,22 +8100,31 @@ let LIKES = {}; try { LIKES = JSON.parse(localStorage.getItem('nocap-likes') || 
 let RATED = {}; try { RATED = JSON.parse(localStorage.getItem('nocap-rated') || '{}'); } catch (e) {}
 function rateUI() {
   { const c0 = anim && baseAnim && baseAnim.choices, nw = c0 && c0.latent ? c0.latent.length : 0; $('newBadge').hidden = !nw; $('newBadge').dataset.n = nw; }
-  const c = baseAnim && baseAnim.choices, show = !!(c && currentTakeId && ttmCaption); $('rateBar').hidden = !show; if (!show) return;
-  const r = RATED[currentTakeId]; $('rateUp').classList.toggle('on', r === 1); $('rateDown').classList.toggle('on', r === -1); $('rateUp').disabled = r === -1; $('rateDown').disabled = r === 1;
+  const show = !!(anim && currentTakeId); $('rateBar').hidden = !show; $('rateLeft').hidden = !show && !LAST_BINNED; if (!show) return;
+  const r = RATED[currentTakeId]; $('rateUp').classList.toggle('on', r === 1); $('rateDown').classList.toggle('on', r === -1); $('rateUp').disabled = $('rateDown').disabled = false;
+  $('rateAgain').hidden = !ttmCaption; $('rateUndo').hidden = !LAST_BINNED;
 }
+// 👍 = logged at once, remembered, and starred. 👎 = logged and the animation is binned (↩ brings it back), then on to the next.
+let LAST_BINNED = null, BIN_T = 0;
+async function libOrder() { const all = (await LIB.all()).filter(t => t.folder !== 'NoCap variants' && t.status !== 'processing'); return all.sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id); }
+async function nextTake() { const L = await libOrder(); if (!L.length) { if (lastPrompt) runTextMotion(lastPrompt); return; } const i = L.findIndex(t => String(t.id) === String(currentTakeId)), t = L[(i + 1) % L.length]; if (t && String(t.id) !== String(currentTakeId)) openTake(t, false, true); else if (lastPrompt) runTextMotion(lastPrompt); }
 function rate(v) {
-  const c = baseAnim && baseAnim.choices; if (!c || !currentTakeId || RATED[currentTakeId]) return;
+  const c = (baseAnim && baseAnim.choices) || {}; if (!currentTakeId) return; const prev = RATED[currentTakeId]; if (prev === v) { if (v > 0) toast('👍 Already liked and starred.'); return; }
   const add = (grp, k, d) => { if (!k) return; LIKES[grp] = LIKES[grp] || {}; LIKES[grp][k] = Math.max(-4, Math.min(4, (LIKES[grp][k] || 0) + d)); };
   for (const k of c.forms || []) add('form', k, v * 0.7);
   add('pace', c.pace, v * 0.5);
   for (const k of c.learned || []) add('learned', k, v * 0.8);
   for (const k of c.clips || []) add('clip', k, v * 0.9);
   LIKES.latent = LIKES.latent || {}; for (const { key, z } of c.latent || []) { const mu = LIKES.latent[key] || z.map(() => 0); LIKES.latent[key] = z.map((x, i) => Math.max(-2, Math.min(2, (mu[i] || 0) + (v > 0 ? 0.35 : -0.2) * (x - (mu[i] || 0))))); }
-  LIKES.count = (LIKES.count || 0) + 1; RATED[currentTakeId] = v; if (v > 0 && !STARRED.some(x => String(x) === String(currentTakeId))) { STARRED.push(currentTakeId); saveStarred(); if (LIB_VIEW === 'stars') renderLibrary(); }
+  LIKES.count = (LIKES.count || 0) + 1; RATED[currentTakeId] = v; if (v < 0) STARRED = STARRED.filter(x => String(x) !== String(currentTakeId)), saveStarred(); if (v > 0 && !STARRED.some(x => String(x) === String(currentTakeId))) { STARRED.push(currentTakeId); saveStarred(); if (LIB_VIEW === 'stars') renderLibrary(); }
   try { localStorage.setItem('nocap-likes', JSON.stringify(LIKES)); localStorage.setItem('nocap-rated', JSON.stringify(RATED)); } catch (e) {}
   S.setPrefs(LIKES); rateUI();
-  toast(v > 0 ? `👍 Learned from ${LIKES.count} rating${LIKES.count > 1 ? 's' : ''} so far — more like this from now on.` : `👎 Noted — less like this. Tap ↻ Another for a new version.`);
+  if (v > 0) { toast(`👍 Saved: liked, starred and remembered (${LIKES.count} rating${LIKES.count > 1 ? 's' : ''} so far). ⏭ for the next one.`); return; }
+  const id = currentTakeId; (async () => { try { const t = await LIB.get(id); if (t) { LAST_BINNED = t; clearTimeout(BIN_T); BIN_T = setTimeout(() => { LAST_BINNED = null; rateUI(); }, 15000); await LIB.del(id); }
+    toast('👎 Binned: it\'s gone from your Library and it learned less like that. ↩ brings it back.', false, 6000); renderLibrary(); await nextTake(); } catch (e) {} })();
 }
+$('rateNext').onclick = () => nextTake();
+$('rateUndo').onclick = async () => { const t = LAST_BINNED; if (!t) return; LAST_BINNED = null; delete RATED[t.id]; try { localStorage.setItem('nocap-rated', JSON.stringify(RATED)); await putTake(t); } catch (e) {} renderLibrary(); openTake(t, false, true); toast('↩ Brought back.'); rateUI(); };
 $('newBadge').onclick = () => toast(`N = new: ${$('newBadge').dataset.n} move${+$('newBadge').dataset.n === 1 ? '' : 's'} in this animation ${+$('newBadge').dataset.n === 1 ? 'was' : 'were'} made up by your AI from what it learned (not copied from a video).`, false, 6000);
 $('rateUp').onclick = () => rate(1); $('rateDown').onclick = () => rate(-1);
 $('rateAgain').onclick = () => { if (lastPrompt) runTextMotion(lastPrompt); };
