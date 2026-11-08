@@ -1091,6 +1091,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
 
     // ---- depth recovery: limbs pointing at / away from the camera look too short; restore true length along the camera axis ----
     if (opt.depthFix !== false) P = recoverDepth(P, dt);
+    if (opt.trueDepth && piF) P = imageDepth(P, piF, fps, (Math.max(opt.W, opt.H) / 2) / Math.tan((+opt.fov || 60) * Math.PI / 360), opt.W / 2, opt.H / 2);
     const M = measure(pw.map(a => a.map(toY)), hlF && hlF.map(a => a.map(toY)), hrF && hrF.map(a => a.map(toY)));
     const synthLegs = ['walk', 'run', 'sit', 'idle'].includes(opt.lowerBody);
     if (synthLegs) { // legs never seen: normal proportions from the upper body
@@ -1361,7 +1362,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   // The foot carrying the weight (the lower one; both share it when level) can't move on the floor, so the hips' travel comes from
   // that foot, never from the AI's guess of where the body is. Boxers on their toes still count. Only when he's clearly in the air
   // (a hop / jump) does the video's own travel carry him.
-  let DESLIDE_PULL = 1.0, DESLIDE_BASE = 0.5;
+  let DESLIDE_PULL = 1.0, DESLIDE_BASE = 0.5, DESLIDE_SMOOTH = 0.06;
   function deslideRoot(FL, rootPos, floor, fps) {
     const n = rootPos.length;
     const hL = FL.map(f => f.Left.low), hR = FL.map(f => f.Right.low), win = Math.max(1, Math.round(0.05 * fps));
@@ -1375,7 +1376,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const fz = -(w * (P(k, 'Left')[2] - P(k - 1, 'Left')[2]) + (1 - w) * (P(k, 'Right')[2] - P(k - 1, 'Right')[2]));
       st.push([u * (rootPos[k][0] - rootPos[k - 1][0]) + (1 - u) * fx, u * (rootPos[k][2] - rootPos[k - 1][2]) + (1 - u) * fz]);
     }
-    const h = Math.max(1, Math.round(0.03 * fps)), sx = loess(st.map(v => v[0]), h), sz = loess(st.map(v => v[1]), h);
+    const h = Math.max(1, Math.round(DESLIDE_SMOOTH * fps)), sx = loess(st.map(v => v[0]), h), sz = loess(st.map(v => v[1]), h);
     const out = [rootPos[0].slice()];
     for (let k = 1; k < n; k++) out.push([out[k - 1][0] + sx[k - 1], rootPos[k][1], out[k - 1][2] + sz[k - 1]]);
     // never drift away from where the video really has him: a slow pull (≈1.5 s) back onto the video's path. Too slow to show as a
@@ -1440,6 +1441,73 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         for (const c of kids) p[c] = [p[c][0], p[c][1], p[c][2] + shift];
       }
     }
+    return out;
+  }
+
+  // ---- True depth (image-anchored 3D) ----
+  // The body AI's 3D guess flattens depth: knees look straighter and stances narrower than they are (studies put MediaPipe's knee bend
+  // ~14° short on average). The 2D picture is far more exact. So every bone is laid where the PICTURE puts it, at its real length, and
+  // only how far it points toward / away from the camera is worked out (from its length); the 3D guess is used just to say "toward"
+  // or "away". Bent knees, wide stances and leans come out as deep as they really are.
+  let SMOOTH_IMG = 0.12, SMOOTH_DEPTH = 0.25;
+  function imageDepth(P, piF0, fps, f, cx, cy) {
+    const n = P.length; if (n < 3) return P;
+    // the picture points, steadied a touch over time (pixel noise turns into depth wobble otherwise)
+    const hS = Math.max(1, Math.round(SMOOTH_IMG * fps));
+    const piF = (() => { const o = piF0.map(p => p.map(q => q.slice())); for (let j = 0; j < 33; j++) for (const c of [0, 1]) { const sm = loess(piF0.map(p => p[j][c]), hS); for (let k = 0; k < n; k++) o[k][j][c] = sm[k]; } return o; })();
+    const vlen = v => Math.hypot(v[0], v[1], v[2]);
+    const R = k => mid(P[k][23], P[k][24]), Ri = k => mid(piF[k][23], piF[k][24]);
+    // which way the picture's axes run in the 3D (normally x same, y flipped)
+    let cX = 0, cY = 0; for (let k = 0; k < n; k++) for (const j of [15, 16, 27, 28, 0]) { const a = sub(P[k][j], R(k)), b = sub(piF[k][j], Ri(k)); cX += a[0] * b[0]; cY += a[1] * b[1]; }
+    const sx = cX >= 0 ? 1 : -1, sy = cY >= 0 ? 1 : -1;
+    // bones: [from, to, carried points]; 'R' = hip centre, 'S' = shoulder centre
+    // (arms are left to the AI's own 3D and carried with the shoulders: forearms are short and often point straight at the camera
+    // when punching, where the picture can't tell toward from away; tests on real mocap showed the legs / body gain, the arms don't)
+    const BONES = [['R', 23, []], ['R', 24, []], ['R', 'S', []], ['S', 11, [13, 15, 17, 19, 21]], ['S', 12, [14, 16, 18, 20, 22]],
+      [23, 25, []], [25, 27, []], [27, 29, []], [27, 31, []], [24, 26, []], [26, 28, []], [28, 30, []], [28, 32, []]];
+    const at = (Q, k, j) => (j === 'R' ? mid(Q[k][23], Q[k][24]) : j === 'S' ? mid(Q[k][11], Q[k][12]) : Q[k][j]);
+    const atI = (k, j) => (j === 'R' ? Ri(k) : j === 'S' ? mid(piF[k][11], piF[k][12]) : piF[k][j]);
+    // real bone lengths: when a bone lies across the picture its 3D length is right; take a high percentile
+    const L = BONES.map(([a, b]) => percentile(P.map((_, k) => vlen(sub(at(P, k, b), at(P, k, a)))), 0.9));
+    // picture scale at the hips (px per metre) each frame, from the least-foreshortened bones, steadied over ~0.6 s -> camera distance
+    const scRaw = P.map((_, k) => { const r = BONES.map(([a, b], i) => { const d = sub(atI(k, b), atI(k, a)); return Math.hypot(d[0], d[1]) / (L[i] || 1); }).sort((x, y) => y - x); return r[2] || r[0] || 1; });
+    const w = Math.max(2, Math.round(0.3 * fps));
+    const scl = scRaw.map((_, k) => { const nb = []; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) nb.push(scRaw[q]); return percentile(nb, 0.7) || 1; });
+    const out = P.map(p => p.map(q => q.slice()));
+    const lastSign = BONES.map(() => 1);
+    for (let k = 0; k < n; k++) {
+      const Q = out[k], D = f / scl[k], r0 = R(k), ur = Ri(k);
+      // where the picture puts a point, in metres across the camera view, allowing for it being nearer / further than the hips
+      const metric = (j, zr) => { const u = atI(k, j), d = D - zr; return [sx * ((u[0] - cx) * d - (ur[0] - cx) * D) / f, sy * ((u[1] - cy) * d - (ur[1] - cy) * D) / f]; };
+      let zrel = j => at(P, k, j)[2] - r0[2];
+      let solved;
+      for (let it = 0; it < 2; it++) { // 2nd pass uses the better depths from the 1st for the perspective
+        solved = { R: r0 };
+        for (let i = 0; i < BONES.length; i++) {
+          const [a, b] = BONES[i], A = solved[a];
+          if ((a === 'R' && b === 24) || (a === 'S' && b === 12)) { const o = a === 'R' ? 23 : 11; solved[b] = sub(sc(A, 2), solved[o]); continue; } // pelvis / shoulders are rigid: the right side mirrors the left
+          const mb = metric(b, zrel(b)), ma = metric(a, zrel(a)), d2 = [mb[0] - ma[0], mb[1] - ma[1]];
+          let pl = Math.hypot(d2[0], d2[1]); const Lb = L[i];
+          if (it === 0) { const dzAI = at(P, k, b)[2] - at(P, k, a)[2]; if (Math.abs(dzAI) > 0.12 * Lb) lastSign[i] = Math.sign(dzAI); }
+          let dz = 0;
+          if (pl >= Lb) { d2[0] *= Lb / pl; d2[1] *= Lb / pl; } else dz = lastSign[i] * Math.sqrt(Lb * Lb - pl * pl);
+          solved[b] = [A[0] + d2[0], A[1] + d2[1], A[2] + dz];
+        }
+        const sv = solved; zrel = j => (j === 'R' ? 0 : j === 'S' ? sv.S[2] - r0[2] : (sv[j] ? sv[j][2] : at(P, k, j)[2]) - r0[2]);
+      }
+      // blend toward the image-anchored pose (keeps a little of the AI's own 3D for stability), carry hands / head with their parents
+      const W = 0.8, sOld = mid(Q[11], Q[12]);
+      for (const [, b, kids] of BONES) {
+        if (b === 'R' || b === 'S') continue;
+        const old = Q[b]; Q[b] = lerp(old, solved[b], W); const delta = sub(Q[b], old);
+        for (const c of kids) Q[c] = add(Q[c], delta);
+      }
+      const dS = sub(lerp(sOld, solved.S, W), sOld);
+      for (let j = 0; j <= 10; j++) Q[j] = add(Q[j], dS); // head follows the shoulders
+    }
+    // the correction itself changes slowly (how deep a stance is, how far he leans): smooth it over time so it never adds wobble
+    const hD = Math.max(1, Math.round(SMOOTH_DEPTH * fps));
+    for (let j = 0; j < 33; j++) for (let c = 0; c < 3; c++) { const d = loess(out.map((q, k) => q[j][c] - P[k][j][c]), hD); for (let k = 0; k < n; k++) out[k][j][c] = P[k][j][c] + d[k]; }
     return out;
   }
 
@@ -2873,7 +2941,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   }
 
   const setPrefs = p => { PREFS = p || {}; };
-  g.Solver = { setPrefs, smoothAnim, physics, faceCovered, guessLowerBody, sliceAnim, textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, floorFinder, estimateFov, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
+  g.Solver = { imageDepth, setPrefs, smoothAnim, physics, faceCovered, guessLowerBody, sliceAnim, textToMotion, parsePrompt, toFBX, eulerXYZ, solveAll, solveFrame, buildRest, measure, fk, floorFinder, estimateFov, sample, toBVH, toJSON, eulerZXY, quatToMat, qmul, qconj, qrot, qslerp, qnorm, NAME_MAPS, FINGERS, HAND_TEMPLATE, MIRROR, solveRoot, smoothSeries, fillGaps };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -4332,10 +4400,10 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <h2><span class="n">3</span>Refine <span style="margin-left:auto;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400">applies instantly</span></h2>
     <div class="row"><label>Smoothing <span class="mini">left = snappy · right = very smooth</span></label><span><input type="range" id="smooth" min="0" max="1" step="0.01" value="0.6"></span><span class="val" id="smoothV">0.60</span></div>
     <div class="sub">Feet</div>
-    <div class="row"><label>Deslide <span class="mini">feet stay put on the floor, no ice-skating · on for every new video</span></label><input type="checkbox" id="deslide" checked></div>
-    <div class="row"><label>Anti-slide <span class="mini">applied while processing</span></label><input type="checkbox" id="footLock"></div>
+    <div class="row"><label>Anti-slide <span class="mini">planted feet stay flat and still on the floor, no sliding · on for every new video</span></label><input type="checkbox" id="footLock"></div>
+    <input type="checkbox" id="deslide" hidden><input type="checkbox" id="slideV2" hidden><input type="checkbox" id="trueDepth" hidden>
     <input type="checkbox" id="antiJitter" checked hidden>
-    <div class="row"><label>Foot lock <span class="mini">plant &amp; flatten on the floor</span></label><input type="checkbox" id="footIK"></div>
+    <input type="checkbox" id="footIK" hidden>
     <div class="row"><label>Contact sensitivity</label><span><input type="range" id="contact" min="0.02" max="0.15" step="0.005" value="0.07"></span><span class="val" id="contactV">7cm</span></div>
     <div class="row"><label>Knee guard <span class="mini">no locked, snapping or backwards knees</span></label><input type="checkbox" id="kneeGuard"></div>
     <div class="row"><label>Ankle limits <span class="mini">no over-twist</span></label><input type="checkbox" id="ankleLimit"></div>
@@ -4909,7 +4977,7 @@ async function loadVideo(file, name, opts = {}) {
   info.innerHTML = `<span style="color:var(--accent);font-weight:600">✓ Video loaded</span> — ${name} · ${W}×${H} · ${D.toFixed(1)}s` + (converted ? ' · converted' : '') + '<br>Then tap <b>Generate motion</b> (✂️ on the play bar re-opens the trim window).';
   $('drop').innerHTML = '<b>✓ ' + name.replace(/[<>&]/g, '') + '</b><br>Tap to choose a different video';
   
-  if (!opts.fromLibrary) for (const id of ['deslide', 'smartHands']) $(id).checked = true; // every new video gets the deslider and smart hands built in
+  if (!opts.fromLibrary) for (const id of ['footLock', 'slideV2', 'trueDepth', 'smartHands']) $(id).checked = true; // every new video: anti-slide (new engine), true depth and smart hands built in
   if (D > 0.5 && !opts.fromLibrary && !window.__studyQuiet) setTimeout(openTrimWindow, 300); // studying for the AI: no trim window, it watches the whole video
   $('go').disabled = false; drawOverlay(); $('bigPlay').style.display = 'block';
   $('scrub').disabled = false; $('play').disabled = false; updateTimeLabel(); requestRender();
@@ -5449,7 +5517,7 @@ $('armOutSeg').onclick = e => { const b = e.target.closest('button'); if (!b) re
 
 // ---------- solve (re-runs instantly on refine changes) ----------
 function opts() {
-  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, lowerBody: $('lowerBody').value, armPose: $('armPose').value, armOut: $('armOut').value, faceGuard: $('faceGuard').checked, antiFloat: $('antiFloat').checked, contactHeight: +$('contact').value, contactSpeed: 0.6, ...($('stanceHold').checked ? { stanceHold: true } : {}), ...($('steadyLegs').checked ? { steadyLegs: true } : {}), ...($('deslide').checked ? { deslide: true } : {}), ...($('smartHands').checked ? { smartHands: true } : {}) }; // only added when on, so saved takes keep their exact baked result
+  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('slideV2').checked ? false : $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('slideV2').checked ? $('footLock').checked : $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, lowerBody: $('lowerBody').value, armPose: $('armPose').value, armOut: $('armOut').value, faceGuard: $('faceGuard').checked, antiFloat: $('antiFloat').checked, contactHeight: +$('contact').value, contactSpeed: 0.6, ...($('stanceHold').checked ? { stanceHold: true } : {}), ...($('steadyLegs').checked ? { steadyLegs: true } : {}), ...(($('slideV2').checked ? $('footLock').checked : $('deslide').checked) ? { deslide: true } : {}), ...($('trueDepth').checked ? { trueDepth: true } : {}), ...($('smartHands').checked ? { smartHands: true } : {}) }; // only added when on, so saved takes keep their exact baked result
 }
 let solveT;
 let BAKE = null; // { key, anim } – the motion exactly as it was made for the open take
@@ -5469,7 +5537,7 @@ function solve(rebuild = false) {
 }
 $('fingerSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; document.querySelectorAll('#fingerSeg button').forEach(x => x.classList.toggle('on', x === b)); solve(); };
 for (const id of ['smooth', 'contact', 'fov', 'headTilt']) $(id).addEventListener('change', () => { clearTimeout(solveT); solveT = setTimeout(() => solve(), 30); }); // update once you let go (no stutter while dragging)
-for (const id of ['deslide', 'smartHands', 'armOut', 'faceGuard', 'antiFloat', 'stanceHold', 'steadyLegs', 'solverVer', 'armPose', 'lowerBody', 'footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
+for (const id of ['deslide', 'slideV2', 'trueDepth', 'smartHands', 'armOut', 'faceGuard', 'antiFloat', 'stanceHold', 'steadyLegs', 'solverVer', 'armPose', 'lowerBody', 'footLock', 'autoLevel', 'inPlace', 'mirrored', 'footIK', 'handMode', 'ankleLimit', 'antiJitter', 'kneeGuard', 'elbowGuard', 'proLimits']) $(id).addEventListener('change', () => solve(true));
 
 function setReady(on) { for (const id of ['exFBX', 'exBVH', 'exGLB', 'exJSON', 'editBtn']) $(id).disabled = !on; if (on && !MODEL.obj) setTimeout(() => restoreModel(), 0); else if (on && MODEL.obj) { if (MODEL.on && CHARS[MODEL.id]) useChar(CHARS[MODEL.id], MODEL.id); else scene.add(MODEL.prep.wrap); } } // re-fit the character to the new motion's skeleton
 function showStats() {
@@ -5563,9 +5631,143 @@ function makeRig(rest, nameMap = n => n) {
   const group = new THREE.Group(); group.name = 'Character'; group.add(mesh);
   return { group, bones, mesh };
 }
+// ---- Smooth human body: one continuous skin over the skeleton (like a scanned mannequin), soft-weighted at every joint ----
+// Built from the skeleton's own proportions as a smooth blend of body shapes (no seams, no capsules), then skinned so knees,
+// elbows, hips and shoulders bend like a real character's. Same Unity-humanoid bones as before; only the look changes.
+const SMOOTH_CACHE = new Map();
+function smoothBodyGeometry(rest) {
+  const key = JSON.stringify(rest.M) + '|' + (+LOOK.thick || 1); if (SMOOTH_CACHE.has(key)) return SMOOTH_CACHE.get(key).clone();
+  const J = rest.joints, M = rest.M, ix = rest.index, TH = +LOOK.thick || 1;
+  const rw = []; J.forEach((j, i) => { rw[i] = j.parent < 0 ? [0, 0, 0] : [rw[j.parent][0] + j.offset[0], rw[j.parent][1] + j.offset[1], rw[j.parent][2] + j.offset[2]]; });
+  const P = n => rw[ix[n]], A3 = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], S3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], K3 = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+  const T = M.torso / 0.52, sw = M.shoulderW, hw = M.hipW;
+  const prims = []; // [type, ...]: 'c' = tapered capsule a,b,ra,rb ; 'e' = ellipsoid c,r
+  const cap = (a, b, ra, rb) => prims.push(['c', a, b, ra * TH, rb * TH]);
+  const ell = (c, r) => prims.push(['e', c, r.map(v => v * TH)]);
+  for (const sd of ['Left', 'Right']) {
+    const x = sd === 'Left' ? 1 : -1, end = n => A3(P(n), J[ix[n]].end || [0, 0, 0]);
+    cap(P(sd + 'UpLeg'), P(sd + 'Leg'), 0.082 * T, 0.054 * T);                                    // thigh
+    cap(P(sd + 'Leg'), P(sd + 'Foot'), 0.05 * T, 0.034 * T);                                      // shin
+    ell(A3(P(sd + 'Leg'), [0, -0.12 * T, -0.022]), [0.05 * T, 0.1 * T, 0.05 * T]);                // calf
+    const heel = A3(P(sd + 'Foot'), [0, -M.ankleH * 0.55, -0.02]);
+    cap(heel, P(sd + 'ToeBase'), 0.036, 0.034); cap(P(sd + 'ToeBase'), end(sd + 'ToeBase'), 0.03, 0.022);       // foot
+    ell(P(sd + 'Foot'), [0.034, 0.04, 0.036]);                                                     // ankle
+    ell(P(sd + 'Arm'), [0.056 * T, 0.054 * T, 0.054 * T]);                                        // deltoid
+    cap(A3(P('Spine2'), [x * 0.05, 0.16 * T, -0.01]), P(sd + 'Arm'), 0.055 * T, 0.048 * T);        // trapezius / clavicle
+    cap(P(sd + 'Arm'), P(sd + 'ForeArm'), 0.047 * T, 0.037 * T);                                   // upper arm
+    cap(P(sd + 'ForeArm'), P(sd + 'Hand'), 0.04 * T, 0.026 * T);                                   // forearm
+    const h = P(sd + 'Hand'), m1 = ix[sd + 'HandMiddle1'] != null ? P(sd + 'HandMiddle1') : A3(h, [x * 0.09, 0, 0]);
+    ell(A3(h, K3(S3(m1, h), 0.5)), [0.045 * M.hand / 0.095, 0.017, 0.041 * M.hand / 0.095]);       // palm
+  }
+  ell(A3(P('Hips'), [0, -0.01, -0.008]), [hw * 0.92, 0.1 * T, 0.098 * T]);                          // pelvis
+  ell(A3(P('Hips'), [0, -0.05, -0.035]), [hw * 0.78, 0.085 * T, 0.075 * T]);                         // seat
+  ell(A3(P('Spine1'), [0, -0.01, -0.012]), [hw * 0.7, 0.15 * T, 0.082 * T]);                         // waist
+  ell(A3(P('Spine2'), [0, 0.085 * T, -0.005]), [sw * 0.47, 0.155 * T, 0.098 * T]);                   // chest
+  cap(P('Neck'), P('Head'), 0.05 * T, 0.045 * T);                                                   // neck
+  ell(A3(P('Head'), [0, 0.085, 0.012]), [0.08, 0.104, 0.094]);                                      // head
+  ell(A3(P('Head'), [0, 0.03, 0.04]), [0.06, 0.06, 0.065]);                                         // jaw
+  ell(A3(P('Head'), [0, 0.072, 0.1]), [0.013, 0.022, 0.016]);                                       // nose: shows which way he faces
+  const kS = 0.045;
+  const sdf = (x, y, z) => {
+    let d = 1e9;
+    for (const p of prims) {
+      let e;
+      if (p[0] === 'c') {
+        const [, a, b, ra, rb] = p, bx = b[0] - a[0], by = b[1] - a[1], bz = b[2] - a[2], px = x - a[0], py = y - a[1], pz = z - a[2];
+        const t = Math.max(0, Math.min(1, (px * bx + py * by + pz * bz) / (bx * bx + by * by + bz * bz || 1)));
+        e = Math.hypot(px - bx * t, py - by * t, pz - bz * t) - (ra + (rb - ra) * t);
+      } else {
+        const [, c, r] = p, qx = (x - c[0]) / r[0], qy = (y - c[1]) / r[1], qz = (z - c[2]) / r[2];
+        const k0 = Math.hypot(qx, qy, qz), k1 = Math.hypot(qx / r[0], qy / r[1], qz / r[2]) || 1e-6; e = k0 * (k0 - 1) / k1;
+      }
+      const h = Math.max(kS - Math.abs(d - e), 0) / kS; d = Math.min(d, e) - h * h * kS * 0.25; // smooth union: shapes flow into each other
+    }
+    return d;
+  };
+  // sample on a grid and extract the surface (naive surface nets)
+  let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+  for (const p of prims) { const pts = p[0] === 'c' ? [p[1], p[2]] : [p[1]], r = p[0] === 'c' ? Math.max(p[3], p[4]) : Math.max(...p[2]); for (const q of pts) for (let c = 0; c < 3; c++) { mn[c] = Math.min(mn[c], q[c] - r); mx[c] = Math.max(mx[c], q[c] + r); } }
+  const hS = 0.014; mn = mn.map(v => v - 2 * hS); mx = mx.map(v => v + 2 * hS);
+  const nx = Math.ceil((mx[0] - mn[0]) / hS) + 1, ny = Math.ceil((mx[1] - mn[1]) / hS) + 1, nz = Math.ceil((mx[2] - mn[2]) / hS) + 1;
+  const F = new Float32Array(nx * ny * nz), id = (i, j, k) => i + nx * (j + ny * k);
+  // only evaluate near the body: coarse skip using each primitive's bounding box would be faster; the full grid is still quick
+  // coarse pass first (every 3rd point); only points near the skin get the exact value
+  const C3 = 3, cx3 = Math.ceil(nx / C3) + 1, cy3 = Math.ceil(ny / C3) + 1, cz3 = Math.ceil(nz / C3) + 1, FC = new Float32Array(cx3 * cy3 * cz3);
+  for (let k = 0; k < cz3; k++) for (let j = 0; j < cy3; j++) for (let i = 0; i < cx3; i++) FC[i + cx3 * (j + cy3 * k)] = sdf(mn[0] + i * C3 * hS, mn[1] + j * C3 * hS, mn[2] + k * C3 * hS);
+  const far = C3 * hS * 1.8;
+  for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const c = FC[Math.round(i / C3) + cx3 * (Math.round(j / C3) + cy3 * Math.round(k / C3))];
+    F[id(i, j, k)] = Math.abs(c) > far ? c : sdf(mn[0] + i * hS, mn[1] + j * hS, mn[2] + k * hS);
+  }
+  const vIdx = new Int32Array((nx - 1) * (ny - 1) * (nz - 1)).fill(-1), cid = (i, j, k) => i + (nx - 1) * (j + (ny - 1) * k);
+  const pos = [];
+  const E = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]];
+  for (let k = 0; k < nz - 1; k++) for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) {
+    const v = [], c = [];
+    for (let q = 0; q < 8; q++) { const di = q & 1, dj = (q >> 1) & 1, dk = (q >> 2) & 1; v.push(F[id(i + di, j + dj, k + dk)]); c.push([i + di, j + dj, k + dk]); }
+    let neg = 0; for (const x of v) if (x < 0) neg++; if (neg === 0 || neg === 8) continue;
+    let sx = 0, sy = 0, sz = 0, cnt = 0;
+    for (const [a, b] of E) { if ((v[a] < 0) === (v[b] < 0)) continue; const t = v[a] / (v[a] - v[b]); sx += c[a][0] + (c[b][0] - c[a][0]) * t; sy += c[a][1] + (c[b][1] - c[a][1]) * t; sz += c[a][2] + (c[b][2] - c[a][2]) * t; cnt++; }
+    vIdx[cid(i, j, k)] = pos.length / 3; pos.push(mn[0] + sx / cnt * hS, mn[1] + sy / cnt * hS, mn[2] + sz / cnt * hS);
+  }
+  const tri = [];
+  const quad = (a, b, c, d, flip) => { if (a < 0 || b < 0 || c < 0 || d < 0) return; if (flip) tri.push(a, b, c, a, c, d); else tri.push(a, c, b, a, d, c); };
+  for (let k = 1; k < nz - 1; k++) for (let j = 1; j < ny - 1; j++) for (let i = 1; i < nx - 1; i++) {
+    const f0 = F[id(i, j, k)] < 0;
+    if (i < nx - 1 && f0 !== (F[id(i + 1, j, k)] < 0)) quad(vIdx[cid(i, j - 1, k - 1)], vIdx[cid(i, j, k - 1)], vIdx[cid(i, j, k)], vIdx[cid(i, j - 1, k)], f0);
+    if (j < ny - 1 && f0 !== (F[id(i, j + 1, k)] < 0)) quad(vIdx[cid(i - 1, j, k - 1)], vIdx[cid(i - 1, j, k)], vIdx[cid(i, j, k)], vIdx[cid(i, j, k - 1)], f0);
+    if (k < nz - 1 && f0 !== (F[id(i, j, k + 1)] < 0)) quad(vIdx[cid(i - 1, j - 1, k)], vIdx[cid(i, j - 1, k)], vIdx[cid(i, j, k)], vIdx[cid(i - 1, j, k)], f0);
+  }
+  const nV = pos.length / 3;
+  // a light smoothing pass over the surface (no stair-steps)
+  { const nb = Array.from({ length: nV }, () => new Set()); for (let t = 0; t < tri.length; t += 3) { const [a, b, c] = [tri[t], tri[t + 1], tri[t + 2]]; nb[a].add(b).add(c); nb[b].add(a).add(c); nb[c].add(a).add(b); }
+    for (let it = 0; it < 2; it++) { const o = pos.slice(); for (let v = 0; v < nV; v++) { if (!nb[v].size) continue; let x = 0, y = 0, z = 0; for (const u of nb[v]) { x += o[u * 3]; y += o[u * 3 + 1]; z += o[u * 3 + 2]; } const m = nb[v].size; pos[v * 3] = o[v * 3] * 0.5 + x / m * 0.5; pos[v * 3 + 1] = o[v * 3 + 1] * 0.5 + y / m * 0.5; pos[v * 3 + 2] = o[v * 3 + 2] * 0.5 + z / m * 0.5; } } }
+  // skin weights: each point follows the nearest bones, blended smoothly where they meet (soft knees / elbows / hips)
+  const segs = [];
+  J.forEach((j, i) => { if (j.parent < 0 || /Hand(Thumb|Index|Middle|Ring|Pinky)/.test(j.name)) return; const pn = J[j.parent].name; if (/Hand(Thumb|Index|Middle|Ring|Pinky)/.test(pn)) return;
+    const a = pn === 'Spine2' && /Shoulder/.test(j.name) ? A3(rw[j.parent], [0, 0.2 * M.torso, 0]) : rw[j.parent]; segs.push([a, rw[i], j.parent]); });
+  for (const sd of ['Left', 'Right']) { const h = ix[sd + 'Hand'], m1 = ix[sd + 'HandMiddle1']; segs.push([rw[h], m1 != null ? rw[m1] : rw[h], h]); segs.push([rw[ix[sd + 'ToeBase']], A3(rw[ix[sd + 'ToeBase']], J[ix[sd + 'ToeBase']].end || [0, 0, 0.05]), ix[sd + 'ToeBase']]); }
+  segs.push([rw[ix.Head], A3(rw[ix.Head], [0, 0.2, 0]), ix.Head]);
+  const si = new Uint16Array(nV * 4), swt = new Float32Array(nV * 4);
+  for (let v = 0; v < nV; v++) {
+    const x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2], ds = [];
+    for (const [a, b, bi] of segs) { const bx = b[0] - a[0], by = b[1] - a[1], bz = b[2] - a[2], px = x - a[0], py = y - a[1], pz = z - a[2]; const t = Math.max(0, Math.min(1, (px * bx + py * by + pz * bz) / (bx * bx + by * by + bz * bz || 1))); ds.push([Math.hypot(px - bx * t, py - by * t, pz - bz * t), bi]); }
+    ds.sort((p, q) => p[0] - q[0]);
+    const best = new Map(); for (const [d, bi] of ds) { if (best.size >= 4 && !best.has(bi)) continue; const w = Math.exp(-(d - ds[0][0]) / 0.018); best.set(bi, (best.get(bi) || 0) + w); }
+    const arr = [...best.entries()].sort((p, q) => q[1] - p[1]).slice(0, 4), tot = arr.reduce((t2, e) => t2 + e[1], 0) || 1;
+    arr.forEach(([bi, w], q) => { si[v * 4 + q] = bi; swt[v * 4 + q] = w / tot; });
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(tri);
+  g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4)); g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(swt, 4));
+  g.computeVertexNormals();
+  SMOOTH_CACHE.set(key, g); if (SMOOTH_CACHE.size > 6) SMOOTH_CACHE.delete(SMOOTH_CACHE.keys().next().value);
+  return g.clone();
+}
+function makeSmoothRig(rest) {
+  const base = makeRig(rest); // same bones; we swap in the smooth skin and keep the classic fingers
+  const J = rest.joints, rwF = []; J.forEach((j, i) => { rwF[i] = j.parent < 0 ? new THREE.Vector3() : rwF[j.parent].clone().add(new THREE.Vector3(...j.offset)); });
+  let body;
+  try { body = smoothBodyGeometry(rest); } catch (e) { console.warn('smooth body failed', e); return base; }
+  // fingers: slim rounded segments, each following its own finger bone
+  const geos = [body], Y = new THREE.Vector3(0, 1, 0);
+  const fin = (a, b, r, bi) => { const d = b.clone().sub(a), L = d.length(); if (L < 1e-4) return; const g = new THREE.CapsuleGeometry(r, Math.max(0.001, L - r * 0.4), 4, 10); g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(Y, d.normalize())); const m = a.clone().add(b).multiplyScalar(0.5); g.translate(m.x, m.y, m.z);
+    const n = g.attributes.position.count, si = new Uint16Array(n * 4), sw = new Float32Array(n * 4); for (let v = 0; v < n; v++) { si[v * 4] = bi; sw[v * 4] = 1; } g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4)); g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4)); g.deleteAttribute('uv'); geos.push(g.index ? g : g); };
+  const rF = 0.0088 * (rest.M.hand / 0.095) * (+LOOK.thick || 1);
+  J.forEach((j, i) => { if (j.parent < 0) return; const pn = J[j.parent].name; if (/Hand(Thumb|Index|Middle|Ring|Pinky)/.test(pn)) fin(rwF[j.parent], rwF[i], rF, j.parent); if (/Hand(Thumb|Index|Middle|Ring|Pinky)/.test(j.name) && j.end) fin(rwF[i], rwF[i].clone().add(new THREE.Vector3(...j.end)), rF * 0.92, i);
+    if (/Hand(Thumb|Index|Middle|Ring|Pinky)1/.test(j.name) && /Hand$/.test(pn)) fin(rwF[j.parent].clone().lerp(rwF[i], 0.55), rwF[i], rF * 1.1, j.parent); });
+  for (const g of geos) { for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'skinIndex', 'skinWeight'].includes(k)) g.deleteAttribute(k); if (!g.attributes.normal) g.computeVertexNormals(); if (!g.index) { const idx = []; for (let v = 0; v < g.attributes.position.count; v++) idx.push(v); g.setIndex(idx); } }
+  const geo = mergeGeometries(geos, false);
+  const col = new THREE.Color(LOOK.body || '#3b3f47');
+  const mat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.62, metalness: 0.04 });
+  const old = base.mesh; const mesh = new THREE.SkinnedMesh(geo, mat); mesh.castShadow = true; mesh.frustumCulled = false; mesh.name = 'Body';
+  mesh.add(base.bones[0]); mesh.updateMatrixWorld(true); mesh.bind(new THREE.Skeleton(base.bones));
+  base.group.remove(old); old.geometry.dispose(); base.group.add(mesh);
+  return { group: base.group, bones: base.bones, mesh };
+}
 function buildCharacter(rest) {
   clearCharacter();
-  character = makeRig(rest); scene.add(character.group);
+  character = LOOK.style === 'classic' ? makeRig(rest) : makeSmoothRig(rest); scene.add(character.group);
   character.helper = new THREE.SkeletonHelper(character.mesh); character.helper.material.linewidth = 2; character.helper.visible = $('tBones').classList.contains('on'); scene.add(character.helper);
   character.mesh.visible = $('tBody').classList.contains('on') && !MODEL.on;
 }
@@ -5909,8 +6111,8 @@ const LIB = {
 };
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
 const LATE_SETTINGS = ['elbowGuard', 'proLimits'];
-const NEW_TAKE_ON = ['deslide', 'smartHands']; // on for every new video; takes saved before they existed keep them off (their result never changes)
-const settingIds = ['deslide', 'smartHands', 'elbowGuard', 'proLimits', 'armOut', 'faceGuard', 'antiFloat', 'stanceHold', 'steadyLegs', 'solverVer', 'propMode', 'physOn', 'physStr', 'physBounce', 'physWobble', 'physSway', 'physWeight', 'physRagdoll', 'physArms', 'physBody', 'physLegs', 'clipSpeed', 'evenPace', 'armPose', 'lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
+const NEW_TAKE_ON = ['deslide', 'smartHands', 'slideV2', 'trueDepth']; // on for every new video; takes saved before they existed keep them off (their result never changes)
+const settingIds = ['deslide', 'slideV2', 'trueDepth', 'smartHands', 'elbowGuard', 'proLimits', 'armOut', 'faceGuard', 'antiFloat', 'stanceHold', 'steadyLegs', 'solverVer', 'propMode', 'physOn', 'physStr', 'physBounce', 'physWobble', 'physSway', 'physWeight', 'physRagdoll', 'physArms', 'physBody', 'physLegs', 'clipSpeed', 'evenPace', 'armPose', 'lowerBody', 'smooth', 'contact', 'headTilt', 'footLock', 'footIK', 'ankleLimit', 'handMode', 'autoLevel', 'inPlace', 'mirrored', 'antiJitter', 'kneeGuard', 'quality', 'procFps', 'hands', 'naming', 'outFps'];
 const readSettings = () => { const s = { trim: { ...trim } }; for (const id of settingIds) { const el = $(id); s[id] = el.type === 'checkbox' ? el.checked : el.value; } s.finger = document.querySelector('#fingerSeg .on')?.dataset.v || 'ai'; s.edits = JSON.parse(JSON.stringify(EDITS)); return s; };
 const writeSettings = s => { if (!s) return; const raw = s; s = { ...DEFAULT_SETTINGS, ...s, trim: s.trim || { s: 0, e: null } }; for (const id of LATE_SETTINGS) if (!(id in raw)) delete s[id]; for (const id of NEW_TAKE_ON) if (!(id in raw)) s[id] = false; if (s.trim) trim = { ...s.trim }; for (const id of settingIds) { const el = $(id); if (!(id in s)) continue; if (el.type === 'checkbox') el.checked = s[id]; else { el.value = s[id]; el.dispatchEvent(new Event('input')); } } document.querySelectorAll('#fingerSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (s.finger || 'ai'))); EDITS = s.edits ? JSON.parse(JSON.stringify(s.edits)) : { keys: {}, root: {}, spread: 0.5 }; try { edSyncLocks(); } catch (e) {} };
 const DEFAULT_SETTINGS = readSettings(); // the app's starting settings, used for anything a take never saved
