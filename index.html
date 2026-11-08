@@ -6181,7 +6181,8 @@ function edDown(e) { ED_PTR.set(e.pointerId, 1); edTap = ED_PTR.size === 1 ? { x
 function edTapUp(e) {
   ED_PTR.delete(e.pointerId); const t = edTap; edTap = null;
   if (!t || t.id !== e.pointerId || Math.hypot(e.clientX - t.x, e.clientY - t.y) > 9 || performance.now() - t.t > 600 || !anim) return;
-  const hit = edPick(e); if (hit < 0) return;
+  const hit = edPick(e);
+  if (hit < 0) { if (ED.sel >= 0) { ED.sel = -1; ED.dial = null; edDots(); edTimeline(); } return; } // tap on empty space = nothing picked
   if (ED.playing) edStop();
   edSelect(hit);
 }
@@ -6440,7 +6441,7 @@ function fixIntent(t) {
 }
 // friendlier phrases turned into the limb commands the fixer already knows
 function fixRewrite(t) {
-  return t.replace(/\b(guard up|hands up|keep (his |her |the )?hands up|protect (his |her )?face)\b/gi, 'raise both hands a lot and bend both elbows more')
+  return t.replace(/\b(guard up|hands up|keep (his |her |the )?hands up|protect (his |her )?face)\b/gi, 'raise both hands a lot, bend both elbows more')
     .replace(/\b(stand(s|ing)? (up )?(straight|tall)|stop (leaning|slouching|hunching))\b/gi, 'lean back a bit')
     .replace(/\b(relax (his |her |the )?shoulders|drop (his |her |the )?shoulders)\b/gi, 'lower both shoulders a bit')
     .replace(/\b(chin down|tuck (his |her |the )?chin)\b/gi, 'nod head down a bit')
@@ -6455,47 +6456,67 @@ const FIX_PART = [
   [/\b(head|face|chin)\b/, 'Head'], [/\bneck\b/, 'Neck'], [/\b(chest|torso|spine|upper ?body|back|body|trunk)\b/, 'Spine'], [/\b(hips?|pelvis|waist|bum)\b/, 'Hips'],
 ];
 const FIX_CHILD = { Arm: 'ForeArm', ForeArm: 'Hand', UpLeg: 'Leg', Leg: 'Foot', Foot: 'ToeBase' };
+// every body part named gets its own command: "raise left arm and right leg", "bend left elbow and knee",
+// "left arm and right arm up", "raise arms and legs". Each part takes the nearest action in its sentence and the side
+// written just before it ("left elbow and knee" -> both left; "arms" -> both).
+const FIX_PARTS2 = [
+  [/\b(fore ?arms?|elbows?)\b/g, 'ForeArm'], [/\b(upper ?arms?|arms?|shoulders?)\b/g, 'Arm'], [/\b(hands?|wrists?|fists?|gloves?)\b/g, 'Hand'],
+  [/\b(knees?|shins?|calf|calves|lower ?legs?)\b/g, 'Leg'], [/\b(legs?|thighs?|upper ?legs?)\b/g, 'UpLeg'], [/\b(feet|foot|ankles?|toes?|heels?)\b/g, 'Foot'],
+  [/\b(head|face|chin)\b/g, 'Head'], [/\bneck\b/g, 'Neck'], [/\b(chest|torso|spine|upper ?body|back|body|trunk|shoulders and chest)\b/g, 'Spine'], [/\b(hips?|pelvis|waist|bum)\b/g, 'Hips'],
+];
+const FIX_ACTS = [
+  [/\b(straighten\w*|straighter|straight|extend\w*|unbend|open up|lock out)\b/g, 'straight'], [/\b(bend\w*|bent|flex\w*|curl\w*|tuck\w*)\b/g, 'bend'],
+  [/\b(turn\w*|twist\w*|rotat\w*|look\w*|face)\b/g, 'turn'], [/\b(tilt\w*|cock\w*)\b/g, 'tilt'], [/\b(nod\w*)\b/g, 'nodDown'],
+  [/\b(lean\w*|bow\w*|hunch\w*|slouch\w*)\b/g, 'lean'],
+  [/\b(raise\w*|lift\w*|higher|up|upward|upwards)\b/g, 'up'], [/\b(lower|lowered|drop\w*|down|downward|downwards|relax\w*)\b/g, 'down'],
+  [/\b(forwards?|front|reach\w*|further out|in front|push\w*)\b/g, 'fwd'], [/\b(backwards?|behind|pull\w* back|back)\b/g, 'back'],
+  [/\b(out|outward|outwards|away|wider|wide|apart|spread\w*|open\w*)\b/g, 'out'], [/\b(in|inward|inwards|across|closer|together|narrower|tighter)\b/g, 'in'],
+];
 function fixParse(txt) {
-  const t = ' ' + txt.toLowerCase().replace(/[’']/g, '').replace(/\s+/g, ' ') + ' ';
-  let scope = /\b(whole|entire|throughout|always|all the time|every ?frame|all frames|whole clip|whole animation|the whole way)\b/.test(t) ? 'layer' : /\b(here|this frame|this moment|right now|at this point)\b/.test(t) ? 'moment' : ED.apply;
-  const clauses = t.split(/,|\band then\b|\bthen\b|\band\b|\.|;/).map(s => ' ' + s.trim() + ' ').filter(s => s.trim());
-  const out = []; let last = null;
-  for (const c of clauses) {
-    let part = null, cw = c; for (const [re, nm] of FIX_PART) if (re.test(c)) { part = nm; cw = c.replace(new RegExp(re.source, 'g'), ' '); break; }
-    let side = /\b(both|arms|legs|hands|feet|knees|elbows|shoulders|wrists|ankles)\b/.test(c) ? 'both' : /\b(left|lft|l)\b/.test(c) ? 'Left' : /\b(right|rght|r)\b/.test(c) && !/\b(turn|twist|rotate|look|tilt|lean)\b.*\bright\b/.test(c) ? 'Right' : null;
-    if (!part && last) { part = last.part; side = side || last.side; }
-    if (!side && last && last.side && last.side !== 'both' && /^(Arm|ForeArm|Hand|UpLeg|Leg|Foot)$/.test(part) && /^(Arm|ForeArm|Hand|UpLeg|Leg|Foot)$/.test(last.part) && /Arm|Hand/.test(part) === /Arm|Hand/.test(last.part)) side = last.side; // "raise left arm and bend the elbow" = left elbow
-    if (!part && /\b(lean|bow|hunch|slouch|bend over)\b/.test(c)) { part = 'Spine'; cw = c; }
-    if (!part && /\b(look|nod|chin)\b/.test(c)) { part = 'Head'; cw = c; }
-    if (!part) continue;
-    const dir = s => new RegExp('\\b(' + s + ')\\b').test(cw);
-    let act = null;
-    if (dir('straighten|straighter|straight|extend|unbend|open up|lock out')) act = 'straight';
-    else if (dir('bend|bent|bendier|flex|curl|tuck|more bend')) act = 'bend';
-    else if (dir('twist|turn|rotate|look|face')) act = dir('right') ? 'turnR' : 'turnL';
-    else if (dir('tilt|cock')) act = dir('right') ? 'tiltR' : 'tiltL';
-    else if (dir('nod|chin down|look down')) act = 'nodDown';
-    else if (dir('chin up|look up')) act = 'nodUp';
-    else if (dir('lean|bow|hunch|slouch')) act = /\b(back|backward|backwards|upright)\b/.test(c) ? 'leanB' : 'leanF';
-    else if (dir('raise|raised|lift|higher|up|upward|upwards')) act = 'up';
-    else if (dir('lower|drop|down|downward|lower down|relax')) act = 'down';
-    else if (dir('forward|forwards|front|reach|extend out|in front')) act = 'fwd';
-    else if (dir('back|backward|backwards|behind')) act = 'back';
-    else if (dir('out|outward|outwards|away|wider|wide|apart|spread')) act = 'out';
-    else if (dir('in|inward|inwards|across|closer|together|narrower|tighter')) act = 'in';
-    if (!act) continue;
-    let deg = 20; const m = c.match(/(\d+(?:\.\d+)?)\s*(?:°|deg|degree|degrees)/);
-    if (m) deg = +m[1]; else if (dir('slightly|slight|a bit|a little|little|tiny|touch|bit')) deg = 10; else if (dir('a lot|lots|loads|much|way|really|very|heaps|massively')) deg = 35; else if (dir('fully|all the way|completely|max')) deg = 80;
-    if (/^(Arm|ForeArm|Hand|UpLeg|Leg|Foot)$/.test(part) && !side) {
-      const sel = edName(); side = sel.startsWith('Left') ? 'Left' : sel.startsWith('Right') ? 'Right' : 'both';
+  let t = ' ' + String(txt).toLowerCase().replace(/[’']/g, '').replace(/\s+/g, ' ') + ' ';
+  const scope = /\b(whole|entire|throughout|always|all the time|every ?frame|all frames|whole clip|whole animation|the whole way)\b/.test(t) ? 'layer' : /\b(here|this frame|this moment|right now|at this point)\b/.test(t) ? 'moment' : ED.apply;
+  const out = []; let lastSide = null;
+  for (const raw of t.split(/[,;.]|\bthen\b|\balso\b/)) {
+    const c = ' ' + raw.trim() + ' '; if (!c.trim()) continue;
+    // body parts (a longer name wins over a shorter one inside it: "forearm" before "arm")
+    const parts = []; for (const [re, nm] of FIX_PARTS2) { re.lastIndex = 0; let m; while ((m = re.exec(c))) { const a = m.index, b = a + m[0].length; if (!parts.some(p => a < p.b && b > p.a)) parts.push({ a, b, nm, w: m[0] }); } }
+    parts.sort((x, y) => x.a - y.a);
+    const acts = []; for (const [re, nm] of FIX_ACTS) { re.lastIndex = 0; let m; while ((m = re.exec(c))) { const a = m.index, b = a + m[0].length; if (!parts.some(p => a < p.b && b > p.a) && !acts.some(p => a < p.b && b > p.a)) acts.push({ a, b, nm, w: m[0] }); } }
+    acts.sort((x, y) => x.a - y.a);
+    if (!acts.length) continue;
+    // "lean back" / "look up": the direction word tells which way
+    const dirAfter = x => { const rest = c.slice(x.b, x.b + 24); return /\b(back|backward|backwards|upright)\b/.test(rest) ? 'back' : /\bup\b/.test(rest) ? 'up' : /\bdown\b/.test(rest) ? 'down' : /\bleft\b/.test(rest) ? 'left' : /\bright\b/.test(rest) ? 'right' : null; };
+    let deg = 30; const mm = c.match(/(\d+(?:\.\d+)?)\s*(?:°|deg|degree|degrees)/), cm = c.match(/(\d+(?:\.\d+)?)\s*(?:cm|centimet)/);
+    if (mm) deg = +mm[1]; else if (/\b(slightly|slight|a bit|a little|little|tiny|touch|bit|tad)\b/.test(c)) deg = 15; else if (/\b(a lot|lots|loads|much|way|really|very|heaps|massively|loads)\b/.test(c)) deg = 55; else if (/\b(fully|all the way|completely|max)\b/.test(c)) deg = 85;
+    const dist = cm ? +cm[1] / 100 : deg <= 15 ? 0.06 : deg >= 85 ? 0.35 : deg >= 55 ? 0.22 : 0.12;
+    const whole = !parts.length; // no part named: the chosen joint ("raise it"), or the head / chest for look / lean
+    const list = whole ? [{ a: 0, b: 0, nm: null, w: '' }] : parts;
+    for (const p of list) {
+      // nearest action before it, otherwise the next one after it
+      let act = null, best = 1e9; for (const x of acts) { const d = x.b <= p.a ? p.a - x.b : 1000 + x.a - p.b; if (d < best) { best = d; act = x; } }
+      let part = p.nm, a = act.nm;
+      if (!part) { if (a === 'lean') part = 'Spine'; else if (a === 'turn' || a === 'tilt' || a === 'nodDown' || (/\blook\b/.test(c))) part = 'Head'; else if (ED.sel >= 0) { const sn = edName(); part = sn.replace(/^(Left|Right)/, ''); if (part === 'Shoulder') part = 'Arm'; if (part === 'ToeBase') part = 'Foot'; if (/^Spine\d$/.test(part)) part = 'Spine'; lastSide = sn.startsWith('Left') ? 'Left' : sn.startsWith('Right') ? 'Right' : lastSide; } else continue; }
+      const da = dirAfter(act);
+      if (a === 'turn') a = (da === 'right' || /\bright\b/.test(c.slice(act.b))) ? 'turnR' : (da === 'up' ? 'nodUp' : da === 'down' ? 'nodDown' : 'turnL');
+      else if (a === 'tilt') a = /\bright\b/.test(c.slice(act.b)) ? 'tiltR' : 'tiltL';
+      else if (a === 'lean') a = da === 'back' ? 'leanB' : 'leanF';
+      else if (a === 'down' && /\b(chin|head|nod)\b/.test(c) && part === 'Head') a = 'nodDown';
+      else if (a === 'up' && part === 'Head') a = 'nodUp';
+      // side: the words just before the part ("left elbow", "his right hand", "both arms"), plural = both, else the last side said
+      const before = c.slice(Math.max(0, p.a - 14), p.a);
+      let side = /\bboth\b|\beach\b/.test(before) ? 'both' : /\b(left|lft|l)\s+(\w+\s+)?$/.test(before) ? 'Left' : /\b(right|rght|r)\s+(\w+\s+)?$/.test(before) ? 'Right' : null;
+      if (!side && /^(arms|elbows|forearms|hands|wrists|fists|gloves|knees|shins|legs|thighs|feet|ankles|toes|heels|shoulders)$/.test(p.w)) side = 'both';
+      if (!side && /^(Arm|ForeArm|Hand|UpLeg|Leg|Foot)$/.test(part)) { side = lastSide; if (!side && ED.sel >= 0) { const sn = edName(); side = sn.startsWith('Left') ? 'Left' : sn.startsWith('Right') ? 'Right' : null; } if (!side) side = 'both'; }
+      if (side === 'Left' || side === 'Right') lastSide = side;
+      if (part === 'Leg' && /^(up|down|fwd)$/.test(a)) part = 'UpLeg'; // "lift the knee" = the thigh comes up
+      out.push({ part, side, act: a, deg: Math.min(170, deg), dist, text: c.trim() });
     }
-    last = { part, side };
-    out.push({ part, side, act, deg: Math.min(170, deg), text: c.trim() });
   }
   return { scope, cmds: out };
 }
 function fixApply(txt) {
   if (!ED.rig || !baseAnim) return 'Open a clip first.';
+  if (ED.playing) edStop(); // fixes go on the frame you're looking at
   const P = fixParse(txt); if (!P.cmds.length) return 'Didn’t catch that — try e.g. “raise left arm a bit”, “bend right knee more throughout”, “turn head left”.';
   const b = ED.rig.bones, st = edSnap(), applyWas = ED.apply; ED.apply = P.scope;
   ED.rig.group.updateMatrixWorld(true);
@@ -6517,6 +6538,12 @@ function fixApply(txt) {
     const sides = /^(Arm|ForeArm|Hand|UpLeg|Leg|Foot)$/.test(c.part) ? (c.side === 'both' ? ['Left', 'Right'] : [c.side]) : [''];
     const rad = c.deg * Math.PI / 180;
     for (const S of sides) {
+      if ((c.part === 'Hand' || c.part === 'Foot') && /^(up|down|fwd|back|out|in)$/.test(c.act)) { // move the hand / foot itself: the arm / leg reaches there
+        const arm = c.part === 'Hand', iu = J(S + (arm ? 'Arm' : 'UpLeg')), il = J(S + (arm ? 'ForeArm' : 'Leg')), ie = J(S + c.part); if (iu == null || il == null || ie == null) continue;
+        const sideOut = S === 'Right' ? left.clone().negate() : left.clone(), D = { up, down: up.clone().negate(), fwd, back: fwd.clone().negate(), out: sideOut, in: sideOut.clone().negate() }[c.act];
+        const T = W(ie).add(D.clone().multiplyScalar(c.dist)); if (!arm) T.y = Math.max(T.y, (anim.M && anim.M.ankleH) || 0.07);
+        const before = W(ie); twoBoneIK(iu, il, ie, T, WQ(ie)); ED.rig.group.updateMatrixWorld(true); if (W(ie).distanceTo(before) > 0.005) done.push(S + c.part); continue;
+      }
       let names = [S + c.part]; if (c.part === 'Spine') names = ['Spine', 'Spine1', 'Spine2'].filter(n => J(n) != null);
       names = names.filter(n => J(n) != null); if (!names.length) continue;
       const share = rad / names.length, sideOut = S === 'Right' ? left.clone().negate() : left.clone();
