@@ -7712,7 +7712,15 @@ const PV_PHRASE = { 'straight|Left': 'jab', 'straight|Right': 'cross', 'hook|Lef
 const PV_NAME = { 'straight|Left': 'Jab (left)', 'straight|Right': 'Cross (right)', 'hook|Left': 'Left hook', 'hook|Right': 'Right hook', 'upper|Left': 'Left uppercut', 'upper|Right': 'Right uppercut' };
 let TVP = null, TV_RESTORE = null; // TVP = { anim, smp, key, t0, n }
 function steerLatent(key, z, v) { LIKES.latent = LIKES.latent || {}; const mu = LIKES.latent[key] || z.map(() => 0); LIKES.latent[key] = z.map((x, i) => Math.max(-2, Math.min(2, (mu[i] || 0) + (v > 0 ? 0.35 : -0.2) * (x - (mu[i] || 0))))); LIKES.count = (LIKES.count || 0) + 1; try { localStorage.setItem('nocap-likes', JSON.stringify(LIKES)); } catch (e) {} S.setPrefs(LIKES); }
+// 🦶 movement too: real footwork / pivots / shadow boxing pieces, chained a new way each time; 👍 / 👎 make those pieces come up more / less
+const MV_PROMPT = { 'mv:any': 'footwork', 'mv:left': 'strafe left', 'mv:right': 'strafe right', 'mv:fwd': 'move forward', 'mv:back': 'move back', 'mv:pivot': 'pivot', 'mv:shadow': 'shadow boxing', 'mv:sneak': 'sneak', 'mv:crawl': 'crawl' };
+const MV_NAME = { 'mv:any': '🦶 Footwork (any way)', 'mv:left': '🦶 Strafe left', 'mv:right': '🦶 Strafe right', 'mv:fwd': '🦶 Step in / forward', 'mv:back': '🦶 Step back', 'mv:pivot': '🦶 Pivot / turn', 'mv:shadow': '🥊 Shadow boxing on the move', 'mv:sneak': '🦶 Stealth walk', 'mv:crawl': '🦶 Crawl' };
+function previewMove(key) {
+  if (!MOVELIB || !MOVELIB.moves.length) return null; const seed = Math.floor(Math.random() * 1e6), a = smartTextMotion0(MV_PROMPT[key], seed);
+  return { anim: a, key, mv: true, clips: (a.choices && a.choices.clips) || [], n: (TVP && TVP.key === key ? TVP.n : 0) + 1, t0: performance.now() };
+}
 function previewVariation(key) {
+  if (key && key.startsWith('mv:')) return previewMove(key);
   const M = mlModels(), keys = Object.keys(M).filter(k => M[k].comps && PV_PHRASE[k]); if (!keys.length) return null;
   if (!key || key === 'any' || !M[key] || !M[key].comps) key = keys[Math.floor(Math.random() * keys.length)];
   const seed = Math.floor(Math.random() * 1e6), a = S.textToMotion(PV_PHRASE[key], 30, seed), [type, side] = key.split('|');
@@ -7721,12 +7729,15 @@ function previewVariation(key) {
   applyModelPunch(out, a, { k: st.k, side, type }, smp);
   return { anim: out, smp, key, n: (TVP && TVP.key === key ? TVP.n : 0) + 1, t0: performance.now() };
 }
-function tvNext() { TVP = previewVariation($('tvMove').value) || null; tvInfo(); }
+function rateClips(ids, v) { LIKES.clip = LIKES.clip || {}; for (const id of ids) LIKES.clip[id] = Math.max(-3, Math.min(3, (LIKES.clip[id] || 0) + (v > 0 ? 1 : -0.8))); LIKES.count = (LIKES.count || 0) + 1; try { localStorage.setItem('nocap-likes', JSON.stringify(LIKES)); } catch (e) {} S.setPrefs(LIKES); }
+function tvNext() { TVP = previewVariation($('tvMove').value) || null; if (TVR && TVP) { const r = TVP.anim.rootPos[0], d = new THREE.Vector3(r[0] - TVR.ctl.target.x, 0.95 - TVR.ctl.target.y, r[2] - TVR.ctl.target.z); TVR.ctl.target.add(d); TVR.cam.position.add(d); } tvInfo(); }
 function tvInfo() {
   const M = mlModels(), keys = Object.keys(M).filter(k => M[k].comps && PV_PHRASE[k]), cur = $('tvMove').value;
-  $('tvMove').innerHTML = (keys.length ? '<option value="any">🎲 Any move</option>' : '') + keys.map(k => `<option value="${k}">${PV_NAME[k]}</option>`).join(''); if ([...$('tvMove').options].some(o => o.value === cur)) $('tvMove').value = cur;
+  $('tvMove').innerHTML = (keys.length ? '<optgroup label="Punches"><option value="any">🎲 Any punch</option>' + keys.map(k => `<option value="${k}">${PV_NAME[k]}</option>`).join('') + '</optgroup>' : '')
+    + (MOVELIB && MOVELIB.moves.length ? '<optgroup label="Movement">' + Object.keys(MV_NAME).map(k => `<option value="${k}">${MV_NAME[k]}</option>`).join('') + '</optgroup>' : ''); if ([...$('tvMove').options].some(o => o.value === cur)) $('tvMove').value = cur;
   for (const id of ['tvUp', 'tvDown', 'tvRetry']) $(id).disabled = !TVP; $('tvN').hidden = !TVP;
-  $('tvInfo').innerHTML = TVP ? `<b>${PV_NAME[TVP.key]}</b> · new version #${TVP.n}, made up from ${M[TVP.key].n} real punches it learned${KEPT.length ? ` · ${KEPT.length} kept 👍` : ''}`
+  $('tvInfo').innerHTML = TVP && TVP.mv ? `<b>${MV_NAME[TVP.key]}</b> · version #${TVP.n}: ${TVP.clips.length} real piece${TVP.clips.length === 1 ? '' : 's'} chained a new way${Object.keys(LIKES.clip || {}).length ? ' · your 👍👎 steer which pieces come up' : ''}`
+    : TVP ? `<b>${PV_NAME[TVP.key]}</b> · new version #${TVP.n}, made up from ${M[TVP.key].n} real punches it learned${KEPT.length ? ` · ${KEPT.length} kept 👍` : ''}`
     : (BUILTIN_LOADING && !BUILTIN ? 'Loading what it knows…' : 'Nothing to show yet. Study a few videos below (3+ clear punches of a kind) and it starts making its own.');
 }
 // the preview shows the actual 3D body (its own little viewer: drag to look around)
@@ -7746,11 +7757,13 @@ function tvDraw() {
   if (TVR.w !== W || TVR.h !== H) { TVR.r.setSize(W, H, false); TVR.cam.aspect = W / H; TVR.cam.updateProjectionMatrix(); TVR.w = W; TVR.h = H; }
   if (TVP) { const a = TVP.anim; if (TVR.rest !== a.rest) { if (TVR.rig) TVR.sc.remove(TVR.rig.group); TVR.rig = makeRig(a.rest); TVR.sc.add(TVR.rig.group); TVR.rest = a.rest; }
     const dur = a.n / 30 + 0.6, t = ((performance.now() - TVP.t0) / 1000) % dur, k = Math.min(a.n - 1, Math.floor(t * 30)), b = TVR.rig.bones;
-    b[0].position.set(...a.rootPos[k]); a.locals[k].forEach((q, j) => b[j].quaternion.set(q[0], q[1], q[2], q[3])); TVR.rig.group.visible = true; }
+    b[0].position.set(...a.rootPos[k]); a.locals[k].forEach((q, j) => b[j].quaternion.set(q[0], q[1], q[2], q[3])); TVR.rig.group.visible = true;
+    if (TVP.mv) { const r = a.rootPos[k], d = new THREE.Vector3(r[0] - TVR.ctl.target.x, 0, r[2] - TVR.ctl.target.z).multiplyScalar(0.06); TVR.ctl.target.add(d); TVR.cam.position.add(d); } } // glide after him when he travels
   else if (TVR.rig) TVR.rig.group.visible = false;
   TVR.ctl.update(); TVR.r.render(TVR.sc, TVR.cam);
 }
 function openTeach() {
+  if (!MOVELIB) loadMoveLib().then(() => tvInfo()).catch(() => {});
   $('teachModal').style.display = 'grid'; lockPage(); ML_FORCE_LIB = true; ML_CACHE = null; showTeachTab('vid'); renderTeach(); fillTeachSources();
   const go = () => { if (!TVP) tvNext(); else tvInfo(); }; if (!BUILTIN) { tvInfo(); loadBuiltin().then(() => { ML_CACHE = null; go(); }).catch(() => go()); } else go();
   requestAnimationFrame(tvDraw);
@@ -7764,10 +7777,10 @@ async function closeTeach() {
 function teachStat() { try { const M = mlModels(), n = Object.values(M).filter(m => m.comps).length, vids = LEARNED.filter(m => m.study).length; $('teachStat').textContent = `${vids} video${vids === 1 ? '' : 's'} studied · ${KEPT.length} kept move${KEPT.length === 1 ? '' : 's'}${n ? ` · can make ${n} kinds of punch` : ''}`; } catch (e) {} }
 $('teachOpen').onclick = openTeach; $('tmSave').onclick = closeTeach;
 $('tvMove').onchange = () => { TVP = null; tvNext(); }; $('tvRetry').onclick = tvNext;
-$('tvUp').onclick = () => { if (!TVP) return; const [type, arm] = TVP.key.split('|'), r3 = v => Math.round(v * 1000) / 1000; KEPT.push({ type, arm, q: TVP.smp.q.map(f => f.map(q => q.map(r3))), at: Date.now() }); if (KEPT.length > 300) KEPT.shift();
+$('tvUp').onclick = () => { if (!TVP) return; if (TVP.mv) { rateClips(TVP.clips, 1); toast('👍 Kept: those pieces of movement come up more from now on.'); tvNext(); return; } const [type, arm] = TVP.key.split('|'), r3 = v => Math.round(v * 1000) / 1000; KEPT.push({ type, arm, q: TVP.smp.q.map(f => f.map(q => q.map(r3))), at: Date.now() }); if (KEPT.length > 300) KEPT.shift();
   try { localStorage.setItem('nocap-kept', JSON.stringify(KEPT)); } catch (e) { KEPT.pop(); toast('Phone storage is full, so it could not keep that one.', true); return; }
   steerLatent(TVP.key, TVP.smp.z, 1); ML_CACHE = null; toast('👍 Kept. It is one of his moves now.'); tvNext(); };
-$('tvDown').onclick = () => { if (!TVP) return; steerLatent(TVP.key, TVP.smp.z, -1); toast('👎 Discarded. Less like that from now on.'); tvNext(); };
+$('tvDown').onclick = () => { if (!TVP) return; if (TVP.mv) { rateClips(TVP.clips, -1); toast('👎 Discarded: those pieces come up less.'); tvNext(); return; } steerLatent(TVP.key, TVP.smp.z, -1); toast('👎 Discarded. Less like that from now on.'); tvNext(); };
 
 $('tchSave').onclick = teachSave;
 // ---- 📥 import an animation file (FBX / GLB / BVH, e.g. one you downloaded from Mixamo) as a move your AI knows ----
