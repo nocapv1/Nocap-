@@ -1244,15 +1244,15 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
         return nb.length >= 5 && (percentile(nb, 0.85) - y) / bodyH > 0.07; // lowest foot clearly higher in the picture than the ground line = really airborne
       });
       // a real jump is short: longer "airborne" stretches are tracking errors
-      for (let k = 0; k < n; k++) { if (!air[k]) continue; let e = k; while (e < n && air[e]) e++; if (e - k > fps * 1.0) for (let q = k; q < e; q++) air[q] = false; k = e; }
-      const over = lowY.map((h, k) => (air[k] ? Math.max(0, h - 0.6) : Math.max(0, h - 0.015))); // even a real jump: never higher than a person can jump
+      for (let k = 0; k < n; k++) { if (!air[k]) continue; let e = k; while (e < n && air[e]) e++; if (e - k > fps * 4.0) for (let q = k; q < e; q++) air[q] = false; k = e; }
+      const over = lowY.map((h, k) => (air[k] ? 0 : Math.max(0, h - 0.015))); // a real jump / flip: no height limit
       if (over.some(v => v > 0.01)) {
         const w = Math.max(1, Math.round(fps * 0.08)), dil = over.map((_, k) => { let m = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n && !air[q]) m = Math.max(m, over[q] * (1 - Math.abs(q - k) / (w + 1))); return Math.max(m, over[k]); });
         const sm = dil.map((_, k) => { let s0 = 0, c = 0; for (let q = k - w; q <= k + w; q++) if (q >= 0 && q < n) { s0 += dil[q]; c++; } return Math.min(s0 / c, over[k] > 0 ? over[k] : s0 / c); });
         rootPos = rootPos.map((r, k) => [r[0], r[1] - Math.min(sm[k], Math.max(0, lowY[k])), r[2]]);
       }
       // no impossible leaps: the hips can't shoot up faster than a real jump take-off
-      const vmax = 3.5 / fps; let changed = false; const rp = rootPos.map(r => r.slice()); // ~3.5 m/s = a strong real jump take-off
+      const vmax = 15 / fps; let changed = false; const rp = rootPos.map(r => r.slice()); // only catches one-frame tracking jumps (trampolines, flips and big jumps pass)
       for (let k = 1; k < n; k++) if (rp[k][1] - rp[k - 1][1] > vmax) { rp[k][1] = rp[k - 1][1] + vmax; changed = true; }
       if (changed) rootPos = rp;
     }
@@ -2160,6 +2160,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   }
   MOVES.walk = { dur: 1.1, loop: true, travel: 1.3, cycle: false };
   MOVES.run = { dur: 0.7, loop: true, travel: 3.6, cycle: true };
+  const JUMP_PEAK = 0.45; // how high the plain "jump" goes (m)
   const WORDS = [
     [/\b(moon ?walk|moonwalks|moonwalking|moon-walk)\b/, 'moonwalk'], [/\b(siu+|sui+|siuu+u*|suu+i+)\b/, 'siuu'],
     [/\b(fade ?away|fade-away|turn ?around jumper|turnaround jumper)\b/, 'fadeaway'], [/\b(slam dunk|dunk|dunks|dunking|tomahawk|windmill dunk|slam)\b/, 'dunk'],
@@ -2206,7 +2207,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   // boxing numbers: 1 jab, 2 cross, 3 lead hook, 4 rear hook, 5 lead uppercut, 6 rear uppercut
   const PUNCH_NUM = { 1: ['jab', null], 2: ['cross', null], 3: ['hook', 'lead'], 4: ['hook', 'rear'], 5: ['uppercut', 'lead'], 6: ['uppercut', 'rear'] };
   const STYLE_WORDS = {
-    boxing: /\b(footwork|circle left|circle right|pressure|on his toes|flat[ -]?footed|back foot|stick and move|box|boxer|boxing|fight|fighter|fighting|jab|cross|hook|uppercut|punch|punches|stance|guard|spar|sparring|mma|ufc|kickbox|kickboxing|muay|thai|karate|slip|weave|block|knee|elbow|teep|haymaker|combo|shadow ?box|overhand|feint|parry|pull counter|shoulder roll|step back|step in|stepping|step forward|side ?step|right hand|left hand|body shot|lead hand|rear hand)/,
+    boxing: /\b(combat|footwork|circle left|circle right|pressure|on his toes|flat[ -]?footed|back foot|stick and move|box|boxer|boxing|fight|fighter|fighting|jab|cross|hook|uppercut|punch|punches|stance|guard|spar|sparring|mma|ufc|kickbox|kickboxing|muay|thai|karate|slip|weave|block|knee|elbow|teep|haymaker|combo|shadow ?box|overhand|feint|parry|pull counter|shoulder roll|step back|step in|stepping|step forward|side ?step|right hand|left hand|body shot|lead hand|rear hand)/,
     tired: /\b(tired|exhausted|sleepy|weak|sad|depressed|hot|desert|heat)\b/, proud: /\b(proud|confident|strut|swagger|cool|catwalk|model|runway|boss)\b/,
     sneaky: /\b(sneak|sneaky|sneaking|stealth|creep|creeping|crouch(ed)?|ninja|spy|tiptoe)\b/, happy: /\b(happy|excited|joyful|cheerful|bouncy)\b/,
     angry: /\b(angry|aggressive|furious|mad|rage|explosive|powerful)\b/, drunk: /\b(drunk|dizzy|wobbly|stumbl\w*|on ice|icy|slippery)\b/, old: /\b(old|elderly|old man|old woman|grandpa|grandma)\b/,
@@ -2288,11 +2289,13 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       [['shuffle'], ['jab'], ['stepmove', null, null, 'right'], ['cross'], ['bodyhook', 'lead'], ['hook', 'lead'], ['overhand', 'rear']]],
     golf: [[['golf']]], basketball: [[['dribble'], ['dribble'], ['shoot']]], baseball: [[['bat']]], tennis: [[['serve'], ['forehand']]], football: [[['soccerkick']]],
     workout: [[['jacks'], ['jacks'], ['jacks'], ['squat'], ['lunge'], ['stretch']]], celebrate: [[['celebrate'], ['fistpump']]],
+    defence: [[['stance'], ['slip'], ['weave'], ['block'], ['parry'], ['pullback'], ['shoulderroll']], [['stance'], ['block'], ['slip', 'left'], ['weave'], ['pullback'], ['parry'], ['stepmove', null, null, 'back']],
+      [['stance'], ['shoulderroll'], ['slip'], ['weave'], ['weave'], ['block'], ['stepmove', null, null, 'left']], [['stance'], ['parry'], ['slip'], ['pullback'], ['weave'], ['block']]],
   };
   const THEME_WORDS = { golf: /\bgolf/, basketball: /\b(basketball|hoops|nba)\b/, baseball: /\b(baseball|batter|mlb)\b/, tennis: /\b(tennis|wimbledon)\b/, football: /\b(football|soccer|footy)\b/,
-    workout: /\b(workout|work out|exercise|exercising|gym|training|fitness|cardio|warm ?up)\b/, celebrate: /\b(celebrat\w*|party time|winner)\b/ };
+    workout: /\b(workout|work out|exercise|exercising|gym|training|fitness|cardio|warm ?up)\b/, defence: /\b(defen[cs]e|defensive|defending|evasive|evasion|head movement|evade punches)\b/, celebrate: /\b(celebrat\w*|party time|winner)\b/ };
   // typo-tolerant reading: unknown words are matched to the nearest word the AI knows
-  const VOCAB = [...new Set(('walk walking run running sprint jog jump hop leap jab cross hook uppercut punch punches kick kicks roundhouse squat wave dance spin stance guard idle stand boxing boxer fight fighter slip weave bob block knee elbow teep shuffle pivot turn around left right lead rear front back backwards golf swing baseball bat throw pitch serve forehand backhand tennis basketball dribble shoot clap celebrate cheer point bow salute shrug nod shake head look think flex stretch lunge sit sitting down push pull lift tired proud sneaky happy angry drunk zombie march soldier rain windy uphill stairs tyson ali mayweather canelo lomachenko bruce conor mcgregor muay thai karate southpaw combo body shot slowly quickly times twice circle then and seconds workout exercise celebrate football soccer jacks').split(' '))];
+  const VOCAB = [...new Set(('combat locomotion movement footwork defence defense defensive evasive walk walking run running sprint jog jump hop leap jab cross hook uppercut punch punches kick kicks roundhouse squat wave dance spin stance guard idle stand boxing boxer fight fighter slip weave bob block knee elbow teep shuffle pivot turn around left right lead rear front back backwards golf swing baseball bat throw pitch serve forehand backhand tennis basketball dribble shoot clap celebrate cheer point bow salute shrug nod shake head look think flex stretch lunge sit sitting down push pull lift tired proud sneaky happy angry drunk zombie march soldier rain windy uphill stairs tyson ali mayweather canelo lomachenko bruce conor mcgregor muay thai karate southpaw combo body shot slowly quickly times twice circle then and seconds workout exercise celebrate football soccer jacks').split(' '))];
   const lev = (a, b) => { const m = a.length, n = b.length; if (Math.abs(m - n) > 2) return 9; let prev = Array.from({ length: n + 1 }, (_, j) => j); for (let i = 1; i <= m; i++) { const cur = [i]; for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = cur; } return prev[n]; };
   const COMMON = new Set('hand hands arm arms leg legs foot feet body head side face chin ribs liver gut stomach shot shots punch counter hands down the a an and then with do does some times time for of to in on at my his her him he she it is be please make like style quick slow fast few seconds second while doing into onto from out up down over under very really just bit little lot more less again after before next then them they this that these those your you me man woman guy girl person character someone people who what how when where why can could would should will wants want lets let get gets got goes go going have has had was were are am not no yes all each every both other another same here there now way like'.split(' '));
   function fixTypos(text) {
@@ -2349,6 +2352,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   const SIDE_RE = /\b(left|right|lead|rear|back|front|jab hand|power hand|other)\s*(hand(ed)?|side|arm|leg|foot)?\s*$/;
   function parsePrompt(text, seed = 0) {
     let t = ' ' + fixTypos(String(text).toLowerCase()) + ' ';
+    t = t.replace(/(\d+(?:\.\d+)?)\s*(m|metres?|meters?|ft|feet|foot|cm)\b/g, (m, a, u) => Math.round(+a * (/^(ft|feet|foot)$/.test(u) ? 30.48 : u === 'cm' ? 1 : 100)) + 'cm'); // "3 metres" is a height, not 3 jumps
     t = t.replace(/\bsteph(en)? curry\b/g, 'curry'); // "steph" isn't a step
     // "1-2", "1 2 3", "one two" = boxing combos
     t = t.replace(/\b(one|two|three|four|five|six)(?=[\s-]+(one|two|three|four|five|six)\b)/g, m => ({ one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 })[m]).replace(/(\d)[\s-]+(one|two|three|four|five|six)\b/g, (m, a, b) => a + '-' + ({ one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 })[b]);
@@ -2381,7 +2385,9 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const nm = sg.match(/(\d+)\s*(x|times|reps)?\b/) || sg.match(/\b(once|twice|thrice|three|four|five|six|seven|eight|nine|ten|couple|few|several)\b/);
       let count = nm ? (+nm[1] || NUMS[nm[1]] || 1) : 1; const secs = sg.match(/(\d+(\.\d+)?)\s*(s|sec|secs|seconds)\b/), mins = sg.match(/(\d+(\.\d+)?)\s*(m|min|mins|minutes)\b/);
       if (secs || mins) count = 1;
-      const jh = /\b(super|massive|huge|giant|insane|really high|very high|mega|sky ?high|moon)\b/.test(sg) ? 3 : /\b(high|big|tall)\b/.test(sg) ? 1.8 : /\b(small|little|tiny|low|hop)\b/.test(sg) ? 0.5 : 1;
+      // jump height: words, or any real height ("jump 3 metres", "10 feet high") — no upper limit
+      const hm = sg.match(/(\d+(?:\.\d+)?)\s*(m|metres?|meters?|ft|feet|foot|cm)\b/), JBASE = JUMP_PEAK;
+      const jh = hm ? Math.max(0.2, (+hm[1] * (/^(ft|feet|foot)$/.test(hm[2]) ? 0.3048 : hm[2] === 'cm' ? 0.01 : 1)) / JBASE) : /\b(to the moon|into space|over (a|the) (house|building)|skyscraper)\b/.test(sg) ? 25 : /\b(super|massive|huge|giant|insane|really high|very high|mega|sky ?high|moon|enormous|record)\b/.test(sg) ? 3 : /\b(high|big|tall)\b/.test(sg) ? 1.8 : /\b(small|little|tiny|low|hop)\b/.test(sg) ? 0.5 : 1;
       const speed = (/\b(slow|slowly|gentle|gently|lazy|lazily)/.test(sg) ? 0.65 : /\b(fast|quick|quickly|rapid|rapidly|explosive|lightning|hard)/.test(sg) ? 1.4 : 1)
         * (st.tired || st.old ? 0.75 : st.sneaky ? 0.6 : st.heavy ? 0.55 : st.angry || st.happy ? 1.15 : st.peekaboo || st.loma || st.brucelee ? 1.2 : 1);
       const back = /\b(backwards?|backward|reverse|in reverse|back up|backpedal\w*|retreat\w*|back away|back off|(run|runs|running|jog|jogs|jogging|walk|walks|walking|move|moves|moving|sprint|sprints)\s+back)\b/.test(sg), circle = /\b(in a circle|around in circles|circles|circle)\b/.test(sg);
@@ -2414,7 +2420,15 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     if (/\b(circle|circles|circling) (to the )?right\b|\bcircle\b(?! left)/.test(t) && !/circle (to the )?left/.test(t) && st.boxing && !/walk|run|jog/.test(t)) for (let i = 0; i < 3; i++) plan.push({ move: 'stepmove', step: 'right', speed: 1.2, secs: null }, { move: 'turn', turn: -14, speed: 2, secs: null });
     if (/\b(pressure|walk (him|them|her) down|walks? down|stalk\w*|cut (off )?the ring|come forward|moves? forward)\b/.test(t) && st.boxing) for (let i = 0; i < 3; i++) plan.push({ move: 'stepmove', step: 'fwd', speed: 1, secs: null });
     if (/\b(back foot|on the back foot|move away|moving away|get out|backs? off)\b/.test(t) && st.boxing) for (let i = 0; i < 2; i++) plan.push({ move: 'stepmove', step: 'back', speed: 1.1, secs: null });
-    if (/\b(footwork|move around|moving around|bounce around|dance around|stick and move|move his feet|movement)\b/.test(t) && st.boxing) for (const d of ['fwd', 'left', 'back', 'right']) plan.push({ move: 'stepmove', step: d, speed: 1.2, secs: null });
+    // combat locomotion: a boxer moving round the ring behind the guard — in and out, side steps, pivots, the odd shuffle (different every take)
+    if ((/\b(footwork|move around|moving around|bounce around|dance around|stick and move|move his feet|movement|locomotion|move like a boxer|moves? like a fighter|ring movement|cut the angle)\b/.test(t) && st.boxing) || (/\b(combat|fight) ?(locomotion|movement|moves?|footwork)?\b/.test(t) && !plan.length && !/\b(jab|cross|hook|uppercut|punch|kick|knee|elbow)/.test(t))) {
+      let r = (seed * 7919 + 104729) % 233280 || 11; const rnd = () => (r = (r * 9301 + 49297) % 233280) / 233280, n = 8 + Math.floor(rnd() * 5); let last = '';
+      plan.push({ move: 'stance', speed: 1, secs: null });
+      for (let i = 0; i < n; i++) { const x = rnd();
+        if (x < 0.14) plan.push({ move: 'shuffle', speed: 1.1, secs: null });
+        else if (x < 0.26) plan.push({ move: 'turn', turn: rnd() < 0.5 ? 35 : -35, speed: 1.8, secs: null });
+        else { let d; do d = ['fwd', 'back', 'left', 'right', 'fwd', 'back'][Math.floor(rnd() * 6)]; while (d === last && rnd() < 0.7); last = d; plan.push({ move: 'stepmove', step: d, speed: 1.1 + rnd() * 0.3, secs: null }); } }
+      st.boxing = true; unknown.length = 0; }
     if (!plan.length && theme) { const R_ = ROUTINES[theme], pick = R_[seed % R_.length]; for (const [move, side, turn, step, body] of pick) plan.push({ move: body ? ({ jab: 'bodyjab', hook: 'bodyhook', uppercut: 'bodyupper' })[move] || move : move, side: side || null, speed: st.peekaboo || st.loma || st.pacquiao ? 1.2 : st.fury ? 0.9 : (Object.keys(FIGHTERS2).map(k => st[k] && FIGHTERS2[k].speed).find(Boolean) || 1), secs: null, turn, step: step || null, routine: true }); unknown.length = 0; }
     // fighters move between punches the way they really do (seeded, so each take differs)
     const fw = FOOTWORK[['peekaboo', 'ali', 'roll', 'canelo', 'loma', 'fury', 'usyk', 'pacquiao', 'naseem', 'royjones', 'ggg', 'joshua', 'crawford', ...Object.keys(FIGHTERS2)].find(k => st[k]) || (st.boxing ? 'boxing' : '')];
@@ -4235,6 +4249,12 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="stats" id="stats" style="display:none"></div>
   </section>
 
+  <section class="card" id="teachCard">
+    <h2><span class="n">🧠</span>Teach my AI</h2>
+    <div class="mini">Give it your boxing videos. It learns how your punches and movement vary and makes its own new versions. Watch them, keep the good ones, bin the bad ones.</div>
+    <div id="teachStat" class="mini" style="margin-top:6px"></div>
+    <button class="btn primary" id="teachOpen" style="width:100%;margin-top:8px">🧠 Open Teach my AI</button>
+  </section>
   <section class="card">
     <h2><span class="n">4</span>Export</h2>
     <div class="row"><label>Target rig naming</label><select id="naming"><option value="unity" selected>Unity (Humanoid)</option><option value="standard">Standard / Blender</option><option value="mixamo">Mixamo</option><option value="unreal">Unreal (UE mannequin)</option></select></div>
@@ -4254,7 +4274,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <section class="card">
     <h2><span class="n">5</span>Library <span style="margin-left:auto;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400" id="libCount"></span></h2>
     <div class="hint" style="margin:0 0 8px">Every motion you generate is saved here on this device, with its video. Open it again or download it any time, even offline.</div>
-    <div class="libbar"><button class="btn" id="libSel">☑️ Select</button><button class="btn" id="libHideOrig" title="Hide the plain text-to-motion takes; show only ones with new moves your AI made up">🙈 Hide originals</button><span id="libSelActs" style="display:none;gap:6px;flex-wrap:wrap"><button class="btn" id="libAll">All</button><button class="btn" id="libDelSel">🗑 Delete</button><button class="btn" id="libCancel">Cancel</button></span></div>
+    <div class="libbar"><button class="btn" id="libSel">☑️ Select</button><span id="libSelActs" style="display:none;gap:6px;flex-wrap:wrap"><button class="btn" id="libAll">All</button><button class="btn" id="libDelSel">🗑 Delete</button><button class="btn" id="libCancel">Cancel</button></span></div>
     <div id="libList"></div>
   </section>
 </aside>
@@ -4281,6 +4301,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
         <button class="btn small" id="tModel" title="Change character: the AI body, realistic people, or your own (FBX / GLB / VRM)">🧍 Character</button>
         <button class="btn small" id="tProps" title="Props: boxing gloves, golf club, bat, racket, balls, bike">🎒 Props</button>
         <button class="btn small" id="tPhys" title="Add physics: follow-through, overshoot and settling">⚛️ Physics</button>
+        <button class="btn small" id="libHideOrig" title="Library: hide the plain text-to-motion takes and show only ones with new moves your AI made up">🙈 Hide originals</button>
         <button class="btn small" id="tAim" title="Punch target: drag it and the punches land on it">🎯 Target</button>
       </div>
       <div class="physpanel" id="physPanel">
@@ -4327,19 +4348,17 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
 </main>
 </div>
 <div class="toast" id="toast"></div>
-<div class="modal" id="ttmModal"><div class="box">
-  <div style="display:flex;align-items:center;margin-bottom:8px"><b style="font-size:16px">✍️ Text to motion</b><button class="btn small" id="ttmClose" style="margin-left:auto">✕</button></div>
-  <textarea id="ttmText" rows="3" placeholder="e.g. boxing stance, then 3 jabs, a cross and a hook, then walk" style="width:100%;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px;resize:vertical"></textarea>
-  <div id="ttmChips" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0"></div>
-  <button class="btn primary" id="ttmGo">Create motion</button>
-  <div class="mini" style="margin-top:4px">Tap again for a fresh variation of the same prompt · Enter = create</div>
-  <div style="display:flex;gap:6px;margin-top:8px"><button class="btn" id="ttmTeachBtn" style="flex:1">🧠 Teach my AI</button></div>
-  <label class="row" style="margin-top:6px;gap:8px"><input type="checkbox" id="ttmFeel"> <span>🧠 Use what my AI learned <span class="mini">makes <i>new</i> punches and natural movement in the style it learned — never a copy</span></span></label>
-  <label class="row" style="gap:8px"><input type="checkbox" id="ttmLib"> <span>📚 Include the pro boxing library <span class="mini">219 real punches from studio motion capture (CMU)</span></span></label>
-  <div class="mini" style="opacity:.7">Library data obtained from mocap.cs.cmu.edu. The database was created with funding from NSF EIA-0196217.</div>
-  <div id="ttmKnown" class="mini" style="margin-top:6px"></div>
-  <div id="teachBox" hidden style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
-    <b>🧠 Teach your AI</b>
+<div class="modal" id="teachModal"><div class="box">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><b style="font-size:16px;white-space:nowrap">🧠 Teach my AI</b><button class="btn small primary" id="tmSave" style="margin-left:auto">💾 Save &amp; close</button></div>
+  <div class="sub" style="margin-bottom:4px">▶ Watch what it learned</div>
+  <div style="position:relative"><canvas id="tvCv" style="display:block;width:100%;height:250px;background:#07090d;border:1px solid var(--line);border-radius:10px"></canvas>
+    <span id="tvN" hidden style="position:absolute;right:8px;top:8px;width:22px;height:22px;border-radius:50%;background:var(--accent);color:#04201d;font:800 12px/22px system-ui,sans-serif;text-align:center">N</span></div>
+  <div id="tvInfo" class="mini" style="margin:6px 0"></div>
+  <div class="row"><label>Move</label><select id="tvMove" style="max-width:62%"></select></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px"><button class="btn" id="tvDown">👎 Discard</button><button class="btn" id="tvRetry">🔁 Retry</button><button class="btn primary" id="tvUp">👍 Keep</button></div>
+  <div class="mini" style="margin-top:6px">👍 keeps this exact version as one of his own moves (and makes more like it). 👎 throws it away and steers him away from it. 🔁 tries the same move again a new way.</div>
+  <div id="teachBox" style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+    <b>Teach it more</b>
     <div id="tchTabs" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0">
       <button class="btn small on" data-tab="vid">🎬 Learn from videos</button><button class="btn small" data-tab="move">🎯 One move</button><button class="btn small" data-tab="words">🔗 My words</button><button class="btn small" data-tab="know">📚 What it knows</button>
     </div>
@@ -4372,6 +4391,17 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     </div>
     <div data-pane="know" hidden><div id="tchList"></div></div>
   </div>
+</div></div>
+<div class="modal" id="ttmModal"><div class="box">
+  <div style="display:flex;align-items:center;margin-bottom:8px"><b style="font-size:16px">✍️ Text to motion</b><button class="btn small" id="ttmClose" style="margin-left:auto">✕</button></div>
+  <textarea id="ttmText" rows="3" placeholder="e.g. boxing stance, then 3 jabs, a cross and a hook, then walk" style="width:100%;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:10px;font-size:16px;resize:vertical"></textarea>
+  <div id="ttmChips" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0"></div>
+  <button class="btn primary" id="ttmGo">Create motion</button>
+  <div class="mini" style="margin-top:4px">Tap again for a fresh variation of the same prompt · Enter = create</div>
+  <label class="row" style="margin-top:6px;gap:8px"><input type="checkbox" id="ttmFeel"> <span>🧠 Use what my AI learned <span class="mini">makes <i>new</i> punches and natural movement in the style it learned — never a copy</span></span></label>
+  <label class="row" style="gap:8px"><input type="checkbox" id="ttmLib"> <span>📚 Include the pro boxing library <span class="mini">272 real punches from studio motion capture (CMU)</span></span></label>
+  <div class="mini" style="opacity:.7">Library data obtained from mocap.cs.cmu.edu. The database was created with funding from NSF EIA-0196217.</div>
+  <div id="ttmKnown" class="mini" style="margin-top:6px"></div>
   <div class="hint">Type it how you'd say it — typos are fine. <b>Boxing:</b> jab, cross, hook, uppercut, body shot, slip, bob &amp; weave, block, combos like 1-2-3, left / right / lead / rear, southpaw. <b>Fighters:</b> Tyson, Ali, Mayweather, Canelo, Lomachenko, Bruce Lee, McGregor, Muay Thai, karate. <b>Sports:</b> ride a bike, golf, baseball bat / pitch, tennis serve / forehand, basketball dribble / shoot, football kick. <b>Moves:</b> walk, run, backwards, in a circle, turn, jump, kick, knee, elbow, teep, squat, lunge, jumping jacks, stretch, sit down, push, pull, lift, wave, clap, point, bow, salute, shrug, nod, look around, think, flex, celebrate, dance, spin. <b>Moods &amp; places:</b> tired, proud, sneaky, happy, angry, drunk, old, zombie, in the rain, windy, on ice, uphill, underwater, soldier march, carrying a box. Just a theme ("workout", "Mike Tyson") makes a full routine. Tap Create again for a new variation. 🧠 Teach my AI learns any move from a video, e.g. a real Tyson hook clip.</div>
 </div></div>
 <div id="editModal" data-et="studio">
@@ -5017,6 +5047,7 @@ $('ttmClose').onclick = () => { $('ttmModal').style.display = 'none'; unlockPage
 $('ttmText').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('ttmGo').click(); } });
 $('ttmGo').onclick = () => { const txt = $('ttmText').value.trim(); if (!txt) { toast('Type what the character should do.', true); return; } runTextMotion(txt); };
 function runTextMotion(txt, existingId, seed) {
+  if (!MOVELIB && MOVE_HINT.test(txt)) { toast('Loading real moves…'); loadMoveLib().then(() => runTextMotion(txt, existingId, seed)).catch(() => { MOVELIB = { moves: [] }; runTextMotion(txt, existingId, seed); }); return; }
   if (seed == null) {
     if (existingId) seed = ttmSeeds[existingId] || 0;
     else { // same words again -> the next version in the cycle (seed % 8 picks the version; the rest keeps each take unique)
@@ -5787,7 +5818,7 @@ function isOriginalTake(k) {
 async function renderLibrary() {
   let takes = []; try { takes = (await LIB.all()).sort((a, b) => (+b.mod || +b.id || 0) - (+a.mod || +a.id || 0)); /* most recent first */ } catch (e) { $('libList').innerHTML = '<div class="hint">Library is not available in this browser mode.</div>'; return; }
   const all = takes.length; if (HIDE_ORIG) takes = takes.filter(k => !isOriginalTake(k));
-  $('libHideOrig').textContent = HIDE_ORIG ? '👁 Show originals' : '🙈 Hide originals'; $('libHideOrig').classList.toggle('primary', HIDE_ORIG);
+  $('libHideOrig').textContent = HIDE_ORIG ? '👁 Show originals' : '🙈 Hide originals'; $('libHideOrig').classList.toggle('on', HIDE_ORIG);
   $('libCount').textContent = all ? (HIDE_ORIG ? `${takes.length} of ${all} shown` : `${all} saved`) : '';
   if (HIDE_ORIG && all && !takes.length) { $('libList').innerHTML = '<div class="hint">Originals hidden. No takes with new AI-made moves yet — tick 🧠 Use what my AI learned in Text to motion and create one (they show an <b>N</b>).</div>'; return; }
   if (!takes.length) { $('libList').innerHTML = '<div class="hint">Nothing saved yet. Generate a motion and it appears here.</div>'; return; }
@@ -5804,7 +5835,7 @@ function libSelUI() {
   $('libDelSel').textContent = delSelArm ? `Delete ${LIBSEL.size}? Tap again` : `🗑 Delete${on && LIBSEL.size ? ' (' + LIBSEL.size + ')' : ''}`;
   $('libAll').textContent = on && LIBSEL.size === LIB_IDS.length && LIB_IDS.length ? 'None' : 'All';
 }
-$('libHideOrig').onclick = () => { HIDE_ORIG = !HIDE_ORIG; try { localStorage.setItem('nocap-hideorig', HIDE_ORIG ? '1' : '0'); } catch (e) {} LIBSEL = null; libSelUI(); renderLibrary(); };
+$('libHideOrig').onclick = () => { HIDE_ORIG = !HIDE_ORIG; try { localStorage.setItem('nocap-hideorig', HIDE_ORIG ? '1' : '0'); } catch (e) {} LIBSEL = null; libSelUI(); renderLibrary(); toast(HIDE_ORIG ? '🙈 Originals hidden — the Library now shows only takes with new AI-made moves (and your video captures).' : '👁 Showing everything again.'); };
 $('libSel').onclick = () => { LIBSEL = new Set(); delSelArm = false; libSelUI(); renderLibrary(); };
 $('libCancel').onclick = () => { LIBSEL = null; delSelArm = false; libSelUI(); renderLibrary(); };
 $('libAll').onclick = () => { if (!LIBSEL) return; LIBSEL = LIBSEL.size === LIB_IDS.length ? new Set() : new Set(LIB_IDS); delSelArm = false; libSelUI(); renderLibrary(); };
@@ -5831,23 +5862,27 @@ $('libList').onclick = async e => {
     return b.dataset.a === 'bvh' ? exportBVH(a, base) : b.dataset.a === 'fbx' ? exportFBX(a, base) : exportGLB(a, base);
   }
   if (b.dataset.a === 'open' || b.dataset.a === 'edit') {
-    clearTimeout(autosaveT);
-    if (take.prompt) { quiet = true; writeSettings(take.settings); quiet = false; ttmSeeds[take.id] = take.seed || 0; BAKE = take.baked || null; runTextMotion(take.prompt, take.id, take.seed || 0); resetHistory(); if (b.dataset.a === 'edit') openEditor(); return; }
-    const vblob = take.videoBuf ? new Blob([take.videoBuf], { type: take.videoType || 'video/mp4' }) : take.video;
-    if (vblob) await loadVideo(vblob, take.videoName || take.name, { fromLibrary: true });
-    else { pause(); if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = []; }
-    quiet = true; writeSettings(take.settings); quiet = false; currentTakeId = take.id; resetHistory();
-    if (take.settings && take.settings.trim) { trim = { ...take.settings.trim }; renderTrim(); }
-    if (!take.frames) { toast('Video opened. This take was not finished: tap Generate motion.'); return; }
-    frames = take.frames; meta = take.meta; videoName = take.name || 'motion'; curTime = 0;
-    if (!take.settings || !take.settings.solverVer) { quiet = true; $('solverVer').value = 'classic'; quiet = false; } // made before AI versions existed: use the AI it was made with
-    BAKE = take.baked || null;
-    legGuess(false); solve(true); updateRefineLabel(); $('scrub').disabled = false; updateTimeLabel(); $('play').disabled = false;
-    $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); toast('Opened from Library.');
-    if (b.dataset.a === 'edit') openEditor();
+    return openTake(take, b.dataset.a === 'edit');
   }
 };
 renderLibrary();
+// open a saved take in the main view (restore = quietly put it back, e.g. after the AI studied videos in the background)
+async function openTake(take, edit, restore) {
+    clearTimeout(autosaveT);
+  if (take.prompt) { quiet = true; writeSettings(take.settings); quiet = false; ttmSeeds[take.id] = take.seed || 0; BAKE = take.baked || null; runTextMotion(take.prompt, take.id, take.seed || 0); resetHistory(); if (edit) openEditor(); return; }
+  const vblob = take.videoBuf ? new Blob([take.videoBuf], { type: take.videoType || 'video/mp4' }) : take.video;
+  if (vblob) await loadVideo(vblob, take.videoName || take.name, { fromLibrary: true });
+  else { pause(); if (videoURL) URL.revokeObjectURL(videoURL); videoURL = null; codecSrc = null; vid.removeAttribute('src'); vid.load(); useCodecMode(false); previews = []; }
+  quiet = true; writeSettings(take.settings); quiet = false; currentTakeId = take.id; resetHistory();
+  if (take.settings && take.settings.trim) { trim = { ...take.settings.trim }; renderTrim(); }
+  if (!take.frames) { toast('Video opened. This take was not finished: tap Generate motion.'); return; }
+  frames = take.frames; meta = take.meta; videoName = take.name || 'motion'; curTime = 0;
+  if (!take.settings || !take.settings.solverVer) { quiet = true; $('solverVer').value = 'classic'; quiet = false; } // made before AI versions existed: use the AI it was made with
+  BAKE = take.baked || null;
+  legGuess(false); solve(true); updateRefineLabel(); $('scrub').disabled = false; updateTimeLabel(); $('play').disabled = false;
+  if (!restore) { $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); toast('Opened from Library.'); }
+  if (edit) openEditor();
+}
 
 // ---------- ✏️ Edit motion: move any joint, the change is blended smoothly into the frames around it ----------
 const ssE = x => x * x * (3 - 2 * x);
@@ -7089,9 +7124,13 @@ const qlog = q => { let [x, y, z, w] = q; if (w < 0) { x = -x; y = -y; z = -z; w
 const qexp = v => { const a = Math.hypot(v[0], v[1], v[2]); if (a < 1e-8) return [0, 0, 0, 1]; const s = Math.sin(a / 2) / a; return [v[0] * s, v[1] * s, v[2] * s, Math.cos(a / 2)]; };
 // every punch in one shape: 22 frames (landing at frame 10) of the spine + that arm
 const ML_J = arm => ['Spine', 'Spine1', 'Spine2', arm + 'Shoulder', arm + 'Arm', arm + 'ForeArm', arm + 'Hand'];
+// 👍 kept variations become part of his own punches (stored on this phone)
+let KEPT = []; try { KEPT = JSON.parse(localStorage.getItem('nocap-kept') || '[]'); } catch (e) {}
+let ML_FORCE_LIB = false; // the Teach window's preview can use the pro library even when it's off for made-up motion
 function mlPunches() {
   const out = [];
-  if (libOn() && BUILTIN) for (const s0 of BUILTIN.segs) out.push({ type: s0.type, arm: s0.arm, q: s0.q, from: 'lib' });
+  for (const k of KEPT) out.push({ type: k.type, arm: k.arm, q: k.q, from: 'kept' });
+  if ((libOn() || ML_FORCE_LIB) && BUILTIN) for (const s0 of BUILTIN.segs) out.push({ type: s0.type, arm: s0.arm, q: s0.q, from: 'lib' });
   for (const m of LEARNED) { const d = m.data; if (!d) continue; const L = analyzeLearned(d), idx = d.rest && d.rest.index; if (!idx) continue;
     for (const sg of L.segs) { const names = ML_J(sg.arm), src = sg.locals || d.locals, k0 = sg.k - 10; if (!src || k0 < 0 || k0 + 22 > src.length) continue;
       if (names.some(nm => idx[nm] == null)) continue; out.push({ type: sg.type, arm: sg.arm, q: src.slice(k0, k0 + 22).map(l => names.map(nm => l[idx[nm]])), from: m.id }); } }
@@ -7108,7 +7147,7 @@ function jacobiEig(G) { // symmetric eigen-decomposition (small matrices)
   return { vals: A.map((r, i) => r[i]), vecs: V };
 }
 function mlModels() {
-  const sig = (libOn() && BUILTIN ? 'lib' : '') + '|' + LEARNED.map(m => m.id).join(','); if (ML_CACHE && ML_CACHE.sig === sig) return ML_CACHE.models;
+  const sig = ((libOn() || ML_FORCE_LIB) && BUILTIN ? 'lib' : '') + '|' + LEARNED.map(m => m.id).join(',') + '|k' + KEPT.length; if (ML_CACHE && ML_CACHE.sig === sig) return ML_CACHE.models;
   const groups = {}; for (const p of mlPunches()) (groups[p.type + '|' + p.arm] = groups[p.type + '|' + p.arm] || []).push(p);
   const models = {};
   for (const key in groups) { const P = groups[key], N = P.length; if (N < 3) { models[key] = { n: N, real: P }; continue; }
@@ -7178,6 +7217,28 @@ function armOnto(L, rest, side, smp, jk, map, w) {
   L[jA] = S.qnorm(S.qmul(S.qconj(gS), gA2)); L[jF] = S.qnorm(S.qmul(S.qconj(gA2), gF2));
 }
 function feelOn() { return !!($('ttmFeel') && $('ttmFeel').checked); }
+// put one generated punch (a model sample) onto the arm of motion `a`, around its punch at frame p.k (writes into out)
+function applyModelPunch(out, a, p, smp) {
+  const ix = a.rest.index, n = a.n, names = ML_J(p.side), map = a.rest.joints.map(jt => { const i = names.indexOf(jt.name); return i < 0 ? null : i; }), wb = 9, wa = 10;
+  for (let k = Math.max(0, p.k - wb); k <= Math.min(n - 1, p.k + wa); k++) { const jk = 10 + (k - p.k); if (jk < 0 || jk >= 22) continue;
+    const u = k <= p.k ? (k - (p.k - wb)) / (wb * 0.6) : ((p.k + wa) - k) / (wa * 0.6), w = Math.max(0, Math.min(1, u)), ww = w * w * (3 - 2 * w);
+    // never let the new punch make the arm whip round faster than the made-up one does: back off the blend on that frame if it would
+    const orig = out.locals[k], arm = [ix[p.side + 'Arm'], ix[p.side + 'ForeArm'], ix[p.side + 'Hand']].filter(j => j != null);
+    const qd = (x, y) => 2 * Math.acos(Math.min(1, Math.abs(x[0] * y[0] + x[1] * y[1] + x[2] * y[2] + x[3] * y[3]))) * 180 / Math.PI;
+    const prevR = k > 0 ? S.fk(a.rest, out.locals[k - 1], out.rootPos[k - 1]).rot : null, gR0 = k > 0 ? S.fk(a.rest, a.locals[k - 1], a.rootPos[k - 1]).rot : null, gR1 = S.fk(a.rest, a.locals[k], a.rootPos[k]).rot;
+    const genJ = gR0 ? Math.max(...arm.map(j => qd(gR1[j], gR0[j]))) : 0; let best = null;
+    for (const f of [1, 0.75, 0.5, 0.3, 0.15, 0]) { const L = orig.map(q => q.slice()); armOnto(L, a.rest, p.side, smp, jk, map, ww * f);
+      const R = prevR ? S.fk(a.rest, L, out.rootPos[k]).rot : null, jmp = R ? Math.max(...arm.map(j => qd(R[j], prevR[j]))) : 0;
+      if (!best || jmp < best.jmp) best = { L, jmp }; if (jmp <= genJ + 20) { best = { L, jmp }; break; } }
+    out.locals[k] = best.L; }
+  // then smooth out any frame where the arm still turns much faster than the made-up punch did (spreads a sudden twist over a few frames)
+  const armJ = ['Shoulder', 'Arm', 'ForeArm', 'Hand'].map(nm => ix[p.side + nm]).filter(j => j != null), qd2 = (x, y) => 2 * Math.acos(Math.min(1, Math.abs(x[0] * y[0] + x[1] * y[1] + x[2] * y[2] + x[3] * y[3]))) * 180 / Math.PI;
+  const k0 = Math.max(1, p.k - wb - 2), k1 = Math.min(n - 2, p.k + wa + 2), gW = []; for (let k = k0 - 1; k <= k1 + 1; k++) gW[k] = S.fk(a.rest, a.locals[k], a.rootPos[k]).rot;
+  for (let pass = 0; pass < 4; pass++) { let any = false; const W_ = []; for (let k = k0 - 1; k <= k1 + 1; k++) W_[k] = S.fk(a.rest, out.locals[k], out.rootPos[k]).rot;
+    for (let k = k0; k <= k1; k++) { const jm = Math.max(...armJ.map(j => Math.max(qd2(W_[k][j], W_[k - 1][j]), qd2(W_[k + 1][j], W_[k][j])))), gm = Math.max(...armJ.map(j => Math.max(qd2(gW[k][j], gW[k - 1][j]), qd2(gW[k + 1][j], gW[k][j]))));
+      if (jm > gm + 25) { any = true; for (const j of armJ) out.locals[k][j] = S.qnorm(S.qslerp(out.locals[k][j], S.qslerp(out.locals[k - 1][j], out.locals[k + 1][j], 0.5), 0.6)); } }
+    if (!any) break; }
+}
 function applyLearnedFeel(a, prompt, rnd) {
   const pool = LEARNED.filter(m => m.data && (m.data.n > 5 || m.data.learn)).map(m => ({ m, L: analyzeLearned(m.data) })); if (!pool.length && !(libOn() && BUILTIN)) return a;
   const MODELS = mlModels(), latent = [];
@@ -7192,19 +7253,8 @@ function applyLearnedFeel(a, prompt, rnd) {
     for (const p of peaks) {
       const type = p.type || classifyPunch(a, F, p), MD = MODELS[type + '|' + p.side];
       if (MD && MD.comps) { // 🧠 generated, not copied
-        const key = type + '|' + p.side, smp = mlSample(MD, rnd, ((LIKES.latent || {})[key]) || null), names = ML_J(p.side), map = a.rest.joints.map(jt => { const i = names.indexOf(jt.name); return i < 0 ? null : i; });
-        const chain = [p.side + 'Shoulder', p.side + 'Arm', p.side + 'ForeArm', p.side + 'Hand'].map(nm => ix[nm]).filter(j => j != null), spine = ['Spine', 'Spine1', 'Spine2'].map(nm => ix[nm]).filter(j => j != null), wb = 9, wa = 10;
-        for (let k = Math.max(0, p.k - wb); k <= Math.min(n - 1, p.k + wa); k++) { const jk = 10 + (k - p.k); if (jk < 0 || jk >= 22) continue;
-          const u = k <= p.k ? (k - (p.k - wb)) / (wb * 0.6) : ((p.k + wa) - k) / (wa * 0.6), w = Math.max(0, Math.min(1, u)), ww = w * w * (3 - 2 * w);
-          // never let the new punch make the arm whip round faster than the made-up one does: back off the blend on that frame if it would
-          const orig = out.locals[k], arm = [ix[p.side + 'Arm'], ix[p.side + 'ForeArm'], ix[p.side + 'Hand']].filter(j => j != null);
-          const qd = (x, y) => 2 * Math.acos(Math.min(1, Math.abs(x[0] * y[0] + x[1] * y[1] + x[2] * y[2] + x[3] * y[3]))) * 180 / Math.PI;
-          const prevR = k > 0 ? S.fk(a.rest, out.locals[k - 1], out.rootPos[k - 1]).rot : null, gR0 = k > 0 ? S.fk(a.rest, a.locals[k - 1], a.rootPos[k - 1]).rot : null, gR1 = S.fk(a.rest, a.locals[k], a.rootPos[k]).rot;
-          const genJ = gR0 ? Math.max(...arm.map(j => qd(gR1[j], gR0[j]))) : 0; let best = null;
-          for (const f of [1, 0.75, 0.5, 0.3, 0.15, 0]) { const L = orig.map(q => q.slice()); armOnto(L, a.rest, p.side, smp, jk, map, ww * f);
-            const R = prevR ? S.fk(a.rest, L, out.rootPos[k]).rot : null, jmp = R ? Math.max(...arm.map(j => qd(R[j], prevR[j]))) : 0;
-            if (!best || jmp < best.jmp) best = { L, jmp }; if (jmp <= genJ + 20) { best = { L, jmp }; break; } }
-          out.locals[k] = best.L; }
+        const key = type + '|' + p.side, smp = mlSample(MD, rnd, ((LIKES.latent || {})[key]) || null);
+        applyModelPunch(out, a, p, smp);
         latent.push({ key, z: smp.z }); swapped++; if (!used.includes('model')) used.push('model'); continue;
       }
       let c = segAll.filter(s0 => s0.type === type && s0.arm === p.side); if (!c.length) continue;
@@ -7244,9 +7294,24 @@ function smartTextMotion(txt0, seed) {
   const r0 = smartTextMotion0(txt0, seed);
   return feelOn() && (LEARNED.length || (libOn() && BUILTIN)) ? applyLearnedFeel(r0, txt0, tRand(seed * 40503 + 7)) : r0;
 }
+// ---- 🎬 real-mocap moves (gymnastics, stealth, floor work) from the CMU database: loaded once, used when a prompt names them ----
+let MOVELIB = null, MOVELIB_LOADING = null;
+const MOVE_HINT = /\b(cartwheel|round ?off|flip|somersault|tuck|aerial|handspring|crawl|all fours|sneak|stealth|creep|tiptoe|prowl|roll|get(s|ting)? up|stand(s|ing)? up from|lie down|lies down|lay down|lays down|lying down|prone|balance|arabesque|one leg|take cover|duck down|hit the deck|gymnast\w*|acrobat\w*|tumbling|floor routine)/i;
+const GYM_RE = /\b(gymnastics?|gymnast|acrobatics?|acrobatic|tumbling|floor routine)\b/i, COMBAT_RE = /\b(jab|cross|hook|uppercut|punch\w*|kick\w*|knee|elbow|strike)\b/i;
+function loadMoveLib() {
+  if (MOVELIB) return Promise.resolve(MOVELIB); if (MOVELIB_LOADING) return MOVELIB_LOADING;
+  MOVELIB_LOADING = fetch('learned/cmu-moves.json').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(j => {
+    for (const m of j.moves) { m.rx = new RegExp(m.re, 'i'); for (const c of m.clips) { const d = c.data; d.locals = d.frames.map(fr => { const l = new Array(d.rest.joints.length); for (const j in d.still) l[+j] = d.still[j]; d.move.forEach((j, i) => { l[j] = fr[i]; }); return l; }); delete d.frames; } }
+    MOVELIB = j; return j; }).catch(e => { MOVELIB_LOADING = null; throw e; });
+  return MOVELIB_LOADING;
+}
+setTimeout(() => loadMoveLib().catch(() => {}), 4000); // quietly in the background (cached for offline after)
 function smartTextMotion0(txt0, seed) {
-  const txt = applyWordMap(txt0);
-  if (!LEARNED.length) return S.textToMotion(txt, 30, seed);
+  let txt = applyWordMap(txt0); const BM = MOVELIB ? MOVELIB.moves : [];
+  if (BM.length && GYM_RE.test(txt) && !BM.some(m => m.rx.test(txt))) { // "gymnastics" on its own: a little floor routine, different each time
+    const r = tRand(seed * 7 + 3), pool = ['cartwheel', 'backflip', 'front handspring', 'side flip', 'forward roll', 'cartwheel']; const pick = [];
+    while (pick.length < 3) { const x = pool[Math.floor(r() * pool.length)]; if (!pick.includes(x)) pick.push(x); } txt = pick.join(', then '); }
+  if (!LEARNED.length && !BM.some(m => m.rx.test(txt))) return S.textToMotion(txt, 30, seed);
   const steps = txt.split(/\s*(?:,|;|\band then\b|\bthen\b|\bfollowed by\b|\bafter that\b)\s*/i).map(s => s.trim()).filter(Boolean);
   const rnd = tRand(seed * 2654435761), pieces = [], plan = [], unknown = [], styles = []; let used = false;
   steps.forEach((st, i) => {
@@ -7255,6 +7320,10 @@ function smartTextMotion0(txt0, seed) {
     if (scored.length) {
       const top = scored.filter(x => x.s >= scored[0].s - 1);
       for (let c = 0; c < count; c++) { const m = top[Math.floor(rnd() * top.length)].m; pieces.push(learnedPiece(m, rnd)); plan.push('🧠 ' + m.name); }
+      used = true;
+    } else if (BM.some(m => m.rx.test(st) && !(m.id === 'sneak' && COMBAT_RE.test(st)))) { // real mocap clip of that move (a random take of it, a little faster / slower, sometimes mirrored)
+      const bm = BM.find(m => m.rx.test(st) && !(m.id === 'sneak' && COMBAT_RE.test(st)));
+      for (let c = 0; c < count; c++) { const clip = bm.clips[Math.floor(rnd() * bm.clips.length)]; pieces.push(learnedPiece({ data: clip.data }, rnd)); plan.push('🎬 ' + bm.name); }
       used = true;
     } else { const a = S.textToMotion(st, 30, seed + i * 7919); pieces.push({ rest: a.rest, locals: a.locals, rootPos: a.rootPos, M: a.M }); plan.push(...a.plan); unknown.push(...(a.unknown || [])); styles.push(...(a.styles || [])); }
   });
@@ -7266,6 +7335,7 @@ let STUDY = null; // { follow } while studying: captures aren't saved to the Lib
 async function studyVideos(files, words, follow) {
   if (busy || STUDY) { toast('Already working — wait for it to finish.', true); return; }
   const list = [...files].filter(f => f && f.size); if (!list.length) return;
+  if (TV_RESTORE == null && currentTakeId) { try { if (await LIB.get(currentTakeId)) TV_RESTORE = currentTakeId; } catch (e) {} }
   STUDY = { follow, cancel: false }; window.__studyQuiet = true; window.__studyNotes = []; const msg = $('stMsg'), done = [];
   $('stGo').disabled = true; $('stOk').hidden = true; $('stDone').hidden = true; $('stStop').hidden = false; $('stProgWrap').hidden = false;
   const capBar = $('prog').querySelector('i'), setProg = (i, frac, txt) => { const p = Math.max(0, Math.min(100, (i + frac) / list.length * 100)); $('stBar').style.width = p.toFixed(1) + '%'; $('stPct').textContent = `${Math.round(p)}% · ${txt}`; };
@@ -7289,6 +7359,7 @@ async function studyVideos(files, words, follow) {
     const stopped = STUDY && STUDY.cancel; STUDY = null; $('stGo').disabled = false; $('stStop').hidden = true; $('stProgWrap').hidden = true; $('stDone').hidden = false; ML_CACHE = null; renderTeach();
     if (done.length) { msg.innerHTML = (stopped ? 'Stopped. ' : '') + '✅ Finished — ' + done.length + ' video' + (done.length > 1 ? 's' : '') + ':<br>' + done.map(x => '• ' + x).join('<br>'); if (!feelOn()) msg.innerHTML += '<br>Tick <b>🧠 Use what my AI learned</b> so made-up motion uses it.'; }
     else if (stopped) msg.textContent = 'Stopped.';
+    TVP = null; if ($('teachModal').style.display !== 'none') tvNext(); else if (TV_RESTORE) { const id = TV_RESTORE; TV_RESTORE = null; LIB.get(id).then(t => t && openTake(t, false, true)).catch(() => {}); }
   }
 }
 // what it keeps from one captured video: the punches it saw most clearly (whole arm in view, no glitches) and the
@@ -7347,7 +7418,8 @@ function renderTeach() {
   const tp = studied.reduce((s0, m) => s0 + ((m.data && m.data.learn && m.data.learn.segs.length) || 0), 0);
   let head = ''; try { const M = mlModels(), NM = { straight: 'jab/cross', hook: 'hook', upper: 'uppercut' }, can = Object.entries(M).filter(([, m]) => m.comps).map(([k]) => { const [t, arm] = k.split('|'); return (arm === 'Left' ? 'left ' : 'right ') + NM[t]; });
     const lib = libOn() && BUILTIN ? BUILTIN.segs.length : 0;
-    head = `<div class="mini" style="margin-bottom:8px;padding:8px;border:1px solid var(--line);border-radius:10px">${lib ? `📚 Pro library on: ${lib} real punches<br>` : '📚 Pro library off (tick it under Create)<br>'}${can.length ? `🧠 Can make <b>new</b>: ${can.join(', ')}` : '🧠 Needs at least 3 clear punches of a kind before it can make new ones'}${LIKES.count ? `<br>👍👎 ${LIKES.count} rating${LIKES.count > 1 ? 's' : ''} steering it` : ''}</div>`; } catch (e) {}
+    head = `<div class="mini" style="margin-bottom:8px;padding:8px;border:1px solid var(--line);border-radius:10px">${lib ? `📚 Pro library on: ${lib} real punches<br>` : '📚 Pro library off (tick it under Create)<br>'}${can.length ? `🧠 Can make <b>new</b>: ${can.join(', ')}` : '🧠 Needs at least 3 clear punches of a kind before it can make new ones'}${KEPT.length ? `<br>👍 ${KEPT.length} kept move${KEPT.length > 1 ? 's' : ''} of his own` : ''}${LIKES.count ? `<br>👍👎 ${LIKES.count} rating${LIKES.count > 1 ? 's' : ''} steering it` : ''}</div>`; } catch (e) {}
+  try { teachStat(); } catch (e) {}
   $('tchList').innerHTML = head + (studied.length ? `<div class="sub">Studied videos <span class="mini">${studied.length} video${studied.length > 1 ? 's' : ''} · ${tp} real punch${tp === 1 ? '' : 'es'} learned</span></div>` : '') + studied.map(m => `<div class="row" style="gap:6px"><label style="flex:1">🎬 <b>${(m.src || m.name).slice(0, 30)}</b> <span class="mini">${sumOf(m)}${m.words && m.words.length ? ' · ' + m.words.join(', ') : ''}</span></label><button class="btn small" data-del="${m.id}">🗑</button></div>`).join('')
     + (moves.length ? '<div class="sub">Taught moves</div>' : '') + moves.map(m => `<div class="row" style="gap:6px"><label style="flex:1">🧠 <b>${m.words.join(', ')}</b> <span class="mini">${(m.n / 30).toFixed(1)}s</span></label><button class="btn small" data-try="${m.id}">▶ Try</button><button class="btn small" data-del="${m.id}">🗑</button></div>`).join('')
     + (Object.keys(WORDMAP).length ? '<div class="sub">Word links</div>' : '') + Object.entries(WORDMAP).map(([k, v]) => `<div class="row" style="gap:6px"><label style="flex:1">🔗 "${k}" → "${v}"</label><button class="btn small" data-wdel="${k}">🗑</button></div>`).join('');
@@ -7383,7 +7455,62 @@ async function teachSave() {
     $('tchWords').value = ''; toast(`Learned "${words[0]}"${found ? ' — found ' + found : ''} and how you move. Turn on "Move like my videos" so made-up motion uses it.`, false, 7000);
   } catch (e) { console.error(e); toast('Could not learn that: ' + e.message, true); }
 }
-$('ttmTeachBtn').onclick = () => { const b = $('teachBox'); b.hidden = !b.hidden; if (!b.hidden) { fillTeachSources(); renderTeach(); } };
+// ---- 🧠 Teach window: its own screen with a preview of what it learned; 👍 keep / 👎 discard / 🔁 retry ----
+const PV_PHRASE = { 'straight|Left': 'jab', 'straight|Right': 'cross', 'hook|Left': 'left hook', 'hook|Right': 'right hook', 'upper|Left': 'left uppercut', 'upper|Right': 'right uppercut' };
+const PV_NAME = { 'straight|Left': 'Jab (left)', 'straight|Right': 'Cross (right)', 'hook|Left': 'Left hook', 'hook|Right': 'Right hook', 'upper|Left': 'Left uppercut', 'upper|Right': 'Right uppercut' };
+let TVP = null, TV_RESTORE = null; // TVP = { anim, smp, key, t0, n }
+function steerLatent(key, z, v) { LIKES.latent = LIKES.latent || {}; const mu = LIKES.latent[key] || z.map(() => 0); LIKES.latent[key] = z.map((x, i) => Math.max(-2, Math.min(2, (mu[i] || 0) + (v > 0 ? 0.35 : -0.2) * (x - (mu[i] || 0))))); LIKES.count = (LIKES.count || 0) + 1; try { localStorage.setItem('nocap-likes', JSON.stringify(LIKES)); } catch (e) {} S.setPrefs(LIKES); }
+function previewVariation(key) {
+  const M = mlModels(), keys = Object.keys(M).filter(k => M[k].comps && PV_PHRASE[k]); if (!keys.length) return null;
+  if (!key || key === 'any' || !M[key] || !M[key].comps) key = keys[Math.floor(Math.random() * keys.length)];
+  const seed = Math.floor(Math.random() * 1e6), a = S.textToMotion(PV_PHRASE[key], 30, seed), [type, side] = key.split('|');
+  const st = (a.strikes || []).find(x => x.type === type) || (a.strikes || [])[0]; if (!st) return null;
+  const smp = mlSample(M[key], tRand(seed * 13 + 1), (LIKES.latent || {})[key] || null), out = { ...a, locals: a.locals.map(l => l.slice()), rootPos: a.rootPos.map(r => r.slice()) };
+  applyModelPunch(out, a, { k: st.k, side, type }, smp);
+  return { anim: out, smp, key, n: (TVP && TVP.key === key ? TVP.n : 0) + 1, t0: performance.now() };
+}
+function tvNext() { TVP = previewVariation($('tvMove').value) || null; tvInfo(); }
+function tvInfo() {
+  const M = mlModels(), keys = Object.keys(M).filter(k => M[k].comps && PV_PHRASE[k]), cur = $('tvMove').value;
+  $('tvMove').innerHTML = (keys.length ? '<option value="any">🎲 Any move</option>' : '') + keys.map(k => `<option value="${k}">${PV_NAME[k]}</option>`).join(''); if ([...$('tvMove').options].some(o => o.value === cur)) $('tvMove').value = cur;
+  for (const id of ['tvUp', 'tvDown', 'tvRetry']) $(id).disabled = !TVP; $('tvN').hidden = !TVP;
+  $('tvInfo').innerHTML = TVP ? `<b>${PV_NAME[TVP.key]}</b> · new version #${TVP.n}, made up from ${M[TVP.key].n} real punches it learned${KEPT.length ? ` · ${KEPT.length} kept 👍` : ''}`
+    : (BUILTIN_LOADING && !BUILTIN ? 'Loading what it knows…' : 'Nothing to show yet. Study a few videos below (3+ clear punches of a kind) and it starts making its own.');
+}
+function tvDraw() {
+  const cv = $('tvCv'); if ($('teachModal').style.display === 'none') return; requestAnimationFrame(tvDraw);
+  const W = cv.clientWidth, H = cv.clientHeight, dpr = Math.min(2, devicePixelRatio || 1); if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  const x = cv.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, W, H); if (!TVP) return;
+  const a = TVP.anim, dur = a.n / 30 + 0.6, t = ((performance.now() - TVP.t0) / 1000) % dur, k = Math.min(a.n - 1, Math.floor(t * 30));
+  if (!TVP.box) { let y0 = 9, y1 = -9, r = 0; for (let q = 0; q < a.n; q += 3) { const P = S.fk(a.rest, a.locals[q], a.rootPos[q]).pos; for (const p of P) { y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); r = Math.max(r, Math.hypot(p[0] - a.rootPos[0][0], p[2] - a.rootPos[0][2])); } } TVP.box = { y0, y1, r }; }
+  const P = S.fk(a.rest, a.locals[k], a.rootPos[k]).pos, B = TVP.box, sc = Math.min(H * 0.8 / Math.max(0.5, B.y1 - B.y0), W * 0.42 / Math.max(0.4, B.r)), yaw = 0.6 + 0.25 * Math.sin(performance.now() / 2500), cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const pr = p => { const dx = p[0] - a.rootPos[0][0], dz = p[2] - a.rootPos[0][2]; return [W / 2 + (dx * cy + dz * sy) * sc, H * 0.9 - (p[1] - B.y0) * sc, -dx * sy + dz * cy]; };
+  x.strokeStyle = '#ffffff22'; x.beginPath(); x.ellipse(W / 2, H * 0.9, W * 0.3, 10, 0, 0, 2 * Math.PI); x.stroke();
+  const side = TVP.key.split('|')[1], acc = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#d4af37';
+  const J = a.rest.joints, segs = J.map((j, i) => [i, j.parent]).filter(([i, p]) => p >= 0 && !/Hand(Thumb|Index|Middle|Ring|Pinky)/.test(J[i].name)).map(([i, p]) => ({ i, p, z: (pr(P[i])[2] + pr(P[p])[2]) / 2 })).sort((u, v) => u.z - v.z);
+  x.lineCap = 'round';
+  for (const { i, p } of segs) { const A = pr(P[p]), C = pr(P[i]), hot = J[i].name.startsWith(side) && /Arm|Hand/.test(J[i].name); x.strokeStyle = hot ? acc : '#d9d4c7'; x.lineWidth = hot ? 5 : 4; x.beginPath(); x.moveTo(A[0], A[1]); x.lineTo(C[0], C[1]); x.stroke(); }
+  const hd = a.rest.index.Head; if (hd != null) { const h = pr(P[hd]); x.fillStyle = '#d9d4c7'; x.beginPath(); x.arc(h[0], h[1] - 0.06 * sc, 0.09 * sc, 0, 2 * Math.PI); x.fill(); }
+}
+function openTeach() {
+  $('teachModal').style.display = 'grid'; lockPage(); ML_FORCE_LIB = true; ML_CACHE = null; showTeachTab('vid'); renderTeach(); fillTeachSources();
+  const go = () => { if (!TVP) tvNext(); else tvInfo(); }; if (!BUILTIN) { tvInfo(); loadBuiltin().then(() => { ML_CACHE = null; go(); }).catch(() => go()); } else go();
+  requestAnimationFrame(tvDraw);
+}
+async function closeTeach() {
+  if (STUDY) { STUDY.cancel = true; cancelFlag = true; }
+  $('teachModal').style.display = 'none'; unlockPage(); ML_FORCE_LIB = false; ML_CACHE = null; TVP = null; teachStat();
+  if (TV_RESTORE && !STUDY) { const id = TV_RESTORE; TV_RESTORE = null; try { const take = await LIB.get(id); if (take) await openTake(take, false, true); } catch (e) {} }
+  toast('🧠 Saved. Everything it learned is kept on this phone.');
+}
+function teachStat() { try { const M = mlModels(), n = Object.values(M).filter(m => m.comps).length, vids = LEARNED.filter(m => m.study).length; $('teachStat').textContent = `${vids} video${vids === 1 ? '' : 's'} studied · ${KEPT.length} kept move${KEPT.length === 1 ? '' : 's'}${n ? ` · can make ${n} kinds of punch` : ''}`; } catch (e) {} }
+$('teachOpen').onclick = openTeach; $('tmSave').onclick = closeTeach;
+$('tvMove').onchange = () => { TVP = null; tvNext(); }; $('tvRetry').onclick = tvNext;
+$('tvUp').onclick = () => { if (!TVP) return; const [type, arm] = TVP.key.split('|'), r3 = v => Math.round(v * 1000) / 1000; KEPT.push({ type, arm, q: TVP.smp.q.map(f => f.map(q => q.map(r3))), at: Date.now() }); if (KEPT.length > 300) KEPT.shift();
+  try { localStorage.setItem('nocap-kept', JSON.stringify(KEPT)); } catch (e) { KEPT.pop(); toast('Phone storage is full, so it could not keep that one.', true); return; }
+  steerLatent(TVP.key, TVP.smp.z, 1); ML_CACHE = null; toast('👍 Kept. It is one of his moves now.'); tvNext(); };
+$('tvDown').onclick = () => { if (!TVP) return; steerLatent(TVP.key, TVP.smp.z, -1); toast('👎 Discarded. Less like that from now on.'); tvNext(); };
+
 $('tchSave').onclick = teachSave;
 // ---- 👍 / 👎: rate made-up motion; it remembers which choices you liked (punch shapes, pace, which of your real punches) ----
 let LIKES = {}; try { LIKES = JSON.parse(localStorage.getItem('nocap-likes') || '{}'); } catch (e) {} S.setPrefs(LIKES);
