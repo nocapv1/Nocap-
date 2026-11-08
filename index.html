@@ -4254,7 +4254,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   <section class="card">
     <h2><span class="n">5</span>Library <span style="margin-left:auto;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400" id="libCount"></span></h2>
     <div class="hint" style="margin:0 0 8px">Every motion you generate is saved here on this device, with its video. Open it again or download it any time, even offline.</div>
-    <div class="libbar"><button class="btn" id="libSel">☑️ Select</button><span id="libSelActs" style="display:none;gap:6px;flex-wrap:wrap"><button class="btn" id="libAll">All</button><button class="btn" id="libDelSel">🗑 Delete</button><button class="btn" id="libCancel">Cancel</button></span></div>
+    <div class="libbar"><button class="btn" id="libSel">☑️ Select</button><button class="btn" id="libHideOrig" title="Hide the plain text-to-motion takes; show only ones with new moves your AI made up">🙈 Hide originals</button><span id="libSelActs" style="display:none;gap:6px;flex-wrap:wrap"><button class="btn" id="libAll">All</button><button class="btn" id="libDelSel">🗑 Delete</button><button class="btn" id="libCancel">Cancel</button></span></div>
     <div id="libList"></div>
   </section>
 </aside>
@@ -5042,7 +5042,7 @@ function runTextMotion(txt, existingId, seed) {
   const id = existingId || Date.now(); currentTakeId = id; ttmSeeds[id] = seed; lastSeed = seed;
   if (!existingId) resetHistory();
   if (existingId && BAKE && BAKE.fresh) autosave();
-  if (!existingId) { BAKE.fresh = false; } if (!existingId) putTake({ id, name: videoName, date: new Date().toISOString(), dur: meta.dur, prompt: txt, seed, frames: null, meta, settings: readSettings(), thumb: null, status: 'done', baked: BAKE ? { key: BAKE.key, anim: BAKE.anim } : null }).catch(e => toast('Library save failed: ' + e.message, true));
+  if (!existingId) { BAKE.fresh = false; } if (!existingId) putTake({ id, name: videoName, date: new Date().toISOString(), dur: meta.dur, prompt: txt, seed, frames: null, meta, settings: readSettings(), thumb: null, status: 'done', ai: !!((a.choices && a.choices.latent && a.choices.latent.length) || (a.plan && a.plan.some(p => String(p).includes('🧠')))), baked: BAKE ? { key: BAKE.key, anim: BAKE.anim } : null }).catch(e => toast('Library save failed: ' + e.message, true));
 }
 $('refineBtn').onclick = refineAgain;
 
@@ -5778,9 +5778,18 @@ function takeAnim(take) { const s = take.settings || {}; const o = { ...opts(), 
   const SV = (s.solverVer || 'classic') === 'classic' && window.SolverClassic ? window.SolverClassic : S;
   const base = take.baked && take.baked.anim && !take.prompt ? take.baked.anim : SV.solveAll(take.frames, o); return applyEdits(base, s.edits); }
 let LIBSEL = null, LIB_IDS = [], delSelArm = false; // ☑️ multi-select (declared before anything can draw the library)
+// 🙈 "originals" = text-to-motion takes made only from the built-in moves (no new AI-made / taught moves in them). Video captures always show.
+let HIDE_ORIG = false; try { HIDE_ORIG = localStorage.getItem('nocap-hideorig') === '1'; } catch (e) {}
+function isOriginalTake(k) {
+  if (!k.prompt) return false; if (k.ai != null) return !k.ai;
+  const a = k.baked && k.baked.anim, c = a && a.choices; return !((c && c.latent && c.latent.length) || (a && a.plan && a.plan.some(p => String(p).includes('🧠'))));
+}
 async function renderLibrary() {
   let takes = []; try { takes = (await LIB.all()).sort((a, b) => (+b.mod || +b.id || 0) - (+a.mod || +a.id || 0)); /* most recent first */ } catch (e) { $('libList').innerHTML = '<div class="hint">Library is not available in this browser mode.</div>'; return; }
-  $('libCount').textContent = takes.length ? `${takes.length} saved` : '';
+  const all = takes.length; if (HIDE_ORIG) takes = takes.filter(k => !isOriginalTake(k));
+  $('libHideOrig').textContent = HIDE_ORIG ? '👁 Show originals' : '🙈 Hide originals'; $('libHideOrig').classList.toggle('primary', HIDE_ORIG);
+  $('libCount').textContent = all ? (HIDE_ORIG ? `${takes.length} of ${all} shown` : `${all} saved`) : '';
+  if (HIDE_ORIG && all && !takes.length) { $('libList').innerHTML = '<div class="hint">Originals hidden. No takes with new AI-made moves yet — tick 🧠 Use what my AI learned in Text to motion and create one (they show an <b>N</b>).</div>'; return; }
   if (!takes.length) { $('libList').innerHTML = '<div class="hint">Nothing saved yet. Generate a motion and it appears here.</div>'; return; }
   LIB_IDS = takes.map(k => k.id); if (LIBSEL) for (const id of [...LIBSEL]) if (!LIB_IDS.includes(id)) LIBSEL.delete(id);
   $('libList').classList.toggle('picking', !!LIBSEL);
@@ -5795,6 +5804,7 @@ function libSelUI() {
   $('libDelSel').textContent = delSelArm ? `Delete ${LIBSEL.size}? Tap again` : `🗑 Delete${on && LIBSEL.size ? ' (' + LIBSEL.size + ')' : ''}`;
   $('libAll').textContent = on && LIBSEL.size === LIB_IDS.length && LIB_IDS.length ? 'None' : 'All';
 }
+$('libHideOrig').onclick = () => { HIDE_ORIG = !HIDE_ORIG; try { localStorage.setItem('nocap-hideorig', HIDE_ORIG ? '1' : '0'); } catch (e) {} LIBSEL = null; libSelUI(); renderLibrary(); };
 $('libSel').onclick = () => { LIBSEL = new Set(); delSelArm = false; libSelUI(); renderLibrary(); };
 $('libCancel').onclick = () => { LIBSEL = null; delSelArm = false; libSelUI(); renderLibrary(); };
 $('libAll').onclick = () => { if (!LIBSEL) return; LIBSEL = LIBSEL.size === LIB_IDS.length ? new Set() : new Set(LIB_IDS); delSelArm = false; libSelUI(); renderLibrary(); };
