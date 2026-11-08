@@ -37,6 +37,7 @@ jobs:
           D=/tmp/deps/node_modules
           mkdir -p _site
           cp index.html sw.js manifest.webmanifest icon.svg icon-180.png icon-512.png robots.txt .nojekyll _site/
+          cp -r learned _site/   # built-in pro boxing library the AI learns from (CMU mocap)
           mkdir -p _site/vendor/three/build _site/vendor/three/examples/jsm
           cp $D/three/build/three.module.js _site/vendor/three/build/
           # whole folders, so helper files these modules import (e.g. utils/TextureUtils.js) come too
