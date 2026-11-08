@@ -7843,12 +7843,13 @@ function stepsAnim(dir, seed, lifeSeed) { // in / out steps from key poses, give
   let a = cleanMotion(S.textToMotion('boxing ' + words.join(' then '), 30, seed)); try { if (BUILTIN || LEARNED.length) a = applyLearnedFeel(a, 'footwork', tRand(lifeSeed != null ? lifeSeed : seed * 3 + 1)); } catch (e) {}
   return { ...a, strikes: [] };
 }
-function previewMove(key, guard) {
+function previewMove(key, guard, tries = 0) {
   if (!MOVELIB || !MOVELIB.moves.length) return null; const seed = Math.floor(Math.random() * 1e6); let a, synth = false;
   if ((key === 'mv:fwd' || key === 'mv:back') && Math.random() < 0.5) { a = stepsAnim(key === 'mv:fwd' ? 'fwd' : 'back', seed); synth = true; } else a = smartTextMotion0(MV_PROMPT[key], seed); const base = a;
   // most versions get a famous guard on top (the legs and body stay real); some keep the boxer's own
   const g = guard !== undefined ? guard : key !== 'mv:shadow' && key !== 'mv:sneak' && key !== 'mv:crawl' && Math.random() < 0.7 ? Object.keys(GUARDS)[Math.floor(Math.random() * Object.keys(GUARDS).length)] : null;
   if (g) a = applyGuard(a, g, 'Left');
+  const cl = (a.choices && a.choices.clips) || []; if (cl.length && tries < 6 && ((LIKES.taughtChains || {})[(g || '') + '|' + cl.join(',')])) return previewMove(key, guard, tries + 1); // already taught: show something new
   return { anim: a, base, seed, key, mv: true, guard: g, synth, clips: (a.choices && a.choices.clips) || [], n: (TVP && TVP.key === key ? TVP.n : 0) + 1, look: 1, t0: performance.now() };
 }
 // 🎬 real single punches (whole body) from the pro boxing sessions: shown alongside the AI-made ones, in one stance (orthodox)
@@ -7861,7 +7862,7 @@ function loadRealPunches() {
   return REALP_LOADING;
 }
 function previewReal(key) {
-  if (!REALP) return null; const [type, side] = key.split('|'), pool = REALP.filter(c => c.type === type && c.side === side && !((LIKES.ban || {})[c.cid])); if (!pool.length) return null;
+  if (!REALP) return null; const [type, side] = key.split('|'), pool = REALP.filter(c => c.type === type && c.side === side && !((LIKES.ban || {})[c.cid]) && !((LIKES.taught || {})[c.cid])); if (!pool.length) return null;
   const w = pool.map(c => Math.exp(Math.max(-3, Math.min(3, ((LIKES.clip || {})[c.cid]) || 0)))); let r = Math.random() * w.reduce((x, y) => x + y), i = 0; while (i < pool.length - 1 && r > w[i]) { r -= w[i]; i++; }
   if (TVP && TVP.clip === pool[i] && pool.length > 1) i = (i + 1) % pool.length;
   const c = pool[i], a = stitchPieces([learnedPiece({ data: c.data }, tRand(Math.floor(Math.random() * 1e6)), c.stance === 'south')]);
@@ -7872,14 +7873,14 @@ function previewMine(id) { const m = MYMOVES.find(x => String(x.id) === String(i
 
 // 📁 NoCap variants live in Teach my AI (with footwork etc.): play them, 🔁 try another guard on the same one, 👍 star it, 👎 delete it
 let NV_TAKES = [];
-async function loadNV() { try { NV_TAKES = (await LIB.all()).filter(t => t.folder === 'NoCap variants').sort((a, b) => b.id - a.id); } catch (e) { NV_TAKES = []; } if ($('teachModal').style.display !== 'none') tvInfo(); }
+async function loadNV() { try { NV_TAKES = (await LIB.all()).filter(t => t.folder === 'NoCap variants' && !t.taught).sort((a, b) => b.id - a.id); } catch (e) { NV_TAKES = []; } if ($('teachModal').style.display !== 'none') tvInfo(); }
 function previewNV(id) { const t = NV_TAKES.find(x => String(x.id) === String(id)); if (!t) return null; let a = t.baked && t.baked.anim; if (!a) { try { a = smartTextMotion(t.prompt, t.seed); } catch (e) { return null; } }
   const g = guardFromText(t.prompt); return { anim: a, key: 'nv:' + t.id, nv: t, mv: true, guard: g, clips: (a.choices && a.choices.clips) || [], n: 1, look: 1, t0: performance.now() }; }
 function previewVariation(key) {
   if (key && key.startsWith('nv:')) return previewNV(key.slice(3));
   if (key && key.startsWith('my:')) return previewMine(key.slice(3));
   if (key && key.startsWith('mv:')) return previewMove(key);
-  if (key && key.startsWith('real:')) { const k2 = key.slice(5); if (k2 === 'any') { const ks = Object.keys(PV_PHRASE).filter(k => REALP && REALP.some(c => k === c.type + '|' + c.side)); return ks.length ? previewReal(ks[Math.floor(Math.random() * ks.length)]) : null; } return previewReal(k2); }
+  if (key && key.startsWith('real:')) { const k2 = key.slice(5); if (k2 === 'any') { const ks = Object.keys(PV_PHRASE).filter(k => REALP && REALP.some(c => k === c.type + '|' + c.side && !((LIKES.ban || {})[c.cid]) && !((LIKES.taught || {})[c.cid]))); return ks.length ? previewReal(ks[Math.floor(Math.random() * ks.length)]) : null; } return previewReal(k2); }
   if ((!key || key === 'any' || PV_PHRASE[key]) && REALP && Math.random() < 0.4) { // every so often show a real one of that punch too
     const ks = (!key || key === 'any') ? Object.keys(PV_PHRASE) : [key], k3 = ks[Math.floor(Math.random() * ks.length)], r = previewReal(k3); if (r) return r; }
   const M = mlModels(), keys = Object.keys(M).filter(k => M[k].comps && PV_PHRASE[k]); if (!keys.length) return null;
@@ -7895,7 +7896,8 @@ function tvNext() { TVP = previewVariation($('tvMove').value) || null; if (TVR &
 function tvInfo() {
   const M = mlModels(), keys = Object.keys(M).filter(k => M[k].comps && PV_PHRASE[k]), cur = $('tvMove').value;
   $('tvMove').innerHTML = (keys.length ? '<optgroup label="Punches"><option value="any">🎲 Any punch</option>' + keys.map(k => `<option value="${k}">${PV_NAME[k]}</option>`).join('') + '</optgroup>' : '')
-    + (REALP ? '<optgroup label="Real punches (pro boxers)"><option value="real:any">🎬 Any real punch</option>' + Object.keys(PV_PHRASE).filter(k => REALP.some(c => k === c.type + '|' + c.side)).map(k => `<option value="real:${k}">🎬 ${PV_NAME[k]} (${REALP.filter(c => k === c.type + '|' + c.side).length})</option>`).join('') + '</optgroup>' : '')
+    + (REALP ? (() => { const left = REALP.filter(c => !((LIKES.ban || {})[c.cid]) && !((LIKES.taught || {})[c.cid])), ks = Object.keys(PV_PHRASE).filter(k => left.some(c => k === c.type + '|' + c.side)); // taught or deleted ones are gone from here
+        return ks.length ? '<optgroup label="Real punches still to teach"><option value="real:any">🎬 Any real punch</option>' + ks.map(k => `<option value="real:${k}">🎬 ${PV_NAME[k]} (${left.filter(c => k === c.type + '|' + c.side).length} left)</option>`).join('') + '</optgroup>' : ''; })() : '')
     + (MOVELIB && MOVELIB.moves.length ? '<optgroup label="Movement">' + Object.keys(MV_NAME).map(k => `<option value="${k}">${MV_NAME[k]}</option>`).join('') + '</optgroup>' : '')
     + (NV_TAKES.length ? '<optgroup label="📁 NoCap variants (guards on real movement)">' + NV_TAKES.map(t => `<option value="nv:${t.id}">📁 ${t.prompt}</option>`).join('') + '</optgroup>' : ''); if (TV_PICKED && [...$('tvMove').options].some(o => o.value === cur)) $('tvMove').value = cur; else if ([...$('tvMove').options].some(o => o.value === 'any')) $('tvMove').value = 'any';
   for (const id of ['tvUp', 'tvDown', 'tvRetry']) $(id).disabled = !TVP; $('tvN').hidden = !TVP || !!TVP.real || !!TVP.mv;
@@ -7986,10 +7988,10 @@ function retryLook() {
 let TV_PICKED = false;
 $('tvMove').onchange = () => { TV_PICKED = true; TVP = null; tvNext(); }; $('tvRetry').onclick = retryLook;
 const R3 = v => Math.round(v * 1000) / 1000, roundQ = q => q.map(f => f.map(x => x.map(R3)));
-const keptMsg = m => { if (m) setTimeout(() => { try { if (LIB_VIEW === 'stars') renderLibrary(); } catch (e) {} }, 0); return m ? `⭐ Starred as "${m.name}": it's in Library → ⭐ Starred, and comes up in Text to motion (new version each time).` : '👍 Kept.'; };
+const keptMsg = m => { if (m) setTimeout(() => { try { if (LIB_VIEW === 'stars') renderLibrary(); } catch (e) {} }, 0); return m ? `⭐ Taught as "${m.name}": it's moved over to Text to motion (new version each time) and Library → ⭐ Starred, so Teach my AI keeps showing you new ones.` : '👍 Kept.'; };
 $('tvUp').onclick = async () => { if (!TVP) return;
-  if (TVP.nv) { if (!STARRED.some(x => String(x) === String(TVP.nv.id))) { STARRED.push(TVP.nv.id); saveStarred(); } const m = addMyMove({ kind: 'move', key: 'mv:any', clips: TVP.clips.slice(), guard: TVP.guard || null }); rateClips(TVP.clips, 1);
-    toast(`⭐ Starred${m ? ` as "${m.name}"` : ''}: it's in Library ⭐ Starred, and comes up in Text to motion.`, false, 6000); renderLibrary(); return; }
+  if (TVP.nv) { if (!STARRED.some(x => String(x) === String(TVP.nv.id))) { STARRED.push(TVP.nv.id); saveStarred(); } try { const t = await LIB.get(TVP.nv.id); if (t) { t.taught = true; await LIB.put(t); } } catch (e) {} const m = addMyMove({ kind: 'move', key: 'mv:any', clips: TVP.clips.slice(), guard: TVP.guard || null }); rateClips(TVP.clips, 1);
+    toast(`⭐ Taught${m ? ` as "${m.name}"` : ''}: moved out of Teach my AI into Text to motion (and Library ⭐ Starred).`, false, 6000); renderLibrary(); await loadNV(); TV_PICKED = false; tvNext(); return; }
   if (TVP.my) { // a version of one of your moves you like: saved as another move of its own (so it makes its own versions too)
     const m0 = TVP.my, m = addMyMove(m0.kind === 'move' ? { kind: 'move', key: m0.key, clips: TVP.clips.slice(), guard: m0.guard || null, synth: !!m0.synth } : { kind: 'punch', key: m0.key, q: roundQ(TVP.smp.q) });
     if (m0.kind === 'move') rateClips(TVP.clips, 1); else if (TVP.smp.z && TVP.smp.z.length) steerLatent(m0.key, TVP.smp.z, 1); toast(keptMsg(m), false, 6000); tvInfo(); tvNext(); return; }
@@ -7997,8 +7999,8 @@ $('tvUp').onclick = async () => { if (!TVP) return;
     const a = TVP.anim, [type, side] = TVP.key.split('|'), ix = a.rest.index, names = ML_J(side), r3 = v => Math.round(v * 1000) / 1000; let pk = 0, best = -1;
     for (let k = 10; k + 12 <= a.n; k++) { const P = S.fk(a.rest, a.locals[k], a.rootPos[k]).pos, e = Math.hypot(...[0, 1, 2].map(c => P[ix[side + 'Hand']][c] - P[ix[side + 'Arm']][c])); if (e > best) { best = e; pk = k; } } // the punch's peak, with room either side
     let mm = null; if (pk >= 10 && pk + 12 <= a.n && names.every(nm => ix[nm] != null)) { const seg = a.locals.slice(pk - 10, pk + 12).map(l => names.map(nm => l[ix[nm]].map(r3))); mm = addMyMove({ kind: 'punch', key: TVP.key, q: seg, from: TVP.clip.cid }); KEPT.push({ type, arm: side, q: seg, at: Date.now(), real: true }); if (KEPT.length > 300) KEPT.shift(); try { localStorage.setItem('nocap-kept', JSON.stringify(KEPT)); } catch (e) { KEPT.pop(); } ML_CACHE = null; }
-    rateClips([TVP.clip.cid], 1); toast(keptMsg(mm), false, 6000); tvNext(); return; }
-  if (TVP.mv) { rateClips(TVP.clips, 1); toast(keptMsg(addMyMove({ kind: 'move', key: TVP.key, clips: TVP.clips.slice(), guard: TVP.guard || null, synth: !!TVP.synth })), false, 6000); tvNext(); return; } const [type, arm] = TVP.key.split('|'), r3 = v => Math.round(v * 1000) / 1000; KEPT.push({ type, arm, q: TVP.smp.q.map(f => f.map(q => q.map(r3))), at: Date.now() }); if (KEPT.length > 300) KEPT.shift();
+    LIKES.taught = LIKES.taught || {}; LIKES.taught[TVP.clip.cid] = 1; rateClips([TVP.clip.cid], 1); toast(keptMsg(mm), false, 6000); tvNext(); return; }
+  if (TVP.mv) { LIKES.taughtChains = LIKES.taughtChains || {}; LIKES.taughtChains[(TVP.guard || '') + '|' + TVP.clips.join(',')] = 1; rateClips(TVP.clips, 1); toast(keptMsg(addMyMove({ kind: 'move', key: TVP.key, clips: TVP.clips.slice(), guard: TVP.guard || null, synth: !!TVP.synth })), false, 6000); tvNext(); return; } const [type, arm] = TVP.key.split('|'), r3 = v => Math.round(v * 1000) / 1000; KEPT.push({ type, arm, q: TVP.smp.q.map(f => f.map(q => q.map(r3))), at: Date.now() }); if (KEPT.length > 300) KEPT.shift();
   try { localStorage.setItem('nocap-kept', JSON.stringify(KEPT)); } catch (e) { KEPT.pop(); toast('Phone storage is full, so it could not keep that one.', true); return; }
   steerLatent(TVP.key, TVP.smp.z, 1); ML_CACHE = null; toast(keptMsg(addMyMove({ kind: 'punch', key: TVP.key, q: roundQ(TVP.smp.q) })), false, 6000); tvNext(); };
 $('tvDown').onclick = async () => { if (!TVP) return; if (TVP.nv) { try { await LIB.del(TVP.nv.id); } catch (e) {} STARRED = STARRED.filter(x => String(x) !== String(TVP.nv.id)); saveStarred(); rateClips(TVP.clips, -1); await loadNV(); toast('👎 Deleted that variant.'); TV_PICKED = false; tvNext(); return; } if (TVP.real) { LIKES.ban = LIKES.ban || {}; LIKES.ban[TVP.clip.cid] = 1; } if (TVP.mv && !TVP.my) rateClips(TVP.clips, -1); if (TVP.my) { if (TVP.my.kind === 'move') rateClips(TVP.clips, -1); else if (TVP.smp.z && TVP.smp.z.length) steerLatent(TVP.my.key, TVP.smp.z, -1); toast('👎 Discarded that version.'); tvNext(); return; } if (TVP.real) { rateClips([TVP.clip.cid], -1); toast('👎 Deleted: that real punch won\'t be shown again.'); tvNext(); return; } if (TVP.mv) { rateClips(TVP.clips, -1); toast('👎 Discarded: never saved, and those steps come up much less now.'); tvNext(); return; } steerLatent(TVP.key, TVP.smp.z, -1); toast('👎 Discarded. Less like that from now on.'); tvNext(); };
