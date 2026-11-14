@@ -4751,7 +4751,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
       </div>
       <div class="epadside">
         <div class="esteps" id="edStep"><button data-s="0.01">1 cm</button><button data-s="0.03" class="on">3 cm</button><button data-s="0.1">10 cm</button></div>
-        <div class="ehelp">Hands &amp; feet: the arm / leg follows. Elbows &amp; knees: hand / foot stays put. Hips: whole body. Hold an arrow to keep moving. Locks keep the original animation and only hold feet / hands still against your changes.</div>
+        <div class="ehelp">Or drag the picked joint in the view. Hands &amp; feet: the arm / leg follows. Elbows &amp; knees: hand / foot stays put. Hips: whole body. Hold an arrow to keep moving. Locks keep the original animation and only hold feet / hands still against your changes.</div>
       </div>
     </div>
     <div id="edDial" hidden>
@@ -6668,6 +6668,8 @@ function initEditor() {
   const d = new THREE.DirectionalLight(0xffffff, 2.0); d.position.set(3, 6, 4); sc.add(d); const d2 = new THREE.DirectionalLight(0xffffff, 0.6); d2.position.set(-3, -2, -4); sc.add(d2);
   ED.floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ roughness: 0.95, side: THREE.DoubleSide, transparent: true })); ED.floor.rotation.x = -Math.PI / 2; sc.add(ED.floor);
   ED.camera = new THREE.PerspectiveCamera(40, 1, 0.02, 100);
+  r.domElement.addEventListener('pointerdown', edGrab, { capture: true }); r.domElement.addEventListener('pointermove', edGrabMove, { capture: true });
+  for (const ev of ['pointerup', 'pointercancel']) r.domElement.addEventListener(ev, edGrabEnd, { capture: true });
   r.domElement.addEventListener('pointerdown', edDown); r.domElement.addEventListener('pointerup', edTapUp); r.domElement.addEventListener('pointercancel', e => { ED_PTR.delete(e.pointerId); edTap = null; });
   ED.controls = new OrbitControls(ED.camera, r.domElement);
   Object.assign(ED.controls, { enableDamping: true, dampingFactor: 0.12, rotateSpeed: 0.55, zoomSpeed: 0.8, panSpeed: 0.6, minDistance: 0.25, maxDistance: 14, screenSpacePanning: true, minPolarAngle: 0.05, maxPolarAngle: Math.PI / 2 - 0.04 }); // never below the floor
@@ -6798,6 +6800,7 @@ const ED_DEFAULT_AXIS = nm => /ForeArm|(Left|Right)Leg$/.test(nm) ? 'fb' : /Foot
 function edSelect(j) {
   ED.sel = j; ED.dial = null; ED.axis = ED_DEFAULT_AXIS(edName()); // a new joint starts fresh: its own dial, its own axis
   edDots(); edTimeline();
+  try { if (!localStorage.getItem('nocap-draghint')) { localStorage.setItem('nocap-draghint', '1'); toast('Tip: drag the picked joint to move it — the arm or leg follows.'); } } catch (er) {}
 }
 function edIKTo(st, T) { // move the picked joint to T with the right kind of IK for that joint
   if (/Foot$/.test(st.nm)) T.y = Math.max(T.y, (anim.M && anim.M.ankleH) || 0.07); else if (/ToeBase$/.test(st.nm)) T.y = Math.max(T.y, 0.015); else if (/Leg$/.test(st.nm)) T.y = Math.max(T.y, 0.12);
@@ -6810,6 +6813,37 @@ function edIKTo(st, T) { // move the picked joint to T with the right kind of IK
   else if (base === 'Arm') { aimBone(edJ(side + 'Shoulder'), wpos(j), T, 0.6); setWorldQ(edJ(side + 'Hand'), st.ends[side + 'Hand']); }
   else if (base === 'ToeBase') aimBone(edJ(side + 'Foot'), wpos(j), T, 0.8);
   else { const chain = base === 'Shoulder' ? [edJ('Spine2'), edJ('Spine1'), edJ('Spine')].filter(i => i != null) : spineChain(j); ccd(chain, j, T); }
+}
+// ----- ✋ drag-to-pose (14 Nov): a drag that starts on the picked joint moves it with IK (hands / feet: the whole arm or leg
+// follows; hips: the body moves, planted feet stay). It moves in the plane facing the camera, so turn the view to move toward /
+// away. A drag anywhere else still turns the camera. One drag = one undo step.
+let ED_GRAB = null;
+function edGrab(e) {
+  if (ED.sel < 0 || !anim || ED_PTR.size > 0) return;
+  const rc = ED.renderer.domElement.getBoundingClientRect(), px = e.clientX - rc.left, py = e.clientY - rc.top;
+  ED.camera.updateMatrixWorld(); const v = wpos(ED.sel).clone().project(ED.camera); if (v.z > 1) return;
+  const sx = (v.x + 1) / 2 * rc.width, sy = (1 - v.y) / 2 * rc.height, R = (matchMedia('(pointer:coarse)').matches ? 34 : 20) * Math.max(1, LOOK.dotSize || 1);
+  if (Math.hypot(sx - px, sy - py) > R) return; // not on the picked joint: let the camera have it
+  if (ED.playing) edStop();
+  edPush(); const st = edMoveState(), n = V3(); ED.camera.getWorldDirection(n);
+  ED_GRAB = { id: e.pointerId, st, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(n, st.wp), off: null, moved: false };
+  ED.controls.enabled = false; try { e.target.setPointerCapture(e.pointerId); } catch (er) {}
+  e.preventDefault(); e.stopImmediatePropagation();
+}
+function edGrabMove(e) {
+  const g = ED_GRAB; if (!g || e.pointerId !== g.id) return; e.preventDefault(); e.stopImmediatePropagation();
+  const rc = ED.renderer.domElement.getBoundingClientRect(), ndc = new THREE.Vector2(((e.clientX - rc.left) / rc.width) * 2 - 1, -((e.clientY - rc.top) / rc.height) * 2 + 1);
+  const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, ED.camera); const hit = new THREE.Vector3(); if (!ray.ray.intersectPlane(g.plane, hit)) return;
+  if (!g.off) g.off = g.st.wp.clone().sub(hit); // keep the grab point where the finger first landed (no jump)
+  const T = hit.add(g.off);
+  edRestore(g.st); edIKTo(g.st, T); ED.rig.group.updateMatrixWorld(true); edKeyChanged(g.st);
+  anim = applyEdits(baseAnim, EDITS); edPose(); g.moved = true;
+}
+function edGrabEnd(e) {
+  const g = ED_GRAB; if (!g || e.pointerId !== g.id) return;
+  ED_GRAB = null; ED.controls.enabled = true; e.stopImmediatePropagation();
+  if (!g.moved) { ED.undo.pop(); return; } // just a tap on the joint
+  edTimeline(); edDots && edDots();
 }
 function edMoveState() {
   const j = ED.sel; return { ...edSnap(), j, nm: edName(), wq: wquat(j), wp: wpos(j),
