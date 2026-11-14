@@ -1105,7 +1105,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
 
     // ---- depth recovery: limbs pointing at / away from the camera look too short; restore true length along the camera axis ----
     if (opt.depthFix !== false) P = recoverDepth(P, dt);
-    if (opt.trueDepth && piF) P = imageDepth(P, piF, fps, (Math.max(opt.W, opt.H) / 2) / Math.tan((+opt.fov || 60) * Math.PI / 360), opt.W / 2, opt.H / 2);
+    if (opt.trueDepth && piF) P = imageDepth(P, piF, fps, (Math.max(opt.W, opt.H) / 2) / Math.tan((+opt.fov || 60) * Math.PI / 360), opt.W / 2, opt.H / 2, !opt.legacySpine);
     // Picture-anchored arms (14 Nov, new captures): elbows and wrists go where the picture shows them across the view, at their
     // true bone length; the AI's own depth only decides toward / away from the camera.
     if (!opt.legacySpine && opt.armImage !== false && piF) P = armImage(P, piF, fps, (Math.max(opt.W, opt.H) / 2) / Math.tan((+opt.fov || 60) * Math.PI / 360), opt.W / 2, opt.H / 2);
@@ -1240,7 +1240,10 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     // Deslide (built into new video captures): the body only travels the way its planted feet allow. While a foot is on the floor it
     // cannot move, so the hips' sideways / forward travel is taken from the planted foot (lowest foot trusted most), never from the
     // AI's guess of where the body is. Only when both feet are off the floor (a hop / jump) does the video's own travel carry it.
-    if (opt.deslide && n > 2) rootPos = deslideRoot(FL, rootPos, floor, fps);
+    // 14 Nov engine: the old body-drag anti-slide is skipped for new captures. Tested: it shook the hips 2.5 -> 8.4 m/s2 on a real
+    // boxing clip and, on 32 real mocap clips, made feet slide MORE (0.16 -> 0.18 m/s). Foot IK alone does the anti-slide job.
+    const useDeslide = opt.deslide && !!opt.legacySpine;
+    if (useDeslide && n > 2) rootPos = deslideRoot(FL, rootPos, floor, fps);
     if (opt.footLock) {
       let c = [0, 0, 0]; const anchor = { Left: null, Right: null };
       const alpha = clamp(dt * 20, 0.05, 1);
@@ -1311,7 +1314,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     if (opt.elbowGuard !== false) locals = elbowGuard(rest, locals, fps);
     if (opt.proLimits !== false) locals = proLimits(rest, locals);
     if (opt.antiJitter !== false) locals = antiJitter(locals, fps, Math.max(1, Math.round((1 + 3 * clamp(opt.smooth, 0, 1) + 7 * clamp(opt.smooth, 0, 1) ** 3) * fps / 30)));
-    if (opt.footIK !== false || opt.inPlace) locals = footCleanup(rest, locals, rootPos, C, M, fps, !!opt.inPlace);
+    if (opt.footIK !== false || opt.inPlace) locals = footCleanup(rest, locals, rootPos, C, M, fps, !!opt.inPlace, !opt.legacySpine);
     if (opt.footIK !== false || opt.inPlace) { // final pass: smooth the legs so planting a foot never makes the knee pop
       const legs = ['Left', 'Right'].flatMap(S => [S + 'UpLeg', S + 'Leg', S + 'Foot']).map(nm => rest.index[nm]);
       const sm = antiJitter(locals, fps, Math.max(1, Math.round(0.07 * fps)));
@@ -1319,7 +1322,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     }
     if (opt.proLimits !== false) locals = proLimits(rest, locals, true); // final say: nothing leaves a human range of motion
     rootPos = floorFinder(rest, locals, rootPos, C, M, fps, true);
-    if (opt.deslide && n > 2) { // once more on the finished legs (the smoothing passes above nudge them), so nothing slides in the end result
+    if (useDeslide && n > 2) { // once more on the finished legs (the smoothing passes above nudge them), so nothing slides in the end result
       const FLf = locals.map(l => { const { pos, rot } = fk(rest, l), o = {}; for (const S of ['Left', 'Right']) { const an = pos[ix[S + 'Foot']], toe = pos[ix[S + 'ToeBase']], tip = add(toe, qrot(rot[ix[S + 'ToeBase']], [0, 0, 0.05])), heel = [an[0], an[1] - M.ankleH, an[2]]; o[S] = { low: Math.min(heel[1], toe[1], tip[1]), c: toe, ball: toe }; } return o; });
       rootPos = deslideRoot(FLf, rootPos, 0, fps);
     }
@@ -1521,7 +1524,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     return out;
   }
 
-  function imageDepth(P, piF0, fps, f, cx, cy) {
+  function imageDepth(P, piF0, fps, f, cx, cy, legsOnly = false) {
     const n = P.length; if (n < 3) return P;
     // the picture points, steadied a touch over time (pixel noise turns into depth wobble otherwise)
     const hS = Math.max(1, Math.round(SMOOTH_IMG * fps));
@@ -1568,13 +1571,14 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       }
       // blend toward the image-anchored pose (keeps a little of the AI's own 3D for stability), carry hands / head with their parents
       const W = 0.8, sOld = mid(Q[11], Q[12]);
-      for (const [, b, kids] of BONES) {
+      for (const [a, b, kids] of BONES) {
         if (b === 'R' || b === 'S') continue;
+        if (legsOnly && (a === 'S' || a === 'R')) continue; // 14 Nov: new captures only take the legs (shoulders / arms moved here made arms worse on real mocap)
         const old = Q[b]; Q[b] = lerp(old, solved[b], W); const delta = sub(Q[b], old);
         for (const c of kids) Q[c] = add(Q[c], delta);
       }
       const dS = sub(lerp(sOld, solved.S, W), sOld);
-      for (let j = 0; j <= 10; j++) Q[j] = add(Q[j], dS); // head follows the shoulders
+      if (!legsOnly) for (let j = 0; j <= 10; j++) Q[j] = add(Q[j], dS); // head follows the shoulders
     }
     // the correction itself changes slowly (how deep a stance is, how far he leans): smooth it over time so it never adds wobble
     const hD = Math.max(1, Math.round(SMOOTH_DEPTH * fps));
@@ -1885,7 +1889,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   }
 
   // ---- AI foot clean-up: planted feet are pinned flat to the floor with leg IK; feet never sink below it ----
-  function footCleanup(rest, locals, rootPos, C, M, fps, oneSpot = false) {
+  function footCleanup(rest, locals, rootPos, C, M, fps, oneSpot = false, keepHeight = false) {
     const n = locals.length, ix = rest.index, J = rest.joints;
     const out = locals.map(l => l.slice());
     const rad = Math.max(2, Math.round(0.1 * fps)); // blend in/out over ~100 ms
@@ -1898,8 +1902,10 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
       const anchor = new Array(n).fill(null);
       for (let k = 0; k < n;) {
         if (!raw[k]) { k++; continue; }
-        let e = k, sx = 0, sz = 0; while (e < n && raw[e]) { sx += base[e].pos[iF][0]; sz += base[e].pos[iF][2]; e++; }
-        const a = [sx / (e - k), M.ankleH, sz / (e - k)];
+        let e = k, sx = 0, sz = 0, sy = 0; while (e < n && raw[e]) { sx += base[e].pos[iF][0]; sy += base[e].pos[iF][1]; sz += base[e].pos[iF][2]; e++; }
+        // 14 Nov: keep the foot's own height (never below the floor) instead of forcing a fixed ankle height, which made the knee
+        // bend to make up any error in the body's height (tested: ankles 41 -> 39 mm, knees 37 -> 35 mm on real mocap)
+        const a = [sx / (e - k), keepHeight ? Math.max(M.ankleH, sy / (e - k)) : M.ankleH, sz / (e - k)];
         for (let q = Math.max(0, k - rad); q < Math.min(n, e + rad); q++) if (!anchor[q] || raw[q]) anchor[q] = a;
         k = e;
       }
