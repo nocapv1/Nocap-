@@ -4546,6 +4546,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <h2><span class="n">3</span>Refine</h2>
     <div class="row"><label>Smoothing <span class="mini">snappy ← → smooth</span></label><span><input type="range" id="smooth" min="0" max="1" step="0.01" value="0.6"></span><span class="val" id="smoothV">0.60</span></div>
     <div class="row"><label>Anti-slide <span class="mini">planted feet stay on the floor</span></label><input type="checkbox" id="footLock"></div>
+    <div class="row"><label>On the spot <span class="mini">stops the body wandering when the camera was handheld or zoomed. Best for boxing, dancing or anything done in one place</span></label><input type="checkbox" id="inPlace"></div>
     <input type="checkbox" id="deslide" hidden><input type="checkbox" id="slideV2" hidden><input type="checkbox" id="trueDepth" hidden>
     <input type="checkbox" id="antiJitter" checked hidden>
     <input type="checkbox" id="footIK" hidden>
@@ -4571,7 +4572,6 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>Steady legs <span class="mini">stops planted legs and feet trembling (fast kicks a little softer)</span></label><input type="checkbox" id="steadyLegs"></div>
     <div class="row"><label>Auto-upright <span class="mini">fix tilt</span></label><input type="checkbox" id="autoLevel"></div>
     <input type="range" id="headTilt" min="-25" max="25" step="1" value="0" hidden><span id="headTiltV" hidden></span>
-    <div class="row"><label>In-place <span class="mini">feet stay on one spot, body keeps moving</span></label><input type="checkbox" id="inPlace"></div>
     <div class="sub">Locks</div>
     <div class="row"><label>🔒 Lock feet <span class="mini">feet frozen exactly where they are at the current frame, for the whole animation</span></label><select id="mainPinFeet"><option value="">Off</option><option value="both">Both feet</option><option value="Left">Left foot</option><option value="Right">Right foot</option></select></div>
     <div class="row" id="mainPinStrRow" hidden><label>🔒 Lock strength <span class="mini">100% = feet frozen to the spot · lower = closer to his original steps</span></label><input type="range" id="mainPinStr" min="0" max="100" step="5" value="100"><output id="mainPinStrV">100%</output></div>
