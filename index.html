@@ -7408,6 +7408,59 @@ function mapSkeleton(root, gltfJson) {
   // the AI rig's "Spine" is the lowest spine bone: if the model only has one or two, shuffle down
   if (!map.Spine && map.Spine1) { map.Spine = map.Spine1; delete map.Spine1; }
   if (!map.Spine1 && map.Spine2) { map.Spine1 = map.Spine2; delete map.Spine2; }
+  if (!globalThis.NO_SMART_RIG) smartRig(root, map);
+  return map;
+}
+// ---------- 🦴 Smart Rig (14 Nov): finds body bones by the skeleton's shape, for rigs whose bone names aren't recognised ----------
+// Names still win: this only fills bones the name matching missed, and never reuses a bone already matched. The hips are where
+// two legs go down and the spine goes up; legs are the chains going down (thigh + shin = the two longest pieces); the arms branch
+// sideways from the top of the spine (upper arm + forearm = the two longest pieces); left / right from which way the toes point.
+let SMART_ADDED = 0;
+function smartRig(root, map) {
+  SMART_ADDED = 0;
+  const bones = []; root.traverse(o => { if (o.isBone) bones.push(o); }); if (bones.length < 10) return map;
+  root.updateMatrixWorld(true);
+  const W = b => b.getWorldPosition(new THREE.Vector3()), kids = b => b.children.filter(c => c.isBone);
+  const size = new Map(); const sz = b => { if (size.has(b)) return size.get(b); let n = 1; for (const c of kids(b)) n += sz(c); size.set(b, n); return n; };
+  const tip = b => { const ps = []; b.traverse(o => { if (o.isBone) ps.push(W(o)); }); return ps.reduce((a, p) => a.add(p), new THREE.Vector3()).multiplyScalar(1 / ps.length); };
+  const chain = (b, stop) => { const out = [b]; let c = b; for (;;) { const k = kids(c); if (!k.length || (stop && stop(c))) break; c = k.reduce((x, y) => (sz(y) > sz(x) ? y : x)); out.push(c); } return out; };
+  const up = new THREE.Vector3(0, 1, 0);
+  // hips: a bone with two branches going down and one going up, the biggest such
+  let hips = map.Hips || null, hipsScore = -1;
+  if (!hips) for (const b of bones) { const k = kids(b); if (k.length < 3) continue; const p = W(b); const dn = k.filter(c => tip(c).sub(p).dot(up) < 0 && sz(c) >= 3).length, upn = k.filter(c => tip(c).sub(p).dot(up) > 0 && sz(c) >= 5).length;
+    if (dn >= 2 && upn >= 1 && sz(b) > hipsScore) { hips = b; hipsScore = sz(b); } }
+  if (!hips) return map;
+  const found = { Hips: hips }, hp = W(hips), hk = kids(hips);
+  const legs = hk.filter(c => tip(c).sub(hp).dot(up) < 0 && sz(c) >= 3).sort((a, b) => sz(b) - sz(a)).slice(0, 2);
+  const spineRoot = hk.filter(c => tip(c).sub(hp).dot(up) > 0).sort((a, b) => sz(b) - sz(a))[0];
+  // facing from the toes (foot -> toe tip), so left = up x forward
+  const legChains = legs.map(l => chain(l));
+  const fwd = new THREE.Vector3(); for (const c of legChains) if (c.length >= 2) { const a = W(c[c.length - 2]), b = W(c[c.length - 1]), d = b.sub(a); d.y = 0; fwd.add(d); }
+  if (fwd.lengthSq() < 1e-8) fwd.set(0, 0, 1); fwd.normalize(); const left = new THREE.Vector3().crossVectors(up, fwd).normalize();
+  const sideOf = b => (tip(b).sub(hp).dot(left) > 0 ? 'Left' : 'Right');
+  for (const c of legChains) {
+    const P = [hp, ...c.map(W)], seg = i => P[i + 1].distanceTo(P[i]); let best = 0, bl = -1; // bone c[i] starts at P[i+1]
+    for (let i = 0; i + 1 < c.length - 1; i++) { const l = seg(i + 1) + seg(i + 2); if (l > bl) { bl = l; best = i; } } // thigh = c[i]->c[i+1], shin = c[i+1]->c[i+2]
+    const S = sideOf(c[0]); found[S + 'UpLeg'] = c[best]; if (c[best + 1]) found[S + 'Leg'] = c[best + 1]; if (c[best + 2]) found[S + 'Foot'] = c[best + 2]; if (c[best + 3]) found[S + 'ToeBase'] = c[best + 3];
+  }
+  if (spineRoot) {
+    // spine runs up to the bone where the arms branch off (3+ children with real subtrees)
+    const sp = chain(spineRoot, b => kids(b).filter(c => sz(c) >= 3).length >= 3), top = sp[sp.length - 1];
+    const branches = kids(top).filter(c => sz(c) >= 2), tp = W(top);
+    const neckRoot = branches.filter(c => tip(c).sub(tp).dot(up) > 0).sort((a, b) => Math.abs(tip(a).sub(tp).dot(left)) - Math.abs(tip(b).sub(tp).dot(left)))[0];
+    const spineBones = sp.length ? sp : [top];
+    found.Spine = spineBones[0]; if (spineBones.length >= 3) found.Spine1 = spineBones[Math.floor((spineBones.length - 1) / 2)]; if (spineBones.length >= 2) found.Spine2 = spineBones[spineBones.length - 1];
+    if (neckRoot) { const nc = chain(neckRoot); found.Neck = nc[0]; found.Head = nc[1] || nc[0]; }
+    for (const arm of branches.filter(c => c !== neckRoot).sort((a, b) => sz(b) - sz(a)).slice(0, 2)) {
+      // like the legs: upper arm + forearm are the two longest pieces in a row; the hand comes right after them
+      const c = chain(arm), S = sideOf(arm), P = [tp, ...c.map(W)], seg = i => P[i + 1].distanceTo(P[i]); let best = 0, bl = -1;
+      for (let i = 0; i + 2 < c.length; i++) { const l = seg(i + 1) + seg(i + 2); if (l > bl) { bl = l; best = i; } }
+      found[S + 'Arm'] = c[best]; if (c[best + 1]) found[S + 'ForeArm'] = c[best + 1]; if (c[best + 2]) found[S + 'Hand'] = c[best + 2]; if (best >= 1) found[S + 'Shoulder'] = c[best - 1];
+    }
+  }
+  const used = new Set(Object.values(map)); let added = 0;
+  for (const [k, b] of Object.entries(found)) if (!map[k] && b && !used.has(b)) { map[k] = b; used.add(b); added++; }
+  SMART_ADDED = added;
   return map;
 }
 function prepModel(obj, map) {
@@ -7515,7 +7568,7 @@ async function loadModelFile(blob, name, quiet) {
   obj.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
   CHARS.mine = { obj, map, name }; useChar(CHARS.mine, 'mine');
   try { localStorage.setItem('nocap-model', name); const c = await caches.open('nocap-user-model'); await c.put('/my-model', new Response(blob)); } catch (e) {}
-  if (!quiet) toast(`${name}: ${Object.keys(map).length} bones matched. Your motion now plays on it.`);
+  if (!quiet) toast(`${name}: ${Object.keys(map).length} bones matched${SMART_ADDED ? ` (${SMART_ADDED} found by shape)` : ''}. Your motion now plays on it.`);
 }
 function setModelOn(on) {
   MODEL.on = on && !!MODEL.obj; if (MODEL.obj) MODEL.prep.wrap.visible = MODEL.on;
