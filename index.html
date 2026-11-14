@@ -560,13 +560,27 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
   function solveFrame(P, HL, HR, rest) {
     const G = {};
     const midSh = mid(P[11], P[12]), midHip = mid(P[23], P[24]), up = sub(midSh, midHip);
-    G.Hips = rotBetween(basis(BX, BY), basis(sub(P[23], P[24]), up));
-    const chest = rotBetween(basis(BX, BY), basis(sub(P[11], P[12]), up));
+    // Upright spine (14 Nov): the spine follows the real hip-to-shoulder direction ('up' is the main axis) and the hip / shoulder
+    // lines only set the turn; the collarbones carry shoulder tilt below. Before, the side-to-side line was the main axis, so a
+    // dropped lead shoulder tilted the whole spine sideways (tested on a boxing clip: 2D match error 10.2% -> 7.6% of torso height).
+    // Old unbaked takes keep the previous behaviour (rest.legacySpine) so they look exactly as they did.
+    const oldSpine = !!rest.legacySpine;
+    G.Hips = oldSpine ? rotBetween(basis(BX, BY), basis(sub(P[23], P[24]), up)) : rotBetween(basis(BY, BX), basis(up, sub(P[23], P[24])));
+    const chest = oldSpine ? rotBetween(basis(BX, BY), basis(sub(P[11], P[12]), up)) : rotBetween(basis(BY, BX), basis(up, sub(P[11], P[12])));
     G.Spine = qslerp(G.Hips, chest, 1 / 3); G.Spine1 = qslerp(G.Hips, chest, 2 / 3); G.Spine2 = chest;
     const midEar = mid(P[7], P[8]);
     const head = rotBetween(basis(BX, rest.headFwd || HEADFWD), basis(sub(P[7], P[8]), sub(P[0], midEar)));
     G.Neck = qslerp(chest, head, 0.5); G.Head = head;
 
+    // collarbones: aim each one so the shoulder joint sits where the camera saw the shoulder (shrug, dropped lead shoulder)
+    if (!oldSpine && rest.M && rest.M.torso) {
+      const T = rest.M.torso, cz = qrot(chest, BZ);
+      for (const [S, sx, i] of SIDES) {
+        const root = add(midSh, qrot(chest, [sx * 0.03, -0.03 * T, 0]));
+        const c0 = [sx * Math.max(0.02, rest.M.shoulderW / 2 - 0.03), 0.03 * T, 0], tv = sub(P[i.sh], root);
+        if (len(tv) > 1e-4) G[S + 'Shoulder'] = rotBetween(basis(c0, BZ), basis(tv, cz));
+      }
+    }
     for (const [S, sx, i] of SIDES) {
       const H = S === 'Left' ? HL : HR;
       let handDir, palmN;
@@ -1101,7 +1115,7 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
     const off = opt.offscreen === false ? null : offscreenFill(P, mask0, M, opt, fps, piF ? piF.map(p => (p[11][1] + p[12][1]) / 2 / opt.H) : P.map(() => 0), R);
     if (off) P = off.P;
     if (synthLegs) for (const S of ['Left', 'Right']) footStill[S] = footStill[S].map(() => opt.lowerBody !== 'walk' && opt.lowerBody !== 'run');
-    const rest = buildRest(M);
+    const rest = buildRest(M); if (opt.legacySpine) rest.legacySpine = true;
     { // calibrate the face's neutral direction: on average the head faces where the chest faces
       const pitches = P.map(p => {
         const ch = rotBetween(basis(BX, BY), basis(sub(p[11], p[12]), sub(mid(p[11], p[12]), mid(p[23], p[24]))));
@@ -5083,7 +5097,7 @@ function applyLight(cv) {
 let PROC_OK = false; // did the last capture finish properly (studying checks this before learning from it)
 async function processVideo() {
   PROC_OK = false;
-  if (!frames) { BAKE = null; if ($('solverVer').value !== 'latest') { quiet = true; $('solverVer').value = 'latest'; quiet = false; } } // a new capture always uses the latest AI
+  if (!frames) { BAKE = null; LEGACY_SPINE = false; if ($('solverVer').value !== 'latest') { quiet = true; $('solverVer').value = 'latest'; quiet = false; } } // a new capture always uses the latest AI
   if (busy) { cancelFlag = true; return; }
   busy = true; cancelFlag = false; pause();
   const preVid = codecSrc ? null : hiddenVideoEl(videoURL); if (preVid) { const p = preVid.play(); if (p) p.catch(() => {}); } // must happen synchronously in the tap
@@ -5516,8 +5530,9 @@ $('armPose').addEventListener('change', legPickUI); $('armOut').addEventListener
 $('armOutSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; $('armOut').value = b.dataset.v; $('armOut').dispatchEvent(new Event('change')); };
 
 // ---------- solve (re-runs instantly on refine changes) ----------
+let LEGACY_SPINE = false; // true only for old takes saved on 'Latest' without a stored result: they keep the pre-14-Nov spine
 function opts() {
-  return { fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('slideV2').checked ? false : $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('slideV2').checked ? $('footLock').checked : $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, lowerBody: $('lowerBody').value, armPose: $('armPose').value, armOut: $('armOut').value, faceGuard: $('faceGuard').checked, antiFloat: $('antiFloat').checked, contactHeight: +$('contact').value, contactSpeed: 0.6, ...($('stanceHold').checked ? { stanceHold: true } : {}), ...($('steadyLegs').checked ? { steadyLegs: true } : {}), ...(($('slideV2').checked ? $('footLock').checked : $('deslide').checked) ? { deslide: true } : {}), ...($('trueDepth').checked ? { trueDepth: true } : {}), ...($('smartHands').checked ? { smartHands: true } : {}) }; // only added when on, so saved takes keep their exact baked result
+  return { ...(LEGACY_SPINE ? { legacySpine: true } : {}), fps: meta ? meta.fps : 30, W: meta ? meta.W : 1280, H: meta ? meta.H : 720, fov: 'auto', smooth: +$('smooth').value, footLock: $('slideV2').checked ? false : $('footLock').checked, autoLevel: $('autoLevel').checked, inPlace: $('inPlace').checked, footIK: $('slideV2').checked ? $('footLock').checked : $('footIK').checked, handMode: $('handMode').value, ankleLimit: $('ankleLimit').checked, rideDetect: false, depthFix: false, sharp: false, antiJitter: true, kneeGuard: $('kneeGuard').checked, elbowGuard: true, proLimits: true, /* always on */ headTilt: 0, fingerMode: document.querySelector('#fingerSeg .on')?.dataset.v || 'ai', mirrored: $('mirrored').checked, lowerBody: $('lowerBody').value, armPose: $('armPose').value, armOut: $('armOut').value, faceGuard: $('faceGuard').checked, antiFloat: $('antiFloat').checked, contactHeight: +$('contact').value, contactSpeed: 0.6, ...($('stanceHold').checked ? { stanceHold: true } : {}), ...($('steadyLegs').checked ? { steadyLegs: true } : {}), ...(($('slideV2').checked ? $('footLock').checked : $('deslide').checked) ? { deslide: true } : {}), ...($('trueDepth').checked ? { trueDepth: true } : {}), ...($('smartHands').checked ? { smartHands: true } : {}) }; // only added when on, so saved takes keep their exact baked result
 }
 let solveT;
 let BAKE = null; // { key, anim } – the motion exactly as it was made for the open take
@@ -6201,7 +6216,7 @@ async function saveTake(cv) {
   await putTake({ id, name: videoName, date: old ? old.date : new Date().toISOString(), dur: meta.dur, frames, meta, settings: readSettings(), thumb, videoBuf: vb && vb.buf, videoType: vb && vb.type, videoName: currentSource && currentSource.name, status: 'done' });
   toast('Saved to your Library.');
 }
-function takeAnim(take) { const s = take.settings || {}; const o = { ...opts(), fps: take.meta.fps, W: take.meta.W, H: take.meta.H };
+function takeAnim(take) { const s = take.settings || {}; const o = { ...opts(), ...(!take.baked ? { legacySpine: true } : {}), fps: take.meta.fps, W: take.meta.W, H: take.meta.H };
   const SV = (s.solverVer || 'classic') === 'classic' && window.SolverClassic ? window.SolverClassic : S;
   const base = take.baked && take.baked.anim && !take.prompt ? take.baked.anim : SV.solveAll(take.frames, o); return applyEdits(base, s.edits); }
 let LIBSEL = null, LIB_IDS = [], delSelArm = false; // ☑️ multi-select (declared before anything can draw the library)
@@ -6297,7 +6312,7 @@ async function openTake(take, edit, restore) {
   if (!take.frames) { toast('Video opened. This take was not finished: tap Generate motion.'); return; }
   frames = take.frames; meta = take.meta; videoName = take.name || 'motion'; curTime = 0;
   if (!take.settings || !take.settings.solverVer) { quiet = true; $('solverVer').value = 'classic'; quiet = false; } // made before AI versions existed: use the AI it was made with
-  BAKE = take.baked || null;
+  BAKE = take.baked || null; LEGACY_SPINE = !take.baked;
   legGuess(false); solve(true); updateRefineLabel(); $('scrub').disabled = false; updateTimeLabel(); $('play').disabled = false;
   if (!restore) { $('vview').scrollIntoView({ block: 'start', behavior: 'smooth' }); toast('Opened from Library.'); }
   if (edit) openEditor();
