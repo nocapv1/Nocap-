@@ -507,7 +507,7 @@ input[type=checkbox]{accent-color:var(--accent)} input[type=range]{accent-color:
   // ---- camera field of view, found automatically ----
   // A wrong FOV mostly shows up as feet that slide toward / away from the camera and a worse fit of the 3D pose to the picture,
   // so try a range and keep the one where (a) the pose projects best and (b) the planted foot moves least. Falls back to a phone default.
-  function estimateFov(pw, pi, W, H) {
+  function estimateFov(pw, pi, W, H, fair = false) {
     const ks = []; for (let k = 0; k < pw.length; k++) if (pw[k] && pi[k]) ks.push(k);
     if (ks.length < 12) return 62;
     const step = Math.max(1, Math.floor(ks.length / 120)), use = ks.filter((_, i) => i % step === 0);
@@ -521,7 +521,11 @@ input[type=checkbox]{accent-color:var(--accent)} input[type=range]{accent-color:
         if (prev && k - pk <= 2 * step) { slide += Math.min(len(sub(a[0], prev[0])), len(sub(a[1], prev[1]))); sc++; }
         prev = a; pk = k;
       }
-      return (rc ? rep / rc : 1) * 40 + (sc ? slide / sc : 0) + 0.004 * ((fov - 62) / 20) ** 2;
+      // fair (14 Nov, new captures): the depth wobble of the body grows with the lens zoom, which made a too-wide lens look
+      // "stiller" and shrank every move toward / away from the camera by ~30%. Scaling the foot term by sqrt(zoom) removes most
+      // of that bias (tested on 22 real CMU clips at 45/55/70 degree lenses: mean lens error 6.0 -> 4.3 degrees).
+      const fairK = fair ? Math.sqrt(Math.tan(fov * Math.PI / 360) / Math.tan(31 * Math.PI / 180)) : 1;
+      return (rc ? rep / rc : 1) * 40 + (sc ? slide / sc : 0) * fairK + 0.004 * ((fov - 62) / 20) ** 2;
     };
     let best = 62, bs = Infinity; for (let fv = 30; fv <= 100; fv += 5) { const v = score(fv); if (v < bs) { bs = v; best = fv; } }
     for (let fv = best - 4; fv <= best + 4; fv += 1) { if (fv < 25 || fv > 105) continue; const v = score(fv); if (v < bs) { bs = v; best = fv; } }
@@ -1104,7 +1108,7 @@ input[type=checkbox]{accent-color:var(--accent)} input[type=range]{accent-color:
     }
     const valid = pw.filter(Boolean).length;
     if (!valid) throw new Error('No person was detected in this video.');
-    if (!(+opt.fov > 0)) opt = { ...opt, fov: estimateFov(pw, pi, opt.W, opt.H) }; // 'auto'
+    if (!(+opt.fov > 0)) opt = { ...opt, fov: estimateFov(pw, pi, opt.W, opt.H, !opt.legacySpine) }; // 'auto'
     let roots = pw.map((w, k) => (w && pi[k] && !faceBlocked[k] ? solveRoot(w, pi[k], opt.W, opt.H, opt.fov) : null)); // covered-face frames: body position bridged from either side
     // a body half out of the picture (too close, or at the edge) or one bad reading can throw the body's position: a reading that jumps away
     // from its neighbours on both sides is dropped and bridged (real moves, even fast ones, change smoothly over a few frames so they stay)
@@ -4514,7 +4518,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>Analysis rate</label><select id="procFps"><option>15</option><option>24</option><option selected>30</option><option>60</option></select></div>
     <input type="checkbox" id="hands" checked hidden>
     <div class="row"><label>Fix dark / flat lighting <span class="mini">brightens and sharpens contrast before tracking (only when the video needs it)</span></label><input type="checkbox" id="lightFix" checked></div>
-    <div class="row"><label>Extra accuracy <span class="mini">re-checks blurry or unsure moments zoomed in on the person (slower)</span></label><input type="checkbox" id="extraAcc" checked></div>
+    <div class="row"><label>Extra accuracy <span class="mini">re-checks blurry or unsure moments zoomed in on the person (about twice as slow; finds fingers more often)</span></label><input type="checkbox" id="extraAcc"></div>
     <div class="row"><label>Mirrored (selfie) video</label><input type="checkbox" id="mirrored"></div>
     </details>
     <input type="range" id="fov" min="25" max="100" value="55" hidden><span id="fovV" hidden></span>
