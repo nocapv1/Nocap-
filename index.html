@@ -1394,6 +1394,10 @@ input[type=checkbox]{accent-color:var(--accent)} input[type=range]{accent-color:
       const FLf = locals.map(l => { const { pos, rot } = fk(rest, l), o = {}; for (const S of ['Left', 'Right']) { const an = pos[ix[S + 'Foot']], toe = pos[ix[S + 'ToeBase']], tip = add(toe, qrot(rot[ix[S + 'ToeBase']], [0, 0, 0.05])), heel = [an[0], an[1] - M.ankleH, an[2]]; o[S] = { low: Math.min(heel[1], toe[1], tip[1]), c: toe, ball: toe }; } return o; });
       rootPos = deslideRoot(FLf, rootPos, 0, fps);
     }
+    // Ground keeper (14 Nov, new captures only): a handheld / zooming camera can slowly lift the whole body, leaving both feet
+    // hanging in the air for seconds. Real jumps are short, so any stretch where neither foot touches for longer than a jump
+    // could last is pulled back down until the lowest foot is on the floor again. Real jumps keep their height.
+    if (!opt.legacySpine && n > 4) rootPos = groundKeeper(rest, locals, rootPos, M, fps);
     return { rest, fps, n, rootPos, locals, contacts: C, hasHands: { Left: !!HL, Right: !!HR }, M, fov: opt.fov };
   }
 
@@ -1493,6 +1497,21 @@ input[type=checkbox]{accent-color:var(--accent)} input[type=range]{accent-color:
       out.push(Math.min(heel[1], toe[1] - 0.012, tip[1] - 0.008));
     }
     return out;
+  }
+  function groundKeeper(rest, locals, rootPos, M, fps) {
+    const n = rootPos.length, ix = rest.index;
+    const low = locals.map((l, k) => { const P = fk(rest, l, rootPos[k]).pos; let m = Infinity; for (const S of ['Left', 'Right']) m = Math.min(m, P[ix[S + 'Foot']][1] - M.ankleH, P[ix[S + 'ToeBase']][1]); return m; });
+    const TOUCH = 0.025, maxAir = Math.round(fps * 0.6), ramp = Math.max(2, Math.round(fps * 0.15));
+    const pull = new Array(n).fill(0); let hit = false;
+    for (let k = 0; k < n; k++) {
+      if (low[k] <= TOUCH) continue; let e = k; while (e < n && low[e] > TOUCH) e++;
+      if (e - k > maxAir) { hit = true; for (let q = k; q < e; q++) pull[q] = Math.max(0, low[q]); } // too long to be a jump
+      k = e;
+    }
+    if (!hit) return rootPos;
+    // smooth the pull (never more than the gap, so feet never go through the floor) and ease it in/out
+    const sm = pull.map((_, k) => { let s0 = 0, c = 0; for (let q = k - ramp; q <= k + ramp; q++) if (q >= 0 && q < n) { s0 += pull[q]; c++; } return Math.min(s0 / c, Math.max(0, low[k])); });
+    return rootPos.map((r, k) => [r[0], r[1] - sm[k], r[2]]);
   }
   function floorFinder(rest, locals, rootPos, C, M, fps, refit) {
     const n = locals.length; if (!n) return rootPos;
