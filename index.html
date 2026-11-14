@@ -12,14 +12,14 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <meta name="apple-mobile-web-app-title" content="NoCap">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<script>try{document.documentElement.dataset.theme=localStorage.getItem('nocap-theme')||'gold'}catch(e){document.documentElement.dataset.theme='gold'}</script>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('nocap-theme2')||'pro'}catch(e){document.documentElement.dataset.theme='pro'}</script>
 <style>
 .libbar .btn.on{border-color:var(--accent);color:var(--accent);font-weight:700}
 #bigWrap{position:fixed;inset:0;z-index:58;background:var(--bg);overflow:auto;padding:max(8px,env(safe-area-inset-top)) 8px max(8px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px}
 #bigWrap .stage{display:block!important;padding:0!important;margin:0!important;position:static!important} #bigWrap #vview{display:none!important} #bigWrap .view.v3d{height:74vh!important;height:74svh!important} #bigWrap .timeline{position:static!important;margin:0!important} body.bigview #bigBtn{border-color:var(--accent);color:var(--accent)}
 #rateBar[hidden],#rateLeft[hidden],#rateLeft .rb[hidden]{display:none!important} #rateLeft .rb,#rateBar .rb{min-height:0!important;width:38px;height:38px;padding:0;border-radius:50%;font-size:17px;background:var(--glass);backdrop-filter:blur(8px)} #rateBar .rb.on{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)} #rateBar .rb:disabled{opacity:.35}
 #teachBox [hidden]{display:none!important} #tchTabs .btn.on{border-color:var(--accent);color:var(--accent);font-weight:700}
-:root,[data-theme="gold"]{
+[data-theme="gold"]{
   --bg:#050505; --panel:#0c0c0b; --panel2:#141310; --line:#2b2616; --text:#f4ecd6; --dim:#a99c78; --faint:#6e644b;
   --accent:#d4af37; --accent2:#9c7c1f; --accent3:#f3dc93; --on-accent:#1a1404; --glass:rgba(5,5,5,.85);
   --scene-bg:#060606; --floor:#0e0d0a; --grid1:#3b331b; --grid2:#1d1a10; --body:#ddd6c6;
@@ -39,6 +39,12 @@
   --bg:#080505; --panel:#110a0a; --panel2:#181010; --line:#352020; --text:#f6e8e8; --dim:#b39494; --faint:#7a5a5a;
   --accent:#ef4444; --accent2:#b91c1c; --accent3:#fbbf24; --on-accent:#200606; --glass:rgba(8,5,5,.85);
   --scene-bg:#080505; --floor:#130b0b; --grid1:#4a2525; --grid2:#241313; --body:#e4d6d6;
+}
+:root,[data-theme="pro"]{
+  --bg:#0a0b0f; --panel:#121419; --panel2:#181b22; --line:#23272f; --text:#f3f5f9; --dim:#9ba3b4; --faint:#636b7c;
+  --accent:#ff5a47; --accent2:#e2402e; --accent3:#ffb44d; --on-accent:#ffffff; --glass:rgba(10,11,15,.88);
+  --scene-bg:#0b0c10; --floor:#101218; --grid1:#2a2f3b; --grid2:#171a21; --body:#e3e6ec;
+  --warn:#f6ad55; --bad:#ff6b6b; --radius:16px;
 }
 *{box-sizing:border-box}
 html,body{overflow-x:hidden;max-width:100%;touch-action:manipulation;margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.45 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
@@ -289,6 +295,36 @@ canvas#ctl{width:100%;height:10px;border-radius:3px;background:#0e1118}
 #editModal .eapply span{flex:none}
 #editModal .eapply button{flex:1;background:var(--e-panel2);color:var(--e-text);border:1px solid var(--e-line);border-radius:10px;padding:8px 4px;font-size:12.5px;cursor:pointer}
 #editModal .eapply button.on{border-color:var(--e-acc2);color:var(--e-acc2);font-weight:700}
+
+/* ===== NoCap v2 look (14 Nov): calmer, bigger touch targets, fewer lines ===== */
+header{border-bottom:0;background:var(--bg);padding:14px 18px}
+header .logo{width:34px;height:34px;border-radius:11px;background:var(--accent);color:var(--on-accent);font-weight:800;box-shadow:none}
+header h1{font-size:19px;letter-spacing:-.02em;margin:0} header .tag{display:block!important;font-size:12px;color:var(--dim)} header .pill,#netPill{display:none!important}
+.themebtn{background:var(--panel2);border:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:16px 16px 14px;box-shadow:none}
+section.card h2{font-size:15px;font-weight:700;letter-spacing:-.01em;text-transform:none;color:var(--text);margin:0 0 12px;display:flex;align-items:center;gap:10px}
+section.card h2 .n{width:24px;height:24px;border-radius:8px;border:0;background:var(--panel2);color:var(--accent);font-size:12.5px;font-weight:800;display:inline-grid;place-items:center}
+.row{padding:9px 0;border-top:1px solid var(--line);min-height:48px} .card h2 + .row,.adv > summary + .row{border-top:0}
+.row label{font-size:14.5px;color:var(--text)} .mini{color:var(--faint);font-size:12px}
+.sub{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--dim);margin:14px 0 8px}
+.btn{border-radius:12px;min-height:44px;background:var(--panel2);border:1px solid var(--line);color:var(--text);font-weight:600}
+.btn.small{min-height:34px;border-radius:10px;padding:5px 11px;font-size:12.5px}
+.btn.on{background:color-mix(in srgb,var(--accent) 16%,transparent);border-color:color-mix(in srgb,var(--accent) 55%,transparent);color:var(--text)}
+.btn.primary{background:var(--accent);border:0;color:var(--on-accent);min-height:52px;border-radius:14px;font-size:16px;font-weight:700;letter-spacing:-.01em;margin-top:12px}
+.btn.primary:disabled{opacity:.35}
+.btnrow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+select{border-radius:11px;background:var(--panel2);border:1px solid var(--line);color:var(--text);min-height:40px}
+input[type=checkbox]{accent-color:var(--accent)} input[type=range]{accent-color:var(--accent)}
+.drop{border:1.5px dashed color-mix(in srgb,var(--accent) 45%,var(--line));border-radius:16px;background:color-mix(in srgb,var(--accent) 5%,var(--panel2));padding:22px 12px;font-size:13px;color:var(--dim)}
+.drop b{font-size:17px;color:var(--text)}
+.seg{gap:6px} .seg button{border-radius:11px}
+.adv{margin-top:10px;border-top:1px solid var(--line)} .adv > summary{list-style:none;cursor:pointer;padding:12px 0 4px;font-size:13.5px;font-weight:600;color:var(--dim);display:flex;align-items:center;gap:8px}
+.adv > summary::-webkit-details-marker{display:none} .adv > summary::after{content:'›';margin-left:auto;font-size:18px;transition:transform .2s} .adv[open] > summary::after{transform:rotate(90deg)}
+.view{border-radius:18px;border:1px solid var(--line);background:var(--scene-bg)} .view .label{display:none}
+.vtools{gap:6px} .moretools{display:none;gap:6px;flex-wrap:wrap} .moretools.open{display:contents}
+.timeline{background:var(--panel);border:1px solid var(--line);border-radius:18px}
+.docpanel{background:var(--panel);border:1px solid var(--line);border-radius:18px;order:2;margin:0 0 12px}
+.hint{color:var(--faint)}
 </style>
 <script type="importmap">
 { "imports": {
@@ -4449,10 +4485,11 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
 <body>
 <header>
   <div class="logo">M</div>
-  <div><h1>NoCap MoCap</h1><div class="tag">AI video → 3D motion capture · body + fingers · BVH / GLB</div></div>
+  <div><h1>NoCap</h1><div class="tag">AI motion capture</div></div>
   <div class="pill" id="netPill">Works offline · Unlimited generations</div>
   <div style="position:relative"><button class="themebtn" id="themeBtn" aria-label="Change theme">🎨</button>
     <div class="thememenu" id="themeMenu">
+      <button data-t="pro"><i style="background:linear-gradient(135deg,#0a0b0f 50%,#ff5a47 50%)"></i>NoCap Pro</button>
       <button data-t="gold"><i style="background:linear-gradient(135deg,#000 50%,#d4af37 50%)"></i>Black &amp; Gold</button>
       <button data-t="teal"><i style="background:linear-gradient(135deg,#0b0d12 50%,#4fd1c5 50%)"></i>Midnight Teal</button>
       <button data-t="violet"><i style="background:linear-gradient(135deg,#09081a 50%,#a78bfa 50%)"></i>Violet</button>
@@ -4462,27 +4499,27 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
 <div class="app">
 <aside>
   <section class="card">
-    <h2><span class="n">1</span>Source video</h2>
-    <div class="drop" id="drop"><b>Drop a video here</b><br>or tap to choose — any format (iPhone MOV/HEVC, MP4, MKV, AVI…)</div>
+    <h2><span class="n">1</span>Video</h2>
+    <div class="drop" id="drop"><b>Choose a video</b><br>or drop one here · any format</div>
     <input type="file" id="file" accept="video/*,.mov,.qt,.mp4,.m4v,.hevc,.heic,.webm,.mkv,.avi,.wmv,.flv,.3gp,.3g2,.mts,.m2ts,.ts,.mpg,.mpeg,.ogv,.ogg,.mxf,.dv,.vob,.gif" hidden>
-    <div style="display:flex;gap:7px;margin-top:8px"><button class="btn small" id="camBtn" style="flex:1">● Record with webcam</button><button class="btn small" id="ttmBtn" style="flex:1">✍️ Text to motion</button></div>
+    <div style="display:flex;gap:7px;margin-top:8px"><button class="btn small" id="camBtn" style="flex:1">● Record</button><button class="btn small" id="ttmBtn" style="flex:1">✍️ Text to motion</button></div>
     <div class="progress" id="cprog"><i></i></div>
-    <div class="status" id="vinfo">One clearly visible person, full body in frame, steady camera works best.</div>
+    <div class="status" id="vinfo">Best: one person, whole body in shot, steady camera.</div>
   </section>
 
   <section class="card">
     <h2><span class="n">2</span>Capture</h2>
-    <div class="row"><label>AI model</label><select id="quality"><option value="heavy" selected>Heavy (best)</option><option value="full">Full</option><option value="lite">Lite (fast)</option></select></div>
+    <div class="row"><label>Quality</label><select id="quality"><option value="heavy" selected>Heavy (best)</option><option value="full">Full</option><option value="lite">Lite (fast)</option></select></div>
+    <details class="adv"><summary>Advanced</summary>
     <div class="row"><label>Analysis rate</label><select id="procFps"><option>15</option><option>24</option><option selected>30</option><option>60</option></select></div>
     <input type="checkbox" id="hands" checked hidden>
     <div class="row"><label>Fix dark / flat lighting <span class="mini">brightens and sharpens contrast before tracking (only when the video needs it)</span></label><input type="checkbox" id="lightFix" checked></div>
     <div class="row"><label>Extra accuracy <span class="mini">re-checks blurry or unsure moments zoomed in on the person (slower)</span></label><input type="checkbox" id="extraAcc" checked></div>
     <div class="row"><label>Mirrored (selfie) video</label><input type="checkbox" id="mirrored"></div>
+    </details>
     <input type="range" id="fov" min="25" max="100" value="55" hidden><span id="fovV" hidden></span>
     <button class="btn primary" id="go" disabled>Generate motion</button>
-    <button class="btn" id="refineBtn" disabled style="width:100%;margin-top:8px">🔁 Refine again</button>
-    <button class="btn" id="undoRefine" disabled style="width:100%;margin-top:6px">↩️ Undo</button>
-    <div class="mini" style="margin-top:4px">Quick: each press finds the trickiest frames, re-checks them zoomed in (plus a mirrored double-check) and cleans up glitches. Press as many times as you like.</div>
+    <div class="btnrow"><button class="btn" id="refineBtn" disabled title="Re-checks the trickiest frames zoomed in and cleans up glitches. Press as often as you like.">🔁 Refine again</button><button class="btn" id="undoRefine" disabled>↩️ Undo</button></div>
     <div class="progress" id="prog"><i></i></div>
     <div class="status" id="pstat"></div>
     <div class="legpick" id="legPick" style="display:none">
@@ -4502,23 +4539,24 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   </section>
 
   <section class="card">
-    <h2><span class="n">3</span>Refine <span style="margin-left:auto;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400">applies instantly</span></h2>
-    <div class="row"><label>Smoothing <span class="mini">left = snappy · right = very smooth</span></label><span><input type="range" id="smooth" min="0" max="1" step="0.01" value="0.6"></span><span class="val" id="smoothV">0.60</span></div>
-    <div class="sub">Feet</div>
-    <div class="row"><label>Anti-slide <span class="mini">planted feet stay flat and still on the floor, no sliding · on for every new video</span></label><input type="checkbox" id="footLock"></div>
+    <h2><span class="n">3</span>Refine</h2>
+    <div class="row"><label>Smoothing <span class="mini">snappy ← → smooth</span></label><span><input type="range" id="smooth" min="0" max="1" step="0.01" value="0.6"></span><span class="val" id="smoothV">0.60</span></div>
+    <div class="row"><label>Anti-slide <span class="mini">planted feet stay on the floor</span></label><input type="checkbox" id="footLock"></div>
     <input type="checkbox" id="deslide" hidden><input type="checkbox" id="slideV2" hidden><input type="checkbox" id="trueDepth" hidden>
     <input type="checkbox" id="antiJitter" checked hidden>
     <input type="checkbox" id="footIK" hidden>
+    <div class="sub">Hands</div>
+    <div class="seg" id="fingerSeg"><button data-v="ai" class="on">🤖 AI tracked</button><button data-v="fist">✊ Closed</button><button data-v="relaxed">🖐 Open</button></div>
+    <details class="adv"><summary>Advanced</summary>
     <div class="row"><label>Contact sensitivity</label><span><input type="range" id="contact" min="0.02" max="0.15" step="0.005" value="0.07"></span><span class="val" id="contactV">7cm</span></div>
     <div class="row"><label>Knee guard <span class="mini">no locked, snapping or backwards knees</span></label><input type="checkbox" id="kneeGuard"></div>
     <div class="row"><label>Ankle limits <span class="mini">no over-twist</span></label><input type="checkbox" id="ankleLimit"></div>
-    <div class="sub">Hands options</div>
-    <div class="seg" id="fingerSeg"><button data-v="ai" class="on">🤖 AI tracked</button><button data-v="fist">✊ Closed</button><button data-v="relaxed">🖐 Open</button></div>
-    <div class="mini" style="margin:-2px 0 6px">AI tracked follows the real fingers from the video; Closed / Open sets a fixed hand shape.</div>
     <input type="checkbox" id="elbowGuard" checked hidden><input type="checkbox" id="proLimits" checked hidden>
     <div class="row"><label>Smart hands <span class="mini">ignores hand tracking it can't see clearly (tiny / blurry hands): no splayed fingers or flicking wrists · on for every new video</span></label><input type="checkbox" id="smartHands" checked></div>
     <div class="row"><label>Wrist rotation</label><select id="handMode"><option value="limited" selected>Natural limits</option><option value="locked">Locked to forearm</option><option value="free">Free (raw)</option></select></div>
-    <div class="sub">Body</div>
+    <div class="stats" id="stats" style="display:none"></div>
+    </details>
+    <div id="hiddenOpts" hidden><!-- 14 Nov redesign: no longer shown, kept so saved takes and Motion Doctor's fixes still work -->
     <div class="row"><label>AI version <span class="mini">older saved takes use Classic, so they look exactly as they did</span></label><select id="solverVer"><option value="latest" selected>Latest</option><option value="classic">Classic (6 Nov)</option></select></div>
     <div class="row"><label>Legs <span class="mini">for videos without the full body</span></label><select id="lowerBody"><option value="ai" selected>Tracked from video</option><option value="walk">Walking</option><option value="run">Running</option><option value="sit">Sitting</option><option value="idle">Standing idle</option></select></div>
     <div class="row"><label>Arms out of shot <span class="mini">replace an arm the camera can't see</span></label><select id="armOut"><option value="" selected>Off</option><option value="Left">Left arm</option><option value="Right">Right arm</option><option value="both">Both arms</option></select></div>
@@ -4534,7 +4572,7 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
     <div class="row"><label>🔒 Lock feet <span class="mini">feet frozen exactly where they are at the current frame, for the whole animation</span></label><select id="mainPinFeet"><option value="">Off</option><option value="both">Both feet</option><option value="Left">Left foot</option><option value="Right">Right foot</option></select></div>
     <div class="row" id="mainPinStrRow" hidden><label>🔒 Lock strength <span class="mini">100% = feet frozen to the spot · lower = closer to his original steps</span></label><input type="range" id="mainPinStr" min="0" max="100" step="5" value="100"><output id="mainPinStrV">100%</output></div>
     <div class="row"><label>🔒 Lock hand &amp; head rotation <span class="mini">your edits never turn the hands or head</span></label><input type="checkbox" id="mainLockRot"></div>
-    <div class="stats" id="stats" style="display:none"></div>
+    </div>
   </section>
 
   <section class="card" id="teachCard">
@@ -4545,23 +4583,25 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
   </section>
   <section class="card">
     <h2><span class="n">4</span>Export</h2>
+    <div class="grid3" style="grid-template-columns:repeat(4,1fr)"><button class="btn" id="exFBX" disabled>FBX</button><button class="btn" id="exBVH" disabled>BVH</button><button class="btn" id="exGLB" disabled>GLB</button><button class="btn" id="exJSON" disabled>JSON</button></div>
     <div class="row"><label>Target rig naming</label><select id="naming"><option value="unity" selected>Unity (Humanoid)</option><option value="standard">Standard / Blender</option><option value="mixamo">Mixamo</option><option value="unreal">Unreal (UE mannequin)</option></select></div>
+    <div class="row"><label>Frame rate</label><select id="outFps"><option>24</option><option selected>30</option><option>60</option><option>120</option></select></div>
+    <details class="adv"><summary>Advanced</summary>
     <div class="row"><label>Clip speed <span class="mini">slows down / speeds up the animation itself (exports too)</span></label><div style="display:flex;align-items:center;gap:6px"><button class="btn small" id="csMinus" type="button">−</button><input type="range" id="clipSpeed" min="0.1" max="3" step="0.05" value="1" style="width:110px"><button class="btn small" id="csPlus" type="button">+</button><b id="clipSpeedV" style="min-width:44px;text-align:right">1×</b></div></div>
     <div class="row"><label>Even pace <span class="mini">plays the motion out at a steadier speed (no sudden rush half way); exports too</span></label><input type="checkbox" id="evenPace"></div>
-    <div class="row"><label>Frame rate</label><select id="outFps"><option>24</option><option selected>30</option><option>60</option><option>120</option></select></div>
-    <div class="grid3" style="grid-template-columns:repeat(4,1fr)"><button class="btn" id="exFBX" disabled>FBX</button><button class="btn" id="exBVH" disabled>BVH</button><button class="btn" id="exGLB" disabled>GLB</button><button class="btn" id="exJSON" disabled>JSON</button></div>
-    <button class="btn small" id="exDebug" style="width:100%;margin-top:8px;opacity:.75">🛠 Save tracking data (send to Claude to fix a problem)</button>
-    <div class="hint">
+    <div class="hint" style="margin-top:6px">
       <b style="color:var(--dim)">FBX</b> → drag straight into Unity (set Rig → Humanoid), also Blender, Maya, MotionBuilder, Unreal.<br>
       <b style="color:var(--dim)">BVH</b> → Blender (File › Import › BVH), MotionBuilder, Cascadeur, MMD (via Blender + mmd_tools), Mixamo-rig retarget.<br>
       <b style="color:var(--dim)">GLB</b> → skinned T-pose rig + animation. Unity: install the free <i>glTFast</i> package, drop the GLB in, set Rig → Humanoid. Also Unreal, Godot, Roblox (via Blender → FBX).<br>
       <b style="color:var(--dim)">JSON</b> → per-frame 3D joint positions + rotations for robots / custom retargeting.
     </div>
+    <button class="btn small" id="exDebug" style="width:100%;margin-top:8px;opacity:.75">🛠 Save tracking data (send to Claude to fix a problem)</button>
+    </details>
   </section>
 
   <section class="card">
     <h2><span class="n">5</span>Library <span style="margin-left:auto;text-transform:none;letter-spacing:0;color:var(--faint);font-weight:400" id="libCount"></span></h2>
-    <div class="hint" style="margin:0 0 8px">Every motion you generate is saved here on this device, with its video. Open it again or download it any time, even offline.</div>
+    <div class="hint" style="margin:0 0 8px">Saved on this phone, with the video. Works offline.</div>
     <div class="libbar" style="margin-bottom:6px"><button class="btn on" id="libTabTakes">🎬 My takes</button><button class="btn" id="libTabStars">⭐ Starred</button></div>
     <div class="libbar"><button class="btn" id="libSel">☑️ Select</button><span id="libSelActs" style="display:none;gap:6px;flex-wrap:wrap"><button class="btn" id="libAll">All</button><button class="btn" id="libDelSel">🗑 Delete</button><button class="btn" id="libCancel">Cancel</button></span></div>
     <div id="libList"></div>
@@ -4586,12 +4626,15 @@ setTimeout(function(){ if(!window.__appStarted) __fail('a required file did not 
         <button class="btn small on" id="tBody">Body</button>
         <button class="btn small" id="tBones">Bones</button>
         <button class="btn small on" id="tFollow" title="On: glides along with him (no shake). Off: camera stays completely still, framed on the whole move">Follow</button>
+        <button class="btn small" id="tMore" aria-expanded="false">More ▾</button>
+        <span class="moretools" id="moreTools">
         <button class="btn small" id="tReset">Video angle</button>
         <button class="btn small" id="tModel" title="Change character: the AI body, realistic people, or your own (FBX / GLB / VRM)">🧍 Character</button>
         <button class="btn small" id="tProps" title="Props: boxing gloves, golf club, bat, racket, balls, bike">🎒 Props</button>
         <button class="btn small" id="tPhys" title="Add physics: follow-through, overshoot and settling">⚛️ Physics</button>
         <button class="btn small" id="libHideOrig" title="Library: hide the plain text-to-motion takes and show only ones with new moves your AI made up">🙈 Hide originals</button>
         <button class="btn small" id="tAim" title="Punch target: drag it and the punches land on it">🎯 Target</button>
+        </span>
       </div>
       <div class="physpanel" id="physPanel">
         <select id="propMode" hidden><option value="auto">auto</option><option value="none" selected>none</option><option value="gloves">gloves</option><option value="golf">golf</option><option value="bat">bat</option><option value="racket">racket</option><option value="basketball">basketball</option><option value="football">football</option><option value="bike">bike</option></select>
@@ -5953,7 +5996,7 @@ function resize() {
 new ResizeObserver(resize).observe(host); resize();
 const toggle = (id, fn) => $(id).onclick = () => { $(id).classList.toggle('on'); fn($(id).classList.contains('on')); requestRender(); };
 function applyTheme(name) {
-  document.documentElement.dataset.theme = name; try { localStorage.setItem('nocap-theme', name); } catch (e) {}
+  document.documentElement.dataset.theme = name; try { localStorage.setItem('nocap-theme2', name); } catch (e) {}
   document.querySelector('meta[name=theme-color]')?.setAttribute('content', TV('--bg'));
   scene.background.set(TV('--scene-bg')); scene.fog.color.set(TV('--scene-bg')); rim.color.set(TV('--accent')); floor.material.color.set(TV('--floor'));
   scene.remove(grid); grid.geometry.dispose(); grid = new THREE.GridHelper(60, 120, TV('--grid1'), TV('--grid2')); grid.position.y = 0.001; scene.add(grid);
@@ -5962,6 +6005,7 @@ function applyTheme(name) {
   document.querySelectorAll('#themeMenu button').forEach(b => b.classList.toggle('on', b.dataset.t === name));
   drawContacts(); drawOverlay(); requestRender();
 }
+$('tMore').onclick = () => { const o = $('moreTools').classList.toggle('open'); $('tMore').textContent = o ? 'Less ▴' : 'More ▾'; $('tMore').setAttribute('aria-expanded', o); };
 $('themeBtn').onclick = e => { e.stopPropagation(); $('themeMenu').classList.toggle('open'); };
 $('themeMenu').onclick = e => { const b = e.target.closest('button'); if (b) { applyTheme(b.dataset.t); $('themeMenu').classList.remove('open'); } };
 document.addEventListener('click', () => $('themeMenu').classList.remove('open'));
@@ -7365,7 +7409,7 @@ function docShow() {
     const groups = [['punch', '🥊 Punches'], ['defence', '🛡️ Defence'], ['guard', '✋ Guard'], ['step', '👣 Footwork']];
     el.innerHTML += `<div class="dhead" style="margin-top:10px"><b>🥊 Boxing breakdown · ${BX.stance} stance</b></div>` + groups.map(([kd, title]) => {
       const es = BX.events.filter(e => e.kind === kd); if (!es.length) return '';
-      return `<div class="ditem"><div class="dtx">${title} <span style="color:var(--dim)">× ${es.length}</span><div class="dts">${es.slice(0, 24).map(e => `<button class="dt bx" data-t="${e.t0}">${e.when} ${e.name}</button>`).join('')}${es.length > 24 ? `<span style="color:var(--dim);font-size:12px"> +${es.length - 24} more</span>` : ''}</div></div></div>`;
+      return `<div class="ditem"><div class="dtx">${title} <span style="color:var(--dim)">× ${es.length}</span><div class="dts">${es.slice(0, kd === 'step' ? 8 : 24).map(e => `<button class="dt bx" data-t="${e.t0}">${e.when} ${e.name}</button>`).join('')}${es.length > (kd === 'step' ? 8 : 24) ? `<span style="color:var(--dim);font-size:12px"> +${es.length - (kd === 'step' ? 8 : 24)} more</span>` : ''}</div></div></div>`;
     }).join('') + '<div style="color:var(--dim);font-size:11.5px;margin-top:4px">Read from the motion, so check any that look off by tapping them.</div>';
   }
   el.style.display = 'block'; drawContacts();
