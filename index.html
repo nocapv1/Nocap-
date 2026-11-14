@@ -7268,6 +7268,49 @@ function docCheck() {
   }
   return [...groups.values()].map(g => ({ ...g, t0: g.times[0].t0, t1: g.times[0].t1, when: g.times[0].when })).sort((x, y) => y.sev - x.sev || x.t0 - y.t0);
 }
+// ----- 🥊 boxing breakdown (14 Nov): what he threw, how he defended, how he moved — read from the finished motion -----
+function boxingBreakdown() {
+  if (!anim || anim.n < 10) return null;
+  const a = anim, n = a.n, fps = a.fps, ix = a.rest.index, T0 = animT0(), ev = [];
+  let F, peaks; try { ({ F, peaks } = punchPeaks(a)); } catch (e) { return null; }
+  const P = k => F[k].pos;
+  // facing (horizontal) from the hips, and stance from which foot is in front along that facing
+  const face = k => { const l = P(k)[ix.LeftUpLeg], r = P(k)[ix.RightUpLeg], x = l[0] - r[0], z = l[2] - r[2]; const f = [-z, x]; const L = Math.hypot(f[0], f[1]) || 1; return [f[0] / L, f[1] / L]; };
+  let lead = 0; for (let k = 0; k < n; k += 3) { const f = face(k), d = [P(k)[ix.LeftFoot][0] - P(k)[ix.RightFoot][0], P(k)[ix.LeftFoot][2] - P(k)[ix.RightFoot][2]]; lead += d[0] * f[0] + d[1] * f[1]; }
+  const leadSide = lead >= 0 ? 'Left' : 'Right', stance = leadSide === 'Left' ? 'orthodox' : 'southpaw';
+  for (const p of peaks) {
+    const t = classifyPunch(a, F, p);
+    const isLead = p.side === leadSide;
+    const name = t === 'straight' ? (isLead ? 'Jab' : 'Cross') : t === 'upper' ? (isLead ? 'Lead uppercut' : 'Rear uppercut') : (isLead ? 'Lead hook' : 'Rear hook');
+    // head or body: where the fist lands compared with the shoulders
+    const sh = (P(p.k)[ix.LeftArm][1] + P(p.k)[ix.RightArm][1]) / 2, low = P(p.k)[ix[p.side + 'Hand']][1] < sh - 0.22;
+    ev.push({ k: p.k, kind: 'punch', side: p.side, type: t, name: name + (low ? ' to the body' : '') });
+  }
+  // defence: head moves fast relative to the hips (slip = sideways, duck / roll = down) and comes back
+  const hd = k => { const h = P(k)[ix.Head], c = P(k)[0], f = face(k); const dx = h[0] - c[0], dz = h[2] - c[2]; return { side: dx * f[1] - dz * f[0], down: -(h[1] - c[1]) }; };
+  const H = Array.from({ length: n }, (_, k) => hd(k)), w = Math.round(0.35 * fps);
+  const baseUp = H.map(h => h.down).sort((x, y) => x - y)[Math.floor(n * 0.5)], baseSide = H.map(h => h.side).sort((x, y) => x - y)[Math.floor(n * 0.5)];
+  let lastDef = -1e9;
+  for (let k = w; k < n - 1; k++) {
+    if (k - lastDef < Math.round(0.5 * fps)) continue;
+    const dDown = H[k].down - baseUp, dSide = H[k].side - baseSide, prevDown = H[k - w].down - baseUp, prevSide = H[k - w].side - baseSide;
+    const rose = (arr, key, thr) => arr[k][key] - arr[k - w][key] > thr;
+    if (dDown > 0.14 && dDown - prevDown > 0.1 && H[k + 1].down <= H[k].down) { ev.push({ k, kind: 'defence', name: Math.abs(dSide) > 0.08 ? 'Roll under' : 'Duck' }); lastDef = k; continue; }
+    if (Math.abs(dSide) > 0.12 && Math.abs(dSide - prevSide) > 0.1 && Math.abs(H[k + 1].side - baseSide) <= Math.abs(dSide)) { ev.push({ k, kind: 'defence', name: 'Slip ' + ((dSide > 0) === (leadSide === 'Left') ? 'outside' : 'inside') }); lastDef = k; }
+  }
+  // guard: both hands below the chin for over half a second (not while punching)
+  const chin = k => P(k)[ix.Head][1] - 0.12, punching = new Array(n).fill(false); for (const p of peaks) for (let q = Math.max(0, p.k - 8); q <= Math.min(n - 1, p.k + 8); q++) punching[q] = true;
+  const down = Array.from({ length: n }, (_, k) => !punching[k] && P(k)[ix.LeftHand][1] < chin(k) - 0.12 && P(k)[ix.RightHand][1] < chin(k) - 0.12);
+  for (const [k0, k1] of docRuns(down, Math.round(0.5 * fps))) ev.push({ k: k0, k1, kind: 'guard', name: 'Guard down' });
+  // footwork: steps (a foot leaves the floor and lands somewhere else) and pivots (the body turns 45°+ quickly)
+  for (const Sd of ['Left', 'Right']) { const c = a.contacts.map(x => !!x[Sd]); let lastLand = null;
+    for (let k = 1; k < n; k++) if (c[k] && !c[k - 1]) { const f = P(k)[ix[Sd + 'Foot']]; if (lastLand && Math.hypot(f[0] - lastLand[0], f[2] - lastLand[2]) > 0.12) ev.push({ k, kind: 'step', name: Sd + ' foot step' }); lastLand = f; } else if (c[k] && !lastLand) lastLand = P(k)[ix[Sd + 'Foot']]; }
+  const yaw = Array.from({ length: n }, (_, k) => { const f = face(k); return Math.atan2(f[0], f[1]); }); let lastPiv = -1e9;
+  for (let k = Math.round(0.4 * fps); k < n; k++) { let d = yaw[k] - yaw[k - Math.round(0.4 * fps)]; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; if (Math.abs(d) > Math.PI / 4 && k - lastPiv > fps) { ev.push({ k, kind: 'step', name: 'Pivot ' + (d > 0 ? 'left' : 'right') }); lastPiv = k; } }
+  ev.sort((x, y) => x.k - y.k);
+  const t = k => T0 + k / fps;
+  return { stance, events: ev.map(e => ({ ...e, t0: t(e.k), when: t(e.k).toFixed(1) + 's' })) };
+}
 function docJump(t) { pause(); curTime = t; $('scrub').value = t; seekDisplay(t); applyAt(t); drawOverlay(); updateTimeLabel(); requestRender(); }
 function docAct(d) {
   docJump(d.t0);
@@ -7283,8 +7326,17 @@ function docShow() {
   if (!DOC_ISSUES.length) el.innerHTML = '<div class="dhead"><b>🩺 Motion Doctor</b><button class="btn dfix" id="docClose">✕</button></div><div>✓ Checked the whole clip: no sliding, floating, shaking, impossible twists or glitches found.</div>';
   else el.innerHTML = `<div class="dhead"><b>🩺 ${DOC_ISSUES.length} kind${DOC_ISSUES.length > 1 ? 's' : ''} of problem to check</b><button class="btn dfix" id="docClose">✕</button></div>` + DOC_ISSUES.map((d, i) =>
     `<div class="ditem"><span class="dsev" style="background:${col[d.sev]}"></span><div class="dtx">${d.text}${d.times.length > 1 ? ` <span style="color:var(--dim)">× ${d.times.length}</span>` : ''}<div class="dts">${d.times.slice(0, 8).map((x, q) => `<button class="dt" data-i="${i}" data-q="${q}">${x.when}</button>`).join('')}${d.times.length > 8 ? `<span style="color:var(--dim);font-size:12px"> +${d.times.length - 8} more</span>` : ''}</div><small>${d.why}</small></div><button class="btn dfix" data-f="${i}">${d.label}</button></div>`).join('');
+  const BX = boxingBreakdown();
+  if (BX && BX.events.length) {
+    const groups = [['punch', '🥊 Punches'], ['defence', '🛡️ Defence'], ['guard', '✋ Guard'], ['step', '👣 Footwork']];
+    el.innerHTML += `<div class="dhead" style="margin-top:10px"><b>🥊 Boxing breakdown · ${BX.stance} stance</b></div>` + groups.map(([kd, title]) => {
+      const es = BX.events.filter(e => e.kind === kd); if (!es.length) return '';
+      return `<div class="ditem"><div class="dtx">${title} <span style="color:var(--dim)">× ${es.length}</span><div class="dts">${es.slice(0, 24).map(e => `<button class="dt bx" data-t="${e.t0}">${e.when} ${e.name}</button>`).join('')}${es.length > 24 ? `<span style="color:var(--dim);font-size:12px"> +${es.length - 24} more</span>` : ''}</div></div></div>`;
+    }).join('') + '<div style="color:var(--dim);font-size:11.5px;margin-top:4px">Read from the motion, so check any that look off by tapping them.</div>';
+  }
   el.style.display = 'block'; drawContacts();
-  el.querySelectorAll('.dt').forEach(b => (b.onclick = () => docJump(DOC_ISSUES[+b.dataset.i].times[+b.dataset.q].t0)));
+  el.querySelectorAll('.dt.bx').forEach(b => (b.onclick = () => docJump(+b.dataset.t)));
+  el.querySelectorAll('.dt:not(.bx)').forEach(b => (b.onclick = () => docJump(DOC_ISSUES[+b.dataset.i].times[+b.dataset.q].t0)));
   el.querySelectorAll('[data-f]').forEach(b => (b.onclick = () => docAct(DOC_ISSUES[+b.dataset.f])));
   $('docClose').onclick = () => { el.style.display = 'none'; drawContacts(); };
 }
